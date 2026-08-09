@@ -1,0 +1,75 @@
+Renault NG - LoxBerry-Plugin
+============================
+
+Dieses Werk steht unter der Apache License 2.0 (siehe LICENSE).
+
+
+Urspruengliches Werk
+--------------------
+Renault Plugin (Renault My-Ze / Renault_API)
+Copyright PeterB
+https://wiki.loxberry.de/plugins/renault_my_ze/start
+
+
+Weiteres enthaltenes Werk
+-------------------------
+ZoePHP
+Copyright db-EV
+https://github.com/db-EV/ZoePHP
+
+Das Original baut darauf auf; die Anbindung an die My-Renault-Schnittstelle
+(Gigya und Kamereon) stammt von dort.
+
+
+Aenderungen gegenueber dem Original (Apache License 2.0, Abschnitt 4 b)
+-----------------------------------------------------------------------
+
+Die Oberflaeche wurde vollstaendig ersetzt. Entfallen sind config.php,
+debug.php, ersteinrichtung.php, status.php, log.php, anleitung.php,
+DatenWrite.php, stylesheet.css, templates/main.html, die fuenf Sprachdateien
+unter webfrontend/htmlauth/lng/ (AT, DE, EN, IT, SE), daemon/daemon und
+cron/crontab. An ihre Stelle trat eine Oberflaeche nach dem
+LoxBerry-Hausstandard mit Sprachdateien unter templates/lang/.
+
+Konfiguration, Sitzung, Ladehistorie und Protokoll liegen nicht mehr im
+Plugin-Ordner, sondern unter config/, data/ und log/ - sie ueberdauern damit
+ein Update. Die Sicherung beim Update geht nicht mehr ueber /tmp; das ist auf
+dem LoxBerry eine Ramdisk.
+
+2.0.0  Eigene Kennung und eigener Name: "Renault NG", Ordner renault_ng.
+
+       WARUM DIE KENNUNG WECHSELT: LoxBerry benutzt [AUTHOR] NAME und EMAIL
+       zusammen mit [PLUGIN] NAME als Kennung des Plugins, nicht als
+       Urhebervermerk. Bis 1.6.0 trug diese Fortfuehrung die Kennung des
+       Originals - samt privater Mailadresse des Originalautors -, waehrend
+       AUTOMATIC_UPDATES bereits auf dieses Repository zeigte. Diese
+       Mischform loest LoxBerry nicht auf, und Fehlerberichte waeren beim
+       Originalautor gelandet, der mit dieser Fassung nichts zu tun hat.
+
+       WARUM AUCH DER ORDNER: Er bestimmt die Adresse, unter der Loxone den
+       Endpunkt aufruft. Sie wandert von
+
+           /plugins/Renault_API/index.php?token=<TOKEN>&aktion=...
+       auf
+           /plugins/renault_ng/index.php?token=<TOKEN>&aktion=...
+
+       Jeder virtuelle Ausgang im Miniserver muss nachgezogen werden. Der
+       Schritt ist bewusst gegangen worden, damit Original und Fortfuehrung
+       nebeneinander bestehen koennen und keine der beiden Installationen in
+       die Verzeichnisse der anderen schreibt.
+
+       Dabei ist ein aelterer Fehler aufgefallen: der Ordnername stand in
+       rn_lib.php FEST im Quelltext ("Renault_API"). Haengt LoxBerry bei der
+       Installation einen Zaehler an, weil der Name schon belegt ist, zeigten
+       alle Pfade der Zweitinstallation auf die erste. Der Name wird jetzt
+       ermittelt.
+
+       AN DEN MQTT-THEMEN AENDERT SICH NICHTS: sie lauten weiterhin
+       Renault/<Autoname>/... und haengen nicht am Ordnernamen.
+
+
+Marken
+------
+Renault ist eine Marke der Renault S.A. Dieses Plugin steht in keiner
+Verbindung zu diesem Unternehmen und wird von ihm weder herausgegeben noch
+unterstuetzt.

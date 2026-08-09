@@ -2,7 +2,10 @@
 // Simple logger for the Renault plugin (v1.2)
 // Writes to renault.log in the plugin directory, auto-rotates at 1 MB.
 
-define('RENAULT_LOGFILE', dirname(__FILE__).'/renault.log');
+// Das Protokoll liegt seit 1.6.0 unter log/plugins/<ordner>/ und nicht mehr
+// neben dem Programm - dort loescht LoxBerry es bei jedem Update.
+require_once __DIR__ . '/rn_lib.php';
+define('RENAULT_LOGFILE', rn_paths()['log']);
 
 function renault_log($level, $msg) {
   // Rotate: keep one backup when the log exceeds 1 MB

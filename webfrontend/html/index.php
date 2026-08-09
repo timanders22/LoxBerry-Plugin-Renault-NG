@@ -8,7 +8,7 @@
  * Geraet im Netz die Vorklimatisierung starten.
  *
  * Aufruf:
- *   /plugins/Renault_API/index.php?token=<TOKEN>&aktion=acnow
+ *   /plugins/renault_ng/index.php?token=<TOKEN>&aktion=acnow
  *
  * Antwort: Klartext, eine Zeile. HTTP 200 bei Erfolg, sonst 400/403/503.
  */

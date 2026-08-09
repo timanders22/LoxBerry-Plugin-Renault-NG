@@ -1,61 +1,58 @@
 #!/bin/bash
-
-# Bashscript which is executed by bash when uninstalling the plugin
-# Use with caution and remember, that all systems may be different!
-#
-# Exit code must be 0 if executed successfull. 
-# Exit code 1 gives a warning but continues deinstallation.
-#
-# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-# Will be executed as user "root".
-# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-#
-# You can use all vars from /etc/environment in this script.
-#
-# We add 5 additional arguments when executing this script:
+# Renault - uninstall
 # command <TEMPFOLDER> <NAME> <FOLDER> <VERSION> <BASEFOLDER>
 #
-# For logging, print to STDOUT. You can use the following tags for showing
-# different colorized information during plugin installation:
+# Wird von LoxBerry als root ausgefuehrt. Rueckgabewert 0 = in Ordnung,
+# 1 = Warnung (die Deinstallation laeuft trotzdem weiter).
 #
-# <OK> This was ok!"
-# <INFO> This is just for your information."
-# <WARNING> This is a warning!"
-# <ERROR> This is an error!"
-# <FAIL> This is a fail!"
+# ===================================================================
+# ZUR VORGESCHICHTE DIESER DATEI - bitte nicht wieder aufheben
+# ===================================================================
+#
+# Bis 1.5 stand hier die unveraenderte LoxBerry-Beispieldatei: zwoelf
+# Variablenzuweisungen (PCGI, PHTML, PTEMPL, PDATA, PLOG, PCONFIG,
+# PSBIN, PBIN ...), elf echo-Zeilen, die diese Pfade ins
+# Installationsprotokoll schrieben, und "exit 0". Sie hat nichts
+# aufgeraeumt - sie hat nur ausgesehen, als taete sie es.
+#
+# Nachgesehen, was das Plugin ausserhalb seiner eigenen Ordner
+# hinterlaesst:
+#
+#   Dateien:  nichts. Die dauerhafte Konfigurationssicherung liegt in
+#             config/plugins/<ordner>/config.php.backup, also INNERHALB
+#             des Plugin-Konfigordners - LoxBerry raeumt ihn mit weg.
+#             Ebenso data/, log/ und die beiden webfrontend-Ordner.
+#             Die Zugangsdaten (webfrontend/htmlauth/config.php) gehen
+#             damit ebenfalls.
+#   Prozesse: keine. Das Plugin arbeitet ueber cron (cron.03min,
+#             cron.10min); LoxBerry entfernt die Eintraege selbst.
+#             Einen Dienst gibt es nicht.
+#   MQTT:     hier bleibt etwas stehen - siehe unten.
+#
+# Deshalb tut diese Datei genau eine Sache: sie sagt, was der Broker
+# noch enthaelt. Etwas vorzutaeuschen, das sie nicht kann, waere
+# schlechter als die alte Beispieldatei.
 
-# To use important variables from command line use the following code:
-COMMAND=$0    # Zero argument is shell command
-PTEMPDIR=$1   # First argument is temp folder during install
-PSHNAME=$2    # Second argument is Plugin-Name for scipts etc.
-PDIR=$3       # Third argument is Plugin installation folder
-PVERSION=$4   # Forth argument is Plugin version
-#LBHOMEDIR=$5 # Comes from /etc/environment now. Fifth argument is
-              # Base folder of LoxBerry
+PDIR=$3
+[ -n "$PDIR" ] || PDIR="renault_ng"
 
-# Combine them with /etc/environment
-PCGI=$LBPCGI/$PDIR
-PHTML=$LBPHTML/$PDIR
-PTEMPL=$LBPTEMPL/$PDIR
-PDATA=$LBPDATA/$PDIR
-PLOG=$LBPLOG/$PDIR # Note! This is stored on a Ramdisk now!
-PCONFIG=$LBPCONFIG/$PDIR
-PSBIN=$LBPSBIN/$PDIR
-PBIN=$LBPBIN/$PDIR
+echo "<INFO> Plugin-Ordner, Konfiguration und Zugangsdaten entfernt LoxBerry selbst."
+echo "<INFO> Das Plugin hat weder einen Dienst noch Dateien ausserhalb seiner Ordner."
+echo ""
+echo "<WARNING> Im MQTT-Broker bleiben Werte stehen."
+echo "<INFO> Das Plugin sendet seine Werte mit gesetztem Retain-Merker"
+echo "<INFO> (abruf.php: \$mqtt->publish(..., 0, 1) - die letzte 1 ist Retain)."
+echo "<INFO> Ein solcher Wert bleibt im Broker gespeichert, bis ihn jemand"
+echo "<INFO> ueberschreibt oder loescht; das Entfernen des Plugins beruehrt ihn"
+echo "<INFO> nicht. Betroffen sind alle Topics unter"
+echo "<INFO>     Renault/<Fahrzeugname>/..."
+echo "<INFO> (BattSOC, ChargingStatus, CableStatus, Range, ChargingTime,"
+echo "<INFO> ChargingEffekt, ChargeMode, GPSTime, LastDataRetrieval u. a.)."
+echo "<INFO>"
+echo "<INFO> Zum Aufraeumen: LoxBerry -> System -> MQTT Gateway, dort in der"
+echo "<INFO> Uebersicht der eingehenden Topics die Renault-Eintraege loeschen."
+echo "<INFO> Wer das nicht tut, sieht dort noch jahrelang den Ladestand vom"
+echo "<INFO> Tag der Deinstallation - und Loxone liest ihn beim naechsten"
+echo "<INFO> Verbinden erneut ein."
 
-echo "<INFO> Command is: $COMMAND"
-echo "<INFO> Temporary folder is: $TEMPDIR"
-echo "<INFO> (Short) Name is: $PSHNAME"
-echo "<INFO> Installation folder is: $ARGV3"
-echo "<INFO> Plugin version is: $ARGV4"
-echo "<INFO> Plugin CGI folder is: $PCGI"
-echo "<INFO> Plugin HTML folder is: $PHTML"
-echo "<INFO> Plugin Template folder is: $PTEMPL"
-echo "<INFO> Plugin Data folder is: $PDATA"
-echo "<INFO> Plugin Log folder (on RAMDISK!) is: $PLOG"
-echo "<INFO> Plugin CONFIG folder is: $PCONFIG"
-echo "<INFO> Plugin SBIN folder is: $PSBIN"
-echo "<INFO> Plugin BIN folder is: $PBIN"
-
-# Exit with Status 0
 exit 0

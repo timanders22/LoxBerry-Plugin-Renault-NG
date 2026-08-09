@@ -1,3 +1,14 @@
 #!/bin/bash
 # Renault - Ladevorgaenge des letzten Monats abholen und per MQTT melden.
-cd REPLACELBPHTMLAUTHDIR && php history.php
+# Aufbau wie cron.03min; die Begruendung fuer die Fehlermeldung steht dort.
+VERZ="REPLACELBPHTMLAUTHDIR"
+PROT="REPLACELBPLOGDIR/renault.log"
+
+if [ ! -d "$VERZ" ]; then
+    mkdir -p "$(dirname "$PROT")" 2>/dev/null
+    echo "$(date '+%d.%m.%Y %H:%M:%S') [ERROR] Cron: Plugin-Verzeichnis nicht gefunden ($VERZ) - Plugin neu installieren." >> "$PROT"
+    exit 1
+fi
+
+cd "$VERZ" || exit 1
+php history.php

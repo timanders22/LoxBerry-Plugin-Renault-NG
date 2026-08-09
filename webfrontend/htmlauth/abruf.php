@@ -24,16 +24,37 @@ $creds = mqtt_connectiondetails();
 $client_id = uniqid(gethostname()."_client");
 
 session_cache_limiter('nocache');
+
+/* rn_lib.php MUSS vor der Konfiguration geladen werden: seit 1.6.0 liegt
+   diese nicht mehr neben dem Programm, und rn_paths() sagt, wo. Der Aufruf
+   stand frueher weiter unten - mit dem neuen Pfad waere das ein Fatal
+   error "Call to undefined function rn_paths()" gewesen. */
+require_once __DIR__ . '/rn_lib.php';
+rn_umzug();                      // einmaliger Umzug aus dem Programmordner
+
 require 'api-keys.php';
-require 'config.php';
+require rn_paths()['config'];
 require 'logger.php';
 
 //Check credentials before doing anything
 if (empty($username) || empty($password) || empty($vin)) {
   renault_log('ERROR', 'Zugangsdaten unvollständig (username/password/vin leer) - bitte Einstellungen ausfüllen.');
 }
-if (file_exists('lng/'.$country.'.php')) require 'lng/'.$country.'.php';
-else require 'lng/EN.php';
+// Seit dieser Fassung EIN Sprachsystem statt zweier.
+//
+// Bis 1.4 lud diese Zeile webfrontend/htmlauth/lng/<Land>.php - ein zweites,
+// vom Rest des Plugins unabhaengiges Uebersetzungswerk aus der
+// eigenstaendigen ZoePHP-Anwendung. Die Oberflaeche benutzte daneben
+// templates/lang/language_<sprache>.ini ueber rn_t(). Zwei Systeme
+// nebeneinander bedeuteten: zwei Orte zum Pflegen, zwei verschiedene
+// Sprachauswahlen (Land des Fahrzeugs gegen LoxBerry-Spracheinstellung) und
+// Texte, die je nach Seite in verschiedenen Sprachen erschienen.
+//
+// Gebraucht wurden von den rund fuenfzig Eintraegen nur acht - die uebrigen
+// standen ausschliesslich in den HTML-Seiten, die ZoePHP selbst rendert und
+// die mit dieser Fassung entfallen sind. Sie stehen jetzt unter [MELDUNG]
+// in den zentralen Sprachdateien.
+// (rn_lib.php ist bereits oben eingebunden - siehe dort.)
 // ZoePHP 20260520: one Europe-wide Gigya key ($gigya_api from api-keys.php),
 // country-specific key selection removed.
 
@@ -89,7 +110,7 @@ $timestamp_now = date_format($timestamp_now, 'YmdHi');
  * 23: Weather condition (Ph2, openweathermap API)
  * 24: Chargemode
  */
-$session = file_get_contents('session');
+$session = file_get_contents(rn_paths()['session']);
 if ($session !== FALSE) $session = explode('|', $session);
 else $session = array('0000', '', '', '', '202001010000', 'N', 'N', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '80','','','');
 
@@ -388,8 +409,12 @@ if (isset($md5) && $md5 != $session[3] && $update_sucess === TRUE) {
   if ($mail_bl === 'Y' || $cmon_bl === 'Y' || !empty($exec_bl)) {
     if ($session[12] >= $session[21] && $session[10] == 1 && $session[5] != 'Y') {
       if ($session[15] != '') $s = $session[15];
-      else $s = $lng['some'];
-      $sendmessage = $lng['Specified battery level reached.']."\n".$lng['Battery level'].': '.$session[12].' %'."\n".$lng['Remaining charging time'].': '.$s.' '.$lng['minutes']."\n".$lng['Range'].': '.$session[14].' km'."\n".$lng['Status update'].': '.$session[8].' '.$session[9];
+      else $s = rn_t('MELDUNG.WENIGE');
+      $sendmessage = rn_t('MELDUNG.AKKUSTAND_ERREICHT')."\n"
+                   . rn_t('MELDUNG.AKKUSTAND').': '.$session[12].' %'."\n"
+                   . rn_t('MELDUNG.RESTLADEZEIT').': '.$s.' '.rn_t('MELDUNG.MINUTEN')."\n"
+                   . rn_t('MELDUNG.REICHWEITE').': '.$session[14].' km'."\n"
+                   . rn_t('MELDUNG.STATUSUPDATE').': '.$session[8].' '.$session[9];
       if ($mail_bl === 'Y') mail($username, $zoename, $sendmessage);
       if ($cmon_bl === 'Y') {
         $postData = array(
@@ -406,15 +431,30 @@ if (isset($md5) && $md5 != $session[3] && $update_sucess === TRUE) {
         $response = curl_exec($ch);
         if ($response === FALSE) die(curl_error($ch));
       }
-      if (!empty($exec_bl)) shell_exec($exec_bl.' "'.$sendmessage.'"');
+      /* escapeshellarg statt Anfuehrungszeichen von Hand.
+          Die Meldung wird aus Werten der Renault-Schnittstelle
+          zusammengesetzt (Ladestand, Restzeit, Reichweite, Zeitstempel)
+          und aus Sprachtexten. Ein Anfuehrungszeichen oder ein $( darin
+          haette die Kommandozeile aufgebrochen. Der Befehl selbst bleibt
+          unmaskiert - er ist eine bewusste Eingabe des Betreibers in den
+          Einstellungen, kein Fremdwert. */
+      if (!empty($exec_bl)) shell_exec($exec_bl . ' ' . escapeshellarg($sendmessage));
       $session[5] = 'Y';
     } elseif ($session[5] == 'Y' && $session[10] != 1) $session[5] = 'N';
   }
   if ($mail_csf === 'Y' || !empty($exec_csf)) {
-    $sendmessage = $lng['Charging finished.']."\n".$lng['Battery level'].': '.$session[12].' %'."\n".$lng['Range'].': '.$session[14].' km'."\n".$lng['Status update'].': '.$session[8].' '.$session[9];
+    $sendmessage = rn_t('MELDUNG.LADEN_BEENDET')."\n"
+                 . rn_t('MELDUNG.AKKUSTAND').': '.$session[12].' %'."\n"
+                 . rn_t('MELDUNG.REICHWEITE').': '.$session[14].' km'."\n"
+                 . rn_t('MELDUNG.STATUSUPDATE').': '.$session[8].' '.$session[9];
     if ($session[6] == 'Y' && $session[10] != 1) {
       if ($mail_csf === 'Y') mail($username, $zoename, $sendmessage);
-      if (!empty($exec_csf)) shell_exec($exec_bl.' "'.$sendmessage.'"');
+      /* Hier stand bis 1.4  shell_exec($exec_bl...)  - die Bedingung
+          prueft $exec_csf ("Ladung beendet"), ausgefuehrt wurde aber der
+          Befehl fuer "Akkustand erreicht". Wer beide Felder gefuellt
+          hatte, bekam zweimal denselben Befehl; wer nur $exec_csf gefuellt
+          hatte, bekam einen leeren Aufruf und damit gar nichts. */
+      if (!empty($exec_csf)) shell_exec($exec_csf . ' ' . escapeshellarg($sendmessage));
     }
     if ($session[10] == 1) $session[6] = 'Y';
     else $session[6] = 'N';
@@ -422,13 +462,13 @@ if (isset($md5) && $md5 != $session[3] && $update_sucess === TRUE) {
 
   //Save data in database if configured
   if ($update_sucess === TRUE && $save_in_db === 'Y') {
-    if (!file_exists('database.csv')) {
-      if ($zoeph == 1) file_put_contents('database.csv', 'Date;Time;Mileage;Outside temperature;Battery temperature;Battery level;Range;Cable status;Charging status;Charging speed;Remaining charging time;Charging schedule'."\n");
-      else file_put_contents('database.csv', 'Date;Time;Mileage;Battery level;Battery capacity;Range;Cable status;Charging status;Charging speed;Remaining charging time;GPS Latitude;GPS Longitude;GPS date;GPS time;Outside temperature;Weather condition;Charging schedule'."\n");
+    if (!file_exists(rn_paths()['csv'])) {
+      if ($zoeph == 1) file_put_contents(rn_paths()['csv'], 'Date;Time;Mileage;Outside temperature;Battery temperature;Battery level;Range;Cable status;Charging status;Charging speed;Remaining charging time;Charging schedule'."\n");
+      else file_put_contents(rn_paths()['csv'], 'Date;Time;Mileage;Battery level;Battery capacity;Range;Cable status;Charging status;Charging speed;Remaining charging time;GPS Latitude;GPS Longitude;GPS date;GPS time;Outside temperature;Weather condition;Charging schedule'."\n");
     }
-    if ($zoeph == 1) file_put_contents('database.csv', $session[8].';'.$session[9].';'.$session[7].';'.$session[17].';'.$session[13].';'.$session[12].';'.$session[14].';'.$session[11].';'.$session[10].';'.$session[16].';'.$session[15].';'.$session[24]."\n", FILE_APPEND);
-    elseif ($zoeph == 2) file_put_contents('database.csv', $session[8].';'.$session[9].';'.$session[7].';'.$session[12].';'.$session[13].';'.$session[14].';'.$session[11].';'.$session[10].';'.$session[16].';'.$session[15].';'.$session[17].';'.$session[18].';'.$session[19].';'.$session[20].';'.$session[22].';'.$session[23].';'.$session[24]."\n", FILE_APPEND);
-    else file_put_contents('database.csv', $session[8].';'.$session[9].';'.$session[7].';'.$session[12].';'.$session[13].';'.$session[14].';'.$session[11].';'.$session[10].';'.$session[16].';'.$session[15].';;;;;;;'.$session[24]."\n", FILE_APPEND);
+    if ($zoeph == 1) file_put_contents(rn_paths()['csv'], $session[8].';'.$session[9].';'.$session[7].';'.$session[17].';'.$session[13].';'.$session[12].';'.$session[14].';'.$session[11].';'.$session[10].';'.$session[16].';'.$session[15].';'.$session[24]."\n", FILE_APPEND);
+    elseif ($zoeph == 2) file_put_contents(rn_paths()['csv'], $session[8].';'.$session[9].';'.$session[7].';'.$session[12].';'.$session[13].';'.$session[14].';'.$session[11].';'.$session[10].';'.$session[16].';'.$session[15].';'.$session[17].';'.$session[18].';'.$session[19].';'.$session[20].';'.$session[22].';'.$session[23].';'.$session[24]."\n", FILE_APPEND);
+    else file_put_contents(rn_paths()['csv'], $session[8].';'.$session[9].';'.$session[7].';'.$session[12].';'.$session[13].';'.$session[14].';'.$session[11].';'.$session[10].';'.$session[16].';'.$session[15].';;;;;;;'.$session[24]."\n", FILE_APPEND);
   }
 
   //Send data to ABRP if configured
@@ -479,62 +519,31 @@ if ($cmd_cron === TRUE) {
   if ($update_sucess === TRUE) echo 'OK';
   else echo 'NO DATA';
 } else {
-  $requesturi = isset($_SERVER['REQUEST_URI']) ? strtok($_SERVER['REQUEST_URI'], '?') : '';
-  echo '<HTML>'."\n".'<HEAD>'."\n".'<LINK REL="manifest" HREF="zoephp.webmanifest">'."\n".'<LINK REL="stylesheet" HREF="stylesheet.css">'."\n".'<META NAME="viewport" CONTENT="width=device-width, initial-scale=1.0">'."\n".'<TITLE>'.$zoename.'</TITLE>'."\n".'</HEAD>'."\n".'<BODY>'."\n".'<DIV ID="container">'."\n".'<MAIN>'."\n";
-  if ($mail_bl === 'Y') echo '<FORM ACTION="'.$requesturi.'" METHOD="post" AUTOCOMPLETE="off">'."\n";
-  echo '<ARTICLE>'."\n".'<TABLE>'."\n".'<TR ALIGN="left"><TH>'.$zoename.'</TH><TD><SMALL><A HREF="'.$requesturi.'">'.$lng['Update'].'</A></SMALL></TD></TR>'."\n";
-  if ($cmd_acnow === TRUE) echo '<TR><TD COLSPAN="2">'.$lng['Preconditioning requested.'].'</TD><TD>'."\n";
-  if ($cmd_chargenow === TRUE) echo '<TR><TD COLSPAN="2">'.$lng['Instant charging requested.'].'</TD><TD>'."\n";
-  if ($cmd_cmon === TRUE) echo '<TR><TD COLSPAN="2">'.$lng['Activation of the charging schedule requested.'].'</TD><TD>'."\n";
-  elseif ($cmd_cmoff === TRUE) echo '<TR><TD COLSPAN="2">'.$lng['Deactivation of the charging schedule requested.'].'</TD><TD>'."\n";
-  if ($update_sucess === FALSE && $update_ok === TRUE) echo '<TR><TD COLSPAN="2">'.$lng['No new data'].'</TD><TD>'."\n";
-  echo '<TR><TD>'.$lng['Mileage'].':</TD><TD>'.$session[7].' km</TD></TR>'."\n".'<TR><TD>'.$lng['Connected'].':</TD><TD>';
-  if ($session[11] == 0) echo $lng['No'];
-  else echo $lng['Yes'];
-
-
-
-  echo '</TD></TR>'."\n".'<TR><TD>'.$lng['Charging'].':</TD><TD>';
-  if ($session[10] == 1){
-    if ($session[15] != ''){
-      $s = date_create_from_format('d.m.YH:i', $session[8].$session[9]);
-      date_add($s, date_interval_create_from_date_string($session[15].' minutes'));
-      $s = date_format($s, 'H:i');
-    } else $s = $lng['Soon'];
-    echo $lng['Yes'].'</TD></TR>'."\n".'<TR><TD>'.$lng['Ready'].':</TD><TD>'.$s;
-    if ($zoeph == 1) echo '</TD></TR>'."\n".'<TR><TD>'.$lng['Effect'].':</TD><TD>'.$session[16].' kW';
-  } else echo $lng['No'];
-  if ($hide_cm !== 'Y') {
-      echo '</TD></TR>'."\n".'<TR><TD>'.$lng['Charging schedule'].':</TD><TD>';
-      if (substr($session[24], 0, 6) === 'always' || $session[24] === 'n/a') echo $lng['Inactive'];
-      else echo $lng['Active'];
-  }
-  echo '</TD></TR>'."\n".'<TR><TD>'.$lng['Battery level'].':</TD><TD>'.$session[12].' %</TD></TR>'."\n";
-
-echo '</TD></TR>'."\n".'<TR><TD>'.$lng['hvac'].':</TD><TD>'.$hvac.' </TD></TR>'."\n";
-
-
-  if ($mail_bl === 'Y' || $cmon_bl === 'Y' || !empty($exec_bl)) echo '<TR><TD>'.$lng['Action at battery level'].':</TD><TD><INPUT TYPE="number" NAME="bl" VALUE="'.$session[21].'" MIN="1" MAX="99"><INPUT TYPE="submit" VALUE="%"></TD></TR>'."\n";
-  if ($zoeph == 2) echo '<TR><TD>'.$lng['Battery capacity'].':</TD><TD>'.$session[13].' kWh</TD></TR>'."\n";
-  echo '<TR><TD>'.$lng['Range'].':</TD><TD>'.$session[14].' km</TD></TR>'."\n";
-  if ($zoeph == 1) echo '<TR><TD>'.$lng['Battery temperature'].':</TD><TD>'.$session[13].' &deg;C</TD></TR>'."\n".'<TR><TD>'.$lng['Outside temperature'].':</TD><TD>'.$session[17].' &deg;C</TD></TR>'."\n";
-  elseif ($zoeph == 2 && $weather_api_key != '') echo '<TR><TD>'.$lng['Outside temperature'].':</TD><TD>'.$session[22].' &deg;C ('.htmlentities($session[23]).')</TD></TR>'."\n";
-  echo '<TR><TD>'.$lng['Status update'].':</TD><TD>'.$session[8].' '.$session[9].'</TD></TR>'."\n";
-  if ($zoeph == 2) {
-    echo '<TR><TD>'.$lng['Car position'].':</TD><TD>';
-    if ($map_provider == 'osm') echo '<A HREF="https://www.openstreetmap.org/?mlat='.$session[17].'&mlon='.$session[18].'&zoom=17" TARGET="_blank">OpenStreetMap</A>';
-    else echo '<A HREF="https://www.google.com/maps/place/'.$session[17].','.$session[18].'" TARGET="_blank">Google Maps</A>';
-    echo '</TD></TR>'."\n".'<TR><TD>'.$lng['Position update'].':</TD><TD>'.$session[19].' '.$session[20].'</TD></TR>'."\n";
-  }
-  echo '<TR><TD COLSPAN="2"><A HREF="'.$requesturi.'?acnow">'.$lng['Start preconditioning'].'</A></TD></TR>'."\n";
-  if ($hide_cm !== 'Y') echo '<TR><TD COLSPAN="2">'.$lng['Charging schedule'].': <A HREF="'.$requesturi.'?cmon">'.$lng['on'].'</A> | <A HREF="'.$requesturi.'?cmoff">'.$lng['off'].'</A></TD></TR>'."\n".'<TR><TD COLSPAN="2"><A HREF="'.$requesturi.'?chargenow">'.$lng['Start charging'].'</A></TD></TR>'."\n";
- // echo '<TR><TD COLSPAN="2"><A HREF="history.php">'.$lng['Charging history'].'</A></TD></TR>'."\n";
-  echo '</TABLE>'."\n".'</ARTICLE>'."\n";
-  if ($mail_bl === 'Y') echo '</FORM>'."\n";
-  echo '</MAIN>'."\n".'</DIV>'."\n".'</BODY>'."\n".'</HTML>';
+  /*
+   * Die HTML-Seite der ZoePHP-Anwendung ist mit dieser Fassung entfallen.
+   *
+   * Hier standen rund fuenfzig Zeilen, die eine eigene Weboberflaeche
+   * ausgaben - mit eigenem Stylesheet, eigenem Web-Manifest, eigenen
+   * App-Symbolen und dem zweiten Sprachsystem unter lng/. Erreichbar war sie
+   * nur, wenn jemand abruf.php unmittelbar im Browser aufrief: der
+   * Miniserver-Endpunkt (webfrontend/html/index.php) setzt $_GET['cron'] und
+   * landet immer im Zweig darueber, und der Cron ruft ohnehin
+   * "php abruf.php cron" auf.
+   *
+   * Die Oberflaeche des Plugins ist htmlauth/index.php. Zwei Oberflaechen
+   * fuer dieselbe Sache nebeneinander zu pflegen - in zwei Sprachsystemen -
+   * war die eigentliche Altlast.
+   */
+  header('Content-Type: text/plain; charset=utf-8');
+  echo "Dieses Skript ist der Datenabruf, keine Bedienoberflaeche.\n"
+     . "Die Oberflaeche des Plugins erreichen Sie ueber das Plugin-Menue von\n"
+     . "LoxBerry. Fuer den Aufruf aus Loxone gibt es den Endpunkt\n"
+     . "/plugins/<ordner>/index.php - die fertigen Adressen samt Token stehen\n"
+     . "in der Oberflaeche im Reiter 'Einbindung in Loxone'.\n"
+     . ($update_sucess === TRUE ? "\nDaten wurden soeben aktualisiert.\n"
+                                : "\nEs konnten keine neuen Daten abgerufen werden.\n");
 }
 
- $km = $lng['Mileage'];
 
 
 
@@ -616,7 +625,7 @@ if ($update_ok === TRUE || $cmd_cron == TRUE || (isset($_POST['bl']) && is_numer
   $session[3] = $md5;
   $session[4] = $timestamp_now;
   $session = implode('|', $session);
-  file_put_contents('session', $session);
+  file_put_contents(rn_paths()['session'], $session);
 }
 
 ?>

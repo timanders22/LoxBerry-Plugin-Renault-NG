@@ -4,7 +4,7 @@ require_once "loxberry_web.php";
 
 // This will read your language files to the array $L
 $L = LBSystem::readlanguage("language.ini");
-$template_title = "Renault-Api";
+$template_title = "Renault NG";
 $helplink = "http://www.loxwiki.eu:80/x/2wzL";
 $helptemplate = "help.html";
 
@@ -15,15 +15,22 @@ $helptemplate = "help.html";
 $navbar[1]['Name'] = 'Zur&uuml;ck zur Oberfl&auml;che';
 $navbar[1]['URL']  = 'index.php';
 $navbar[1]['active'] = True;
-LBWeb::lbheader($template_title, $helplink, $helptemplate);
+// Kein LoxBerry-Seitenrahmen mehr: diese Datei laeuft ueber den Cron
+// (cron.10min) und gibt seit dieser Fassung Klartext aus. lbheader()
+// und lbfooter() haetten HTML um den Klartext gelegt.
 
 
 
 
 
 session_cache_limiter('nocache');
+
+// rn_lib.php zuerst - rn_paths() sagt, wo die Konfiguration liegt.
+require_once __DIR__ . '/rn_lib.php';
+rn_umzug();
+
 require 'api-keys.php';
-require 'config.php';
+require rn_paths()['config'];
 
 //MQTT Start-----------------------------------------------
 require_once "loxberry_io.php";
@@ -34,9 +41,13 @@ $creds = mqtt_connectiondetails();
 $client_id = uniqid(gethostname()."_client");
 //MQTT ENDE-----------------------------------------------
 
-if (file_exists('lng/'.$country.'.php')) require 'lng/'.$country.'.php';
-else require 'lng/EN.php';
-header('Content-Type: text/html; charset=utf-8');
+// Kein zweites Sprachsystem mehr - siehe die ausfuehrliche Begruendung in
+// abruf.php. Die HTML-Ausgabe dieser Datei ist ebenfalls entfallen; sie
+// stammte aus der eigenstaendigen ZoePHP-Anwendung und war nur bei einem
+// unmittelbaren Browseraufruf zu sehen. Aufgerufen wird history.php vom
+// Cron (cron.10min), und dann geht die Ausgabe ohnehin nach /dev/null.
+require_once __DIR__ . '/rn_lib.php';
+header('Content-Type: text/plain; charset=utf-8');
 // ZoePHP 20260520: one Europe-wide Gigya key ($gigya_api from api-keys.php),
 // country-specific key selection removed.
 
@@ -45,7 +56,7 @@ $date_today = date_format($date_today, 'md');
 $update_ok = FALSE;
 
 //Request cached login
-$session = file_get_contents('session');
+$session = file_get_contents(rn_paths()['session']);
 $session = explode('|', $session);
 
 //Retrieve new Gigya token if the session file is outdated
@@ -114,7 +125,8 @@ $mqtt = new Bluerhinos\phpMQTT($creds['brokerhost'],  $creds['brokerport'], $cli
 // ZoePHP 20260520: obsolete requests to the retired Renault app-config AWS bucket removed.
 
 //Output
-echo '<HTML>'."\n".'<HEAD>'."\n".'<LINK REL="stylesheet" HREF="stylesheet.css">'."\n".'<META NAME="viewport" CONTENT="width=device-width, initial-scale=1.0">'."\n".'<TITLE>'.$zoename.'</TITLE>'."\n".'</HEAD>'."\n".'<BODY>'."\n".'<DIV ID="container">'."\n".'<MAIN>'."\n".'<ARTICLE>'."\n".'<TABLE>'."\n".'<TR ALIGN="left"><TH>'.$zoename.'</TH></TR>'."\n".'<TR><TD COLSPAN="2"><HR></TD></TR>'."\n";
+// Kopf der ZoePHP-Seite entfallen - Ausgabe jetzt als Klartext.
+echo $zoename."\n".str_repeat('-', 40)."\n";
 for ($i = 0; $i < count($data); $i++) {
   if (!empty($data[$i]['chargeStartDate']) && !empty($data[$i]['chargeEndDate']) && !empty($data[$i]['chargeEnergyRecovered'])) {
     $s = date_create_from_format(DATE_ISO8601, $data[$i]['chargeStartDate'], timezone_open('UTC'));
@@ -131,11 +143,13 @@ for ($i = 0; $i < count($data); $i++) {
     $cdm = date_interval_format($cd, '%a') * 24 * 60;
     $cdm += date_interval_format($cd, '%h') * 60;
     $cdm += date_interval_format($cd, '%i');
-    echo '<TR><TD>'.$lng['Start'].':</TD><TD>'.$sd.' '.$st.'</TD></TR>'."\n";
+    echo rn_t('MELDUNG.START').': '.$sd.' '.$st."\n";
     if ($zoeph == 1) {
-      echo '<TR><TD>'.$lng['Charging'].':</TD><TD>'.$data[$i]['chargeStartBatteryLevel'].' % '.$lng['to'].' '.$data[$i]['chargeEndBatteryLevel'].' % '.$lng['in'].' '.$cdm.' '.$lng['minutes'].'</TD></TR>'."\n";
+      echo rn_t('MELDUNG.LADEVORGANG').': '.$data[$i]['chargeStartBatteryLevel'].' % '
+         . rn_t('MELDUNG.BIS').' '.$data[$i]['chargeEndBatteryLevel'].' % '
+         . rn_t('MELDUNG.IN').' '.$cdm.' '.rn_t('MELDUNG.MINUTEN')."\n";
       $s = $data[$i]['chargeStartInstantaneousPower']/1000;
-      echo '<TR><TD>'.$lng['Power'].':</TD><TD>'.$data[$i]['chargePower'].' ('.$s.' kW)</TD></TR>'."\n";
+      echo rn_t('MELDUNG.LEISTUNG').': '.$data[$i]['chargePower'].' ('.$s.' kW)'."\n";
 	
 	$mqtt->publish("Renault/$zoename/chargeStartBatteryLevel(Prozent)", @$data[0]['chargeStartBatteryLevel'], 0, 1);
 	$mqtt->publish("Renault/$zoename/chargeEndBatteryLevel(Prozent)", @$data[0]['chargeEndBatteryLevel'], 0, 1);
@@ -143,19 +157,18 @@ for ($i = 0; $i < count($data); $i++) {
 	$mqtt->publish("Renault/$zoename/chargePowerAverage(kW)", round(@$data[0]['chargeEnergyRecovered'] * 60 / ($cdm+0.0000001), 2), 0, 1);
 
     } else {
-      echo '<TR><TD>'.$lng['Charging'].':</TD><TD>'.round($data[$i]['chargeEnergyRecovered'], 2).' kWh '.$lng['in'].' '.$cdm.' '.$lng['minutes'].'</TD></TR>'."\n";
-      //echo '<TR><TD>'.$lng['AverageChargingPower'].':</TD><TD>'.round($data[$i]['chargeEnergyRecovered'] * 60 / ($cdm+0.0000001), 2).' kW</TD></TR>'."\n";
+      echo rn_t('MELDUNG.LADEVORGANG').': '.round($data[$i]['chargeEnergyRecovered'], 2).' kWh '
+         . rn_t('MELDUNG.IN').' '.$cdm.' '.rn_t('MELDUNG.MINUTEN')."\n";
 
 	$mqtt->publish("Renault/$zoename/chargePowerAverage(kW)", round(@$data[0]['chargeEnergyRecovered'] * 60 / ($cdm+0.0000001), 2), 0, 1);
 	$mqtt->publish("Renault/$zoename/chargeEnergyRecovered(kWh)", @$data[0]['chargeEnergyRecovered'], 0, 1);
 	$mqtt->publish("Renault/$zoename/chargeDuration(min)", $cdm, 0, 1);
     }
-    echo '<TR><TD>'.$lng['Status'].':</TD><TD>'.$data[$i]['chargeEndStatus'].' '.$lng['at'].' '.$ed.' '.$et.'</TD></TR>'."\n".'<TR><TD COLSPAN="2"><HR></TD></TR>'."\n";
+    echo rn_t('MELDUNG.STATUS').': '.$data[$i]['chargeEndStatus'].' '
+       . rn_t('MELDUNG.UM').' '.$ed.' '.$et."\n".str_repeat('-', 40)."\n";
 	$mqtt->publish("Renault/$zoename/chargeEndStatus", @$data[0]['chargeEndStatus'], 0, 1);
   }
 }
-echo '<TR><TD COLSPAN="2"><A HREF="./">'.$lng['Back'].'</A></TD></TR>'."\n".'</TABLE>'."\n".'</ARTICLE>'."\n";
-echo '</MAIN>'."\n".'</DIV>'."\n".'</BODY>'."\n".'</HTML>';
 curl_close($ch);
 
         //$mqtt->publish("Renault/$zoename/BattSOC", $session[12], 0, 1);
@@ -182,7 +195,6 @@ curl_close($ch);
 //Cache new Gigya token
 if ($update_ok === TRUE) {
   $session = implode('|', $session);
-  file_put_contents('session', $session);
+  file_put_contents(rn_paths()['session'], $session);
 }
-LBWeb::lbfooter();
 ?>

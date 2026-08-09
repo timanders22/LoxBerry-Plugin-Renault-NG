@@ -19,17 +19,108 @@ function rn_paths()
     }
     $home = $home ? $home : '/opt/loxberry';
     $eigen = dirname(__FILE__);
+
+    /* ==================================================================
+     * WO DIE NUTZDATEN LIEGEN - und warum sie umgezogen sind
+     * ==================================================================
+     *
+     * Bis 1.4 lagen Konfiguration, Sitzung, Ladehistorie und Protokoll
+     * NEBEN dem Programm, in webfrontend/htmlauth. Genau diesen Ordner
+     * loescht LoxBerry bei jedem Plugin-Update und legt ihn neu an - er
+     * gehoert zum Programm, nicht zu den Daten.
+     *
+     * Deshalb gab es preupgrade.sh und postupgrade.sh, die die Dateien vor
+     * dem Update nach /tmp/renault_api_upgrade kopierten und danach
+     * zurueck. Das ist eine Kruecke, und eine bruechige dazu: /tmp ist auf
+     * dem LoxBerry eine Ramdisk. Faellt zwischen den beiden Schritten der
+     * Strom aus oder startet das System neu, sind Ladehistorie, Sitzung
+     * und Protokoll fort - unwiederbringlich.
+     *
+     * Die Kruecke ist jetzt ueberfluessig, weil die Daten dort liegen, wo
+     * LoxBerry sie ohnehin stehen laesst:
+     *
+     *     config/plugins/<ordner>/   Konfiguration (0600, enthaelt das
+     *                                Renault-Passwort)
+     *     data/plugins/<ordner>/     Sitzung und Ladehistorie
+     *     log/plugins/<ordner>/      Protokoll
+     *
+     * 'eigen' bleibt als Ablageort des PROGRAMMS erhalten - api-keys.php
+     * und die Bibliotheken liegen weiterhin dort, und die duerfen beim
+     * Update auch ersetzt werden.
+     * ================================================================== */
+    // Der Ordnername wird ERMITTELT, nicht eingetragen: haengt LoxBerry bei
+    // der Installation einen Zaehler an (renault_ng_01, weil der Name schon
+    // belegt war), zeigten sonst alle Pfade auf die Erstinstallation.
+    $ordner = getenv('LBPPLUGINDIR');
+    if (!$ordner) { $ordner = basename(__DIR__); }
+    if ($ordner === '' || $ordner === '.') { $ordner = 'renault_ng'; }
+    $konf   = $home . '/config/plugins/' . $ordner;
+    $daten  = $home . '/data/plugins/'   . $ordner;
+    $prot   = $home . '/log/plugins/'    . $ordner;
+    foreach (array($konf, $daten, $prot) as $d) {
+        if (!is_dir($d)) { @mkdir($d, 0775, true); }
+    }
+
     $p = array(
         'home'    => $home,
-        'plugin'  => 'Renault_API',
+        'plugin'  => $ordner,
         'eigen'   => $eigen,
-        'config'  => $eigen . '/config.php',
-        'session' => $eigen . '/session',
-        'log'     => $eigen . '/renault.log',
-        'csv'     => $eigen . '/database.csv',
+        'konfdir' => $konf,
+        'datadir' => $daten,
+        'logdir'  => $prot,
+        'config'  => $konf  . '/config.php',
+        'session' => $daten . '/session',
+        'log'     => $prot  . '/renault.log',
+        'csv'     => $daten . '/database.csv',
         'general' => $home . '/config/system/general.json',
+        // Die alten Orte - nur noch, um einmalig umzuziehen.
+        'alt_config'  => $eigen . '/config.php',
+        'alt_session' => $eigen . '/session',
+        'alt_log'     => $eigen . '/renault.log',
+        'alt_csv'     => $eigen . '/database.csv',
     );
     return $p;
+}
+
+/**
+ * Einmaliger Umzug der Nutzdaten aus dem Programmordner.
+ *
+ * Wird von jedem Einstiegspunkt aufgerufen, kostet im Normalfall vier
+ * is_file()-Aufrufe. Kopiert wird nur, wenn am neuen Ort noch nichts
+ * steht - eine bereits umgezogene Datei wird nie ueberschrieben.
+ *
+ * Zusaetzlich wird die alte Dauersicherung config.php.backup beruecksichtigt,
+ * die preupgrade.sh bis 1.4 angelegt hat.
+ */
+function rn_umzug()
+{
+    $p = rn_paths();
+    $paare = array(
+        array($p['alt_config'],  $p['config']),
+        array($p['alt_session'], $p['session']),
+        array($p['alt_csv'],     $p['csv']),
+        array($p['alt_log'],     $p['log']),
+    );
+    $bewegt = 0;
+    foreach ($paare as $paar) {
+        list($alt, $neu) = $paar;
+        if (is_file($alt) && !is_file($neu)) {
+            if (@copy($alt, $neu)) {
+                @unlink($alt);
+                $bewegt++;
+            }
+        }
+    }
+    // Konfiguration notfalls aus der alten Dauersicherung.
+    $sicherung = $p['konfdir'] . '/config.php.backup';
+    if (!is_file($p['config']) && is_file($sicherung)) {
+        @copy($sicherung, $p['config']);
+        $bewegt++;
+    }
+    if ($bewegt > 0) {
+        @chmod($p['config'], 0600);
+    }
+    return $bewegt;
 }
 
 function rn_e($s)

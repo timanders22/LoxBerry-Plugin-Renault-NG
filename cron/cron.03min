@@ -1,8 +1,27 @@
 #!/bin/bash
 # Renault - Datenabruf alle drei Minuten.
 #
-# REPLACELBPHTMLAUTHDIR wird vom LoxBerry-Installer durch den echten
-# Pluginordner ersetzt. Das cd ist wichtig: abruf.php liest und schreibt
-# seine Dateien (config.php, session, database.csv, renault.log) ueber
-# relative Pfade.
-cd REPLACELBPHTMLAUTHDIR && php abruf.php cron
+# REPLACELBPHTMLAUTHDIR und REPLACELBPLOGDIR ersetzt der LoxBerry-Installer.
+#
+# WARUM HIER EINE FEHLERMELDUNG STEHT
+# Bis 1.4 lautete die Zeile nur
+#     cd REPLACELBPHTMLAUTHDIR && php abruf.php cron
+# Das && faengt den Fehler zwar ab - aber lautlos. Bleibt der Platzhalter
+# einmal unersetzt oder fehlt der Ordner, laeuft der Cron monatelang ins
+# Leere, ohne dass jemand erfaehrt warum.
+#
+# Die Meldung geht NICHT nach /tmp: das ist auf dem LoxBerry eine Ramdisk,
+# der Hinweis waere beim naechsten Neustart fort - und gerade dann sucht
+# man ihn. Sie geht ins Protokoll des Plugins, das die Oberflaeche im
+# Reiter "Protokoll" anzeigt.
+VERZ="REPLACELBPHTMLAUTHDIR"
+PROT="REPLACELBPLOGDIR/renault.log"
+
+if [ ! -d "$VERZ" ]; then
+    mkdir -p "$(dirname "$PROT")" 2>/dev/null
+    echo "$(date '+%d.%m.%Y %H:%M:%S') [ERROR] Cron: Plugin-Verzeichnis nicht gefunden ($VERZ) - Plugin neu installieren." >> "$PROT"
+    exit 1
+fi
+
+cd "$VERZ" || exit 1
+php abruf.php cron

@@ -49,7 +49,17 @@ function rn_test_ausfuehren($was, $cfg)
                         : 'nicht vorhanden');
             }
             $z[] = '';
-            $z[] = 'Ordner beschreibbar: ' . (is_writable($p['eigen']) ? 'ja' : 'NEIN');
+            /* Bis 1.4 stand hier die Schreibbarkeit von $p['eigen'], also des
+               PROGRAMMordners - dort lagen die Nutzdaten. Seit 1.6.0 schreibt
+               das Plugin dort nicht mehr; geprueft gehoeren die drei Ordner,
+               in denen es das jetzt tut. */
+            foreach (array('konfdir' => 'Konfigurationsordner',
+                           'datadir' => 'Datenordner',
+                           'logdir'  => 'Protokollordner') as $k => $name) {
+                $z[] = sprintf('%-18s: %s  (%s)', $name,
+                    is_writable($p[$k]) ? 'beschreibbar' : 'NICHT beschreibbar',
+                    $p[$k]);
+            }
             $broker = rn_mqtt_broker();
             $z[] = 'MQTT-Broker       : ' . ($broker
                 ? $broker['host'] . ':' . $broker['port']

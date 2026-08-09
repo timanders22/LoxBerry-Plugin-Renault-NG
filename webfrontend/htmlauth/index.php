@@ -10,14 +10,23 @@
 require_once 'loxberry_web.php';
 require_once __DIR__ . '/rn_lib.php';
 
-$L = LBSystem::readlanguage('language.ini');
+// Frueher wurde hier LBSystem::readlanguage('language.ini') aufgerufen und
+// das Ergebnis nach $L gelegt. $L wurde jedoch NIE gelesen - die Texte
+// holt rn_t() unmittelbar aus templates/lang/language_<sprache>.ini. Der
+// Aufruf suchte ausserdem eine Datei 'language.ini', die es hier gar nicht
+// gibt (nur language_de.ini und language_en.ini). Ersatzlos entfallen.
 $rn_p       = rn_paths();
 $rn_meldung = '';
 $rn_fehler  = array();
 
-$rn_tab = preg_match('/^tab-(settings|mqtt|loxone|test|verlauf|log)$/',
-                     (string) (isset($_POST['activetab']) ? $_POST['activetab'] : ''))
-    ? $_POST['activetab'] : 'tab-settings';
+/* Aktiver Reiter: aus dem abgesendeten Formular (activetab) oder aus der
+   Adresse (?form=...). Letzteres brauchen die Reiter, seit sie echte
+   Verweise sind. Die Positivliste MUSS jeden Reiter enthalten - fehlt
+   einer, springt die Seite nach jedem Absenden zurueck auf Einstellungen. */
+$rn_muster = '/^tab-(settings|mqtt|loxone|test|verlauf|log)$/';
+$rn_wunsch = isset($_POST['activetab']) ? (string) $_POST['activetab']
+    : (isset($_GET['form']) ? 'tab-' . (string) $_GET['form'] : '');
+$rn_tab = preg_match($rn_muster, $rn_wunsch) ? $rn_wunsch : 'tab-settings';
 
 $rn_cfg = rn_config_read();
 
@@ -120,7 +129,8 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 .sm-mono { font-family: monospace; }
 .sm-tabs { display: flex; gap: 4px; margin: 14px 0 0; border-bottom: 2px solid #6dac20; flex-wrap: wrap; }
 .sm-tab { background: #eee; border: 1px solid #ccc; border-bottom: 0; border-radius: 8px 8px 0 0;
-  padding: 9px 18px; cursor: pointer; font-size: 0.95em; color: #444 !important; }
+  padding: 9px 18px; cursor: pointer; font-size: 0.95em; color: #444 !important;
+  text-decoration: none !important; display: inline-block; }
 .sm-tab.sm-active { background: #6dac20; color: #fff !important; border-color: #6dac20; font-weight: 600; }
 .sm-pane { display: none; padding-top: 4px; }
 .sm-pane.sm-active { display: block; }
@@ -170,31 +180,51 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 <div class="sm-alert sm-ok"><?php echo $rn_meldung; ?></div>
 <?php } ?>
 
+<?php
+/*
+ * Reiter als echte Verweise, sm-active vom SERVER.
+ *
+ * Bis 1.4 standen hier <div class="sm-tab"> ohne Verweis, und sm-active
+ * vergab allein das JavaScript am Seitenende. Da .sm-pane auf display:none
+ * steht, war die Seite ohne JavaScript vollstaendig leer - und die Reiter
+ * liessen sich nicht einmal anklicken, weil ein <div> kein Verweis ist.
+ *
+ * $rn_tab wurde serverseitig laengst ermittelt und nur ans JavaScript
+ * weitergereicht. Diese Liste, die Positivliste weiter oben und die id der
+ * Flaechen muessen deckungsgleich bleiben - alle drei.
+ */
+$rn_reiter = array(
+    'tab-settings' => rn_t('REITER.EINSTELLUNGEN'),
+    'tab-mqtt'     => rn_t('REITER.MQTT'),
+    'tab-loxone'   => rn_t('REITER.LOXONE'),
+    'tab-test'     => rn_t('REITER.TEST'),
+    'tab-verlauf'  => rn_t('REITER.VERLAUF'),
+    'tab-log'      => rn_t('REITER.LOG'),
+);
+?>
 <div class="sm-tabs">
-  <div class="sm-tab" data-ziel="tab-settings"><?php echo rn_t('REITER.EINSTELLUNGEN'); ?></div>
-  <div class="sm-tab" data-ziel="tab-mqtt"><?php echo rn_t('REITER.MQTT'); ?></div>
-  <div class="sm-tab" data-ziel="tab-loxone"><?php echo rn_t('REITER.LOXONE'); ?></div>
-  <div class="sm-tab" data-ziel="tab-test"><?php echo rn_t('REITER.TEST'); ?></div>
-  <div class="sm-tab" data-ziel="tab-verlauf"><?php echo rn_t('REITER.VERLAUF'); ?></div>
-  <div class="sm-tab" data-ziel="tab-log"><?php echo rn_t('REITER.LOG'); ?></div>
+<?php foreach ($rn_reiter as $rn_id => $rn_bez) { ?>
+  <a class="sm-tab<?php echo $rn_tab === $rn_id ? ' sm-active' : ''; ?>" data-ziel="<?php echo rn_e($rn_id); ?>"
+     href="index.php?form=<?php echo rn_e(substr($rn_id, 4)); ?>"><?php echo $rn_bez; ?></a>
+<?php } ?>
 </div>
 
 <!-- ============================ <?php echo rn_t('TEXT.EINSTELLUNGEN'); ?> ============================ -->
-<div class="sm-pane" id="tab-settings">
+<div class="sm-pane<?php echo $rn_tab === 'tab-settings' ? ' sm-active' : ''; ?>" id="tab-settings">
 <form method="post" action="index.php" autocomplete="off">
-<input type="hidden" name="activetab" value="tab-settings">
+<input data-role="none" type="hidden" name="activetab" value="tab-settings">
 
 <h2><?php echo rn_t('TEXT.ZUGANG_ZUM_RENAULT_KONTO'); ?></h2>
 <p class="sm-small"><?php echo rn_t('TEXT.DIESELBEN_ZUGANGSDATEN_WIE_IN_DER_'); ?><span class="sm-mono"><?php echo rn_t('TEXT.CONFIG_PHP'); ?></span><?php echo rn_t('TEXT.RECHTE_0600_UND_SCHICKT_SIE_NUR_AN'); ?></p>
 
 <div class="sm-row">
   <label for="username"><?php echo rn_t('TEXT.BENUTZER_E_MAIL_ADRESSE'); ?></label>
-  <input type="text" id="username" name="username"
+  <input data-role="none" type="text" id="username" name="username"
          value="<?php echo rn_e($rn_cfg['username']); ?>">
 </div>
 <div class="sm-row">
   <label for="password"><?php echo rn_t('TEXT.PASSWORT'); ?></label>
-  <input type="password" id="password" name="password" value=""
+  <input data-role="none" type="password" id="password" name="password" value=""
          placeholder="<?php echo $rn_cfg['password'] !== ''
              ? 'gespeichert &ndash; leer lassen, um es zu behalten'
              : 'noch nicht gesetzt'; ?>">
@@ -202,14 +232,14 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 </div>
 <div class="sm-row">
   <label for="vin"><?php echo rn_t('TEXT.FAHRGESTELLNUMMER_VIN'); ?></label>
-  <input type="text" id="vin" name="vin" maxlength="17"
+  <input data-role="none" type="text" id="vin" name="vin" maxlength="17"
          value="<?php echo rn_e($rn_cfg['vin']); ?>">
   <p class="sm-small"><?php echo rn_t('TEXT.17_ZEICHEN_STEHT_IM_FAHRZEUGSCHEIN'); ?>
   <i><?php echo rn_t('TEXT.FAHRZEUGDATEN'); ?></i>.</p>
 </div>
 <div class="sm-row">
   <label for="country"><?php echo rn_t('TEXT.LAND'); ?></label>
-  <select id="country" name="country">
+  <select data-role="none" id="country" name="country">
     <?php foreach (array('DE' => 'Deutschland', 'AT' => '&Ouml;sterreich',
                          'CH' => 'Schweiz', 'IT' => 'Italien', 'SE' => 'Schweden',
                          'FR' => 'Frankreich', 'EN' => 'andere / Englisch') as $k => $v) { ?>
@@ -222,7 +252,7 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 <h2><?php echo rn_t('TEXT.FAHRZEUG'); ?></h2>
 <div class="sm-row">
   <label for="zoename"><?php echo rn_t('TEXT.NAME_DES_FAHRZEUGS'); ?></label>
-  <input type="text" id="zoename" name="zoename"
+  <input data-role="none" type="text" id="zoename" name="zoename"
          value="<?php echo rn_e($rn_cfg['zoename']); ?>">
   <p class="sm-small"><?php echo rn_t('TEXT.BILDET_DEN_MQTT_THEMENPFAD'); ?>
   <span class="sm-mono"><?php echo rn_t('TEXT.RENAULT_3'); ?><?php echo rn_e($rn_cfg['zoename']); ?>/&hellip;</span>
@@ -231,7 +261,7 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 </div>
 <div class="sm-row">
   <label for="zoeph"><?php echo rn_t('TEXT.FAHRZEUG_GENERATION'); ?></label>
-  <select id="zoeph" name="zoeph">
+  <select data-role="none" id="zoeph" name="zoeph">
     <option value="1"<?php echo $rn_cfg['zoeph'] === '1' ? ' selected' : ''; ?>><?php echo rn_t('TEXT.PHASE_1_MIT_AUSSEN_UND_BATTERIETEM'); ?></option>
     <option value="2"<?php echo $rn_cfg['zoeph'] === '2' ? ' selected' : ''; ?>><?php echo rn_t('TEXT.PHASE_2_MIT_GPS_POSITION'); ?></option>
   </select>
@@ -241,7 +271,7 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 <h2><?php echo rn_t('TEXT.AUFZEICHNUNG'); ?></h2>
 <div class="sm-row">
   <label for="save_in_db"><?php echo rn_t('TEXT.WERTE_IN'); ?> <span class="sm-mono"><?php echo rn_t('TEXT.DATABASE_CSV'); ?></span> <?php echo rn_t('TEXT.MITSCHREIBEN'); ?></label>
-  <select id="save_in_db" name="save_in_db">
+  <select data-role="none" id="save_in_db" name="save_in_db">
     <option value="N"<?php echo $rn_cfg['save_in_db'] !== 'Y' ? ' selected' : ''; ?>><?php echo rn_t('TEXT.NEIN'); ?></option>
     <option value="Y"<?php echo $rn_cfg['save_in_db'] === 'Y' ? ' selected' : ''; ?>><?php echo rn_t('TEXT.JA_JEDE_ABFRAGE_ANHNGEN'); ?></option>
   </select>
@@ -249,7 +279,7 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 </div>
 
 <div class="sm-knopfreihe sm-b-aktion">
-  <button type="submit" name="speichern" value="1"><?php echo rn_t('TEXT.SPEICHERN'); ?></button>
+  <button data-role="none" type="submit" name="speichern" value="1"><?php echo rn_t('TEXT.SPEICHERN'); ?></button>
 </div>
 <div class="sm-legende">
 <span><i class="sm-punkt sm-b-aktion"></i> <?php echo rn_t('LEGENDE.AKTION_CACHE'); ?></span>
@@ -261,7 +291,7 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 </div>
 
 <!-- ================================= <?php echo rn_t('TEXT.MQTT'); ?> ================================= -->
-<div class="sm-pane" id="tab-mqtt">
+<div class="sm-pane<?php echo $rn_tab === 'tab-mqtt' ? ' sm-active' : ''; ?>" id="tab-mqtt">
 
 <h2><?php echo rn_t('TEXT.ZUSTAND_DES_MQTT_GATEWAYS'); ?></h2>
 <p class="sm-small"><?php echo rn_t('TEXT.DAS_MQTT_GATEWAY_IST_SEIT_LOXBERRY'); ?> <b><?php echo rn_t('TEXT.BESTANDTEIL_DES_SYSTEMS'); ?></b> <?php echo rn_t('TEXT.UND_KEIN_PLUGIN_ES_WIRD_UNTER'); ?> <i><?php echo rn_t('TEXT.SYSTEM_MQTT_GATEWAY'); ?></i>
@@ -305,7 +335,7 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 </div>
 
 <!-- ========================= Einbindung in Loxone ========================= -->
-<div class="sm-pane" id="tab-loxone">
+<div class="sm-pane<?php echo $rn_tab === 'tab-loxone' ? ' sm-active' : ''; ?>" id="tab-loxone">
 
 <h2><?php echo rn_t('TEXT.EINBINDUNG_IN_LOXONE_SCHRITT_FR_SC'); ?></h2>
 <p class="sm-small"><?php echo rn_t('TEXT.DAS_PLUGIN_HOLT_DIE_FAHRZEUGDATEN_'); ?></p>
@@ -356,8 +386,8 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 
 <div class="sm-knopfreihe sm-b-aktion">
   <form method="post" action="index.php">
-    <input type="hidden" name="activetab" value="tab-loxone">
-    <button type="submit" name="token_neu" value="1"><?php echo rn_t('TEXT.NEUES_TOKEN_ERZEUGEN'); ?></button>
+    <input data-role="none" type="hidden" name="activetab" value="tab-loxone">
+    <button data-role="none" type="submit" name="token_neu" value="1"><?php echo rn_t('TEXT.NEUES_TOKEN_ERZEUGEN'); ?></button>
   </form>
 </div>
 <div class="sm-legende">
@@ -405,7 +435,7 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 </div>
 
 <!-- ================================= Test ================================= -->
-<div class="sm-pane" id="tab-test">
+<div class="sm-pane<?php echo $rn_tab === 'tab-test' ? ' sm-active' : ''; ?>" id="tab-test">
 
 <?php if ($rn_test_titel !== '') { ?>
 <div class="sm-alert sm-ok"><b><?php echo rn_e($rn_test_titel); ?></b></div>
@@ -436,8 +466,8 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
                      'konfig'   => 'Gespeicherte Konfiguration',
                      'zwischen' => 'Zwischengespeicherte Daten') as $wert => $text) { ?>
   <form method="post" action="index.php">
-    <input type="hidden" name="activetab" value="tab-test">
-    <button type="submit" name="test" value="<?php echo rn_e($wert); ?>"><?php
+    <input data-role="none" type="hidden" name="activetab" value="tab-test">
+    <button data-role="none" type="submit" name="test" value="<?php echo rn_e($wert); ?>"><?php
       echo $text; ?></button>
   </form>
 <?php } ?>
@@ -474,7 +504,7 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 </div>
 
 <!-- ============================= Ladehistorie ============================= -->
-<div class="sm-pane" id="tab-verlauf">
+<div class="sm-pane<?php echo $rn_tab === 'tab-verlauf' ? ' sm-active' : ''; ?>" id="tab-verlauf">
 <h2><?php echo rn_t('TEXT.AUFGEZEICHNETE_WERTE'); ?></h2>
 <p class="sm-small"><?php echo rn_t('TEXT.IST_DIE_AUFZEICHNUNG_IM_REITER'); ?> <i>Einstellungen</i>
 <?php echo rn_t('TEXT.EINGESCHALTET_HAENGT_JEDER_ERFOLGR'); ?>
@@ -507,7 +537,7 @@ if (!is_readable($rn_csv)) { ?>
 </div>
 
 <!-- ============================== Logdateien ============================== -->
-<div class="sm-pane" id="tab-log">
+<div class="sm-pane<?php echo $rn_tab === 'tab-log' ? ' sm-active' : ''; ?>" id="tab-log">
 <h2><?php echo rn_t('TEXT.PROTOKOLL'); ?></h2>
 <p class="sm-small"><?php echo rn_t('TEXT.NEUESTE_ZEILE_OBEN_DATEI'); ?>
 <span class="sm-mono"><?php echo rn_e($rn_p['log']); ?></span></p>
@@ -521,8 +551,8 @@ if (!is_readable($rn_csv)) { ?>
 
 <div class="sm-knopfreihe sm-b-aktion" style="margin-top:12px;">
   <form method="post" action="index.php">
-    <input type="hidden" name="activetab" value="tab-log">
-    <button type="submit" name="log_leeren" value="1"><?php echo rn_t('TEXT.PROTOKOLL_LEEREN'); ?></button>
+    <input data-role="none" type="hidden" name="activetab" value="tab-log">
+    <button data-role="none" type="submit" name="log_leeren" value="1"><?php echo rn_t('TEXT.PROTOKOLL_LEEREN'); ?></button>
   </form>
 </div>
 <div class="sm-legende">
@@ -546,7 +576,8 @@ if (!is_readable($rn_csv)) { ?>
         }
     }
     for (var k = 0; k < reiter.length; k++) {
-        reiter[k].addEventListener('click', function () {
+        reiter[k].addEventListener('click', function (e) {
+            e.preventDefault();
             zeige(this.getAttribute('data-ziel'));
         });
     }
