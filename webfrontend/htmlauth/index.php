@@ -484,8 +484,7 @@ $rn_reiter = array(
 </div>
 <p class="sm-small"><?php echo rn_t('TEXT.DIE_KNPFE_RUFEN_DENSELBEN_ENDPUNKT'); ?></p>
 <div class="sm-legende">
-<span><i class="sm-punkt sm-b-lesen"></i> <?php echo rn_t('LEGENDE.LESEN'); ?></span>
-<span><i class="sm-punkt sm-b-aktion"></i> <?php echo rn_t('LEGENDE.AKTION_SENDEN'); ?></span>
+<span><i class="sm-punkt sm-b-aktion"></i><?php echo rn_t('LEGENDE.AKTION_CACHE'); ?></span>
 </div>
 
 <h2><?php echo rn_t('TEXT.LETZTER_STAND'); ?></h2>
