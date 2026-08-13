@@ -109,6 +109,16 @@ if (isset($_POST['test'])) {
     $rn_tab = 'tab-test';
 }
 
+// ---------- Loxone-Vorlage herunterladen (Hausstandard) ----------
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['vorlage']) && function_exists('rn_vorlage')) {
+    list($rn_vname, $rn_vinhalt) = ($_POST['vorlage'] === 'vo' && function_exists('rn_vorlage_vo'))
+        ? rn_vorlage_vo() : rn_vorlage();
+    header('Content-Type: application/x-download');
+    header('Content-Disposition: attachment; filename="' . $rn_vname . '"');
+    echo $rn_vinhalt;
+    exit;
+}
+
 $rn_broker  = rn_mqtt_broker();
 $rn_session = rn_session();
 $rn_zeilen  = rn_log_tail();
@@ -126,6 +136,8 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
   font-size: 1.15em; margin: 22px 0 8px; }
 .sm-wrap h3.sm-h3 { color: #4f7d17; font-size: 1.0em; font-weight: 700; margin: 16px 0 2px; }
 .sm-small { font-size: 0.88em; color: #555; }
+.sm-hinweis { border: 1px solid #cfe3b0; background: #f2f8ea; border-radius: 6px;
+    padding: 10px 12px; margin: 12px 0; font-size: 0.9em; }
 .sm-mono { font-family: monospace; }
 .sm-tabs { display: flex; gap: 4px; margin: 14px 0 0; border-bottom: 2px solid #6dac20; flex-wrap: wrap; }
 .sm-tab { background: #eee; border: 1px solid #ccc; border-bottom: 0; border-radius: 8px 8px 0 0;
@@ -364,6 +376,19 @@ $rn_reiter = array(
 <tr><td class="sm-mono">Renault_<?php echo rn_e($rn_thema); ?>_Mileage</td><td>&lt;v.0&gt;&nbsp;km</td><td><?php echo rn_t('TEXT.KILOMETERSTAND'); ?></td></tr>
 <tr><td class="sm-mono">Renault_<?php echo rn_e($rn_thema); ?>_<?php echo rn_t('TEXT.PHPCALL'); ?></td><td>&lt;v.0&gt;</td><td><?php echo rn_t('TEXT.ZEITSTEMPEL_DES_LETZTEN_ABRUFS'); ?></td></tr>
 </table>
+
+<h2><?php echo rn_t('TEXT.H_VORLAGE'); ?></h2>
+<div class="sm-hinweis"><?php echo rn_t('TEXT.H_VORLAGE_TEXT'); ?></div>
+<div class="sm-knopfreihe" style="margin-bottom:14px;">
+<form action="index.php" method="post" style="margin:0;">
+  <input data-role="none" type="hidden" name="vorlage" value="1">
+  <button data-role="none" class="sm-btn" type="submit" style="background:#546e7a;"><?php echo rn_t('TEXT.K_VORLAGE'); ?></button>
+</form>
+<form action="index.php" method="post" style="margin:0;">
+  <input data-role="none" type="hidden" name="vorlage" value="vo">
+  <button data-role="none" class="sm-btn" type="submit" style="background:#546e7a;"><?php echo rn_t('TEXT.K_VORLAGE_VO'); ?></button>
+</form>
+</div>
 </div>
 
 <div class="sm-step">

@@ -485,3 +485,58 @@ function rn_t($schluessel)
     list($a, $s) = array_pad(explode('.', $schluessel, 2), 2, '');
     return isset($texte[$a][$s]) ? $texte[$a][$s] : $schluessel;
 }
+
+/** Vorlage der Gateway-Eingaenge nach dem Heimkino-Kunstgriff (12.08.2026):
+ *  VirtualInHttp mit Dummy-Adresse http://localhost und Abfragezyklus 604800 s,
+ *  nur damit Loxone die richtig benannten Eingaenge anlegt - die Werte kommen
+ *  vom MQTT-Gateway. Format wie Original-Export aus Loxone Config 17.1.
+ *  Die sechs Werte entsprechen der Tabelle im Reiter "Einbindung in Loxone". */
+function rn_vorlage()
+{
+    $cfg   = rn_config_read();
+    $thema = $cfg['zoename'];
+    $crlf = "\r\n";
+    $werte = array(
+        array('BatteryLevel',   'Batteriestand',                  'false', '0',  '100',        '<v.0> %'),
+        array('RangeHvacOff',   'Reichweite',                     'false', '0',  '2000',       '<v.0> km'),
+        array('ChargingStatus', 'Ladestatus',                     'true',  '-2', '2',          '<v.0>'),
+        array('PlugStatus',     'Kabel eingesteckt',              'true',  '-2', '2',          '<v.0>'),
+        array('Mileage',        'Kilometerstand',                 'false', '0',  '1000000',    '<v.0> km'),
+        array('phpCall',        'Zeitstempel des letzten Abrufs', 'false', '0',  '2147483647', '<v.0>'),
+    );
+    $o  = '<?xml version="1.0" encoding="utf-8"?>' . $crlf;
+    $o .= '<VirtualInHttp HintText="" Title="Renault Fahrzeugdaten" Comment="Erzeugt vom LoxBerry-Plugin Renault (' . date('d.m.Y') . '). Werte kommen vom MQTT-Gateway - Abo Renault/' . htmlspecialchars($thema, ENT_QUOTES | ENT_XML1, 'UTF-8') . '/# noetig." Address="http://localhost" PollingTime="604800">' . $crlf;
+    $o .= "\t" . '<Info templateType="2" minVersion="17010727"/>' . $crlf;
+    foreach ($werte as $w) {
+        $o .= "\t" . '<VirtualInHttpCmd Title="' . htmlspecialchars('Renault_' . $thema . '_' . $w[0], ENT_QUOTES | ENT_XML1, 'UTF-8') . '" ';
+        $o .= 'Comment="' . htmlspecialchars($w[1], ENT_QUOTES | ENT_XML1, 'UTF-8') . '" Check=" " ';
+        $o .= 'Signed="' . $w[2] . '" Analog="true" SourceValLow="0" DestValLow="0" SourceValHigh="1" DestValHigh="1" DefVal="0" MinVal="' . $w[3] . '" MaxVal="' . $w[4] . '" Unit="' . htmlspecialchars($w[5], ENT_QUOTES | ENT_XML1, 'UTF-8') . '" HintText=""/>' . $crlf;
+    }
+    $o .= '</VirtualInHttp>' . $crlf;
+    return array('VI_renault.xml', $o);
+}
+
+/** VO-Vorlage (Steuerbefehle) nach dem Heimkino/Robonect-Muster:
+ *  templateType 3, Aktionstoken eingesetzt. Befehle = rn_befehle(). */
+function rn_vorlage_vo()
+{
+    $host = isset($_SERVER['HTTP_HOST']) && $_SERVER['HTTP_HOST'] !== ''
+        ? preg_replace('/[^A-Za-z0-9\.\-:]/', '', (string) $_SERVER['HTTP_HOST'])
+        : (gethostname() ?: 'loxberry');
+    $cfg = rn_config_read();
+    $crlf = "\r\n";
+    $o = '<?xml version="1.0" encoding="utf-8"?>' . $crlf;
+    $o .= '<VirtualOut HintText="" Title="Renault steuern (LoxBerry-Plugin)" Comment="Steuerbefehle ueber das Plugin ' . htmlspecialchars(rn_paths()['plugin'], ENT_QUOTES | ENT_XML1, 'UTF-8') . ' - enthaelt das Aktionstoken." Address="http://' . htmlspecialchars($host, ENT_QUOTES | ENT_XML1, 'UTF-8') . '" CmdInit="" CloseAfterSend="true" CmdSep="">' . $crlf;
+    $o .= "\t" . '<Info templateType="3" minVersion="17010727"/>' . $crlf;
+    foreach (rn_befehle() as $rn_a => $rn_zweck) {
+        // Die Zwecktexte tragen HTML-Entitaeten (&deg;) - fuer das XML den
+        // Klartext nehmen, sonst stuende doppelt Maskiertes im Kommentar.
+        $rn_klar = html_entity_decode((string) $rn_zweck, ENT_QUOTES, 'UTF-8');
+        $o .= "\t" . '<VirtualOutCmd Title="' . htmlspecialchars($rn_klar, ENT_QUOTES | ENT_XML1, 'UTF-8') . '" Comment="" CmdOnMethod="GET" CmdOffMethod="GET" ';
+        $o .= 'CmdOn="' . htmlspecialchars(rn_aktionsadresse($cfg, $rn_a), ENT_QUOTES | ENT_XML1, 'UTF-8') . '" ';
+        $o .= 'CmdOnHTTP="" CmdOnPost="" CmdOff="" CmdOffHTTP="" CmdOffPost="" CmdAnswer="" ';
+        $o .= 'Analog="false" Repeat="0" RepeatRate="0" HintText=""/>' . $crlf;
+    }
+    $o .= '</VirtualOut>' . $crlf;
+    return array('VQ_renault_steuern.xml', $o);
+}
