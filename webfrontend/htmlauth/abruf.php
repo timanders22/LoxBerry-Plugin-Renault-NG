@@ -1,4 +1,8 @@
 <?php
+/* Jeder curl-Aufruf traegt Zeitschranken (CURLOPT_CONNECTTIMEOUT 10 s,
+ * CURLOPT_TIMEOUT 30 s). Ohne sie haengt ein Abruf, den Gigya oder die
+ * Renault-Schnittstelle nicht beantwortet, bis zum Systemende - im Cron
+ * staut sich das auf. */
 /**
  * Renault - Datenabruf und Befehlsempfang (frueher index.php)
  *
@@ -150,6 +154,8 @@ if (empty($session[1]) || $session[0] !== $date_today) {
   $ch = curl_init('https://accounts.eu1.gigya.com/accounts.login');
   curl_setopt($ch, CURLOPT_POST, TRUE);
   curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+  curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+  curl_setopt($ch, CURLOPT_TIMEOUT, 30);
   curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
   $response = curl_exec($ch);
   renault_log_api('Gigya Login (accounts.login)', $ch, $response);
@@ -173,6 +179,8 @@ if (empty($session[1]) || $session[0] !== $date_today) {
   $ch = curl_init('https://accounts.eu1.gigya.com/accounts.getJWT');
   curl_setopt($ch, CURLOPT_POST, TRUE);
   curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+  curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+  curl_setopt($ch, CURLOPT_TIMEOUT, 30);
   curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
   $response = curl_exec($ch);
   renault_log_api('Gigya JWT (accounts.getJWT)', $ch, $response);
@@ -199,6 +207,8 @@ if (empty($session[2])) {
   );
   $ch = curl_init('https://api-wired-prod-1-euw1.wrd-aws.com/commerce/v1/persons/'.$personId.'?country='.$country);
   curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+  curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+  curl_setopt($ch, CURLOPT_TIMEOUT, 30);
   curl_setopt($ch, CURLOPT_HTTPHEADER, $postData);
   $response = curl_exec($ch);
   renault_log_api('Kamereon Account-ID (persons)', $ch, $response);
@@ -229,6 +239,8 @@ if ($cmd_acnow === TRUE) {
   $ch = curl_init('https://api-wired-prod-1-euw1.wrd-aws.com/commerce/v1/accounts/'.$session[2].'/kamereon/kca/car-adapter/v1/cars/'.$vin.'/actions/hvac-start?country='.$country);
   curl_setopt($ch, CURLOPT_POST, TRUE);
   curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+  curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+  curl_setopt($ch, CURLOPT_TIMEOUT, 30);
   curl_setopt($ch, CURLOPT_HTTPHEADER, $postData);
   curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonData);
   $response = curl_exec($ch);
@@ -246,6 +258,8 @@ if ($cmd_chargenow === TRUE) {
   $ch = curl_init('https://api-wired-prod-1-euw1.wrd-aws.com/commerce/v1/accounts/'.$session[2].'/kamereon/kca/car-adapter/v1/cars/'.$vin.'/actions/charging-start?country='.$country);
   curl_setopt($ch, CURLOPT_POST, TRUE);
   curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+  curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+  curl_setopt($ch, CURLOPT_TIMEOUT, 30);
   curl_setopt($ch, CURLOPT_HTTPHEADER, $postData);
   curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonData);
   $response = curl_exec($ch);
@@ -264,6 +278,8 @@ if ($cmd_cmon === TRUE || $cmd_cmoff === TRUE) {
   $ch = curl_init('https://api-wired-prod-1-euw1.wrd-aws.com/commerce/v1/accounts/'.$session[2].'/kamereon/kca/car-adapter/v1/cars/'.$vin.'/actions/charge-mode?country='.$country);
   curl_setopt($ch, CURLOPT_POST, TRUE);
   curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+  curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+  curl_setopt($ch, CURLOPT_TIMEOUT, 30);
   curl_setopt($ch, CURLOPT_HTTPHEADER, $postData);
   curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonData);
   $response = curl_exec($ch);
@@ -278,6 +294,8 @@ if ($update_ok === TRUE) {
   );
   $ch = curl_init('https://api-wired-prod-1-euw1.wrd-aws.com/commerce/v1/accounts/'.$session[2].'/kamereon/kca/car-adapter/v2/cars/'.$vin.'/battery-status?country='.$country);
   curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+  curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+  curl_setopt($ch, CURLOPT_TIMEOUT, 30);
   curl_setopt($ch, CURLOPT_HTTPHEADER, $postData);
   $response = curl_exec($ch);
   renault_log_api('Batterie-Status (battery-status)', $ch, $response);
@@ -291,6 +309,8 @@ if ($update_ok === TRUE) {
     if (strpos($response, 'notFound') !== FALSE) {
       $ch = curl_init('https://api-wired-prod-1-euw1.wrd-aws.com/commerce/v1/accounts/'.$session[2].'/vehicles?country='.$country);
       curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+      curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+      curl_setopt($ch, CURLOPT_TIMEOUT, 30);
       curl_setopt($ch, CURLOPT_HTTPHEADER, $postData);
       $r2 = curl_exec($ch);
       if ($r2 !== FALSE) {
@@ -345,6 +365,8 @@ if (isset($md5) && $md5 != $session[3] && $update_sucess === TRUE) {
   );
   $ch = curl_init('https://api-wired-prod-1-euw1.wrd-aws.com/commerce/v1/accounts/'.$session[2].'/kamereon/kca/car-adapter/v1/cars/'.$vin.'/cockpit?country='.$country);
   curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+  curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+  curl_setopt($ch, CURLOPT_TIMEOUT, 30);
   curl_setopt($ch, CURLOPT_HTTPHEADER, $postData);
   $response = curl_exec($ch);
   if ($response === FALSE) die(curl_error($ch));
@@ -360,6 +382,8 @@ if (isset($md5) && $md5 != $session[3] && $update_sucess === TRUE) {
   );
   $ch = curl_init('https://api-wired-prod-1-euw1.wrd-aws.com/commerce/v1/accounts/'.$session[2].'/kamereon/kca/car-adapter/v1/cars/'.$vin.'/charge-mode?country='.$country);
   curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+  curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+  curl_setopt($ch, CURLOPT_TIMEOUT, 30);
   curl_setopt($ch, CURLOPT_HTTPHEADER, $postData);
   $response = curl_exec($ch);
   if ($response === FALSE) die(curl_error($ch));
@@ -379,6 +403,8 @@ if (isset($md5) && $md5 != $session[3] && $update_sucess === TRUE) {
     );
     $ch = curl_init('https://api-wired-prod-1-euw1.wrd-aws.com/commerce/v1/accounts/'.$session[2].'/kamereon/kca/car-adapter/v1/cars/'.$vin.'/location?country='.$country);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
     curl_setopt($ch, CURLOPT_HTTPHEADER, $postData);
     $response = curl_exec($ch);
     if ($response === FALSE) die(curl_error($ch));
@@ -398,6 +424,8 @@ if (isset($md5) && $md5 != $session[3] && $update_sucess === TRUE) {
   if ($zoeph == 2 && $weather_api_key != '') {
     $ch = curl_init('https://api.openweathermap.org/data/2.5/onecall/timemachine?lat='.$session[17].'&lon='.$session[18].'&dt='.$weather_api_dt.'&units=metric&lang='.$country.'&appid='.$weather_api_key);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
     $response = curl_exec($ch);
     if ($response === FALSE) die(curl_error($ch));
     $responseData = json_decode($response, TRUE);	
@@ -426,6 +454,8 @@ if (isset($md5) && $md5 != $session[3] && $update_sucess === TRUE) {
         $ch = curl_init('https://api-wired-prod-1-euw1.wrd-aws.com/commerce/v1/accounts/'.$session[2].'/kamereon/kca/car-adapter/v1/cars/'.$vin.'/actions/charge-mode?country='.$country);
         curl_setopt($ch, CURLOPT_POST, TRUE);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
         curl_setopt($ch, CURLOPT_HTTPHEADER, $postData);
         curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonData);
         $response = curl_exec($ch);
@@ -478,6 +508,8 @@ if (isset($md5) && $md5 != $session[3] && $update_sucess === TRUE) {
     $jsonData = urlencode('{"car_model":"'.$abrp_model.'","utc":'.$utc_timestamp.',"soc":'.$session[12].',"odometer":'.$session[7].',"is_charging":'.$abrp_is_charging.'}');
     $ch = curl_init('https://api.iternio.com/1/tlm/send?api_key=fd99255b-91a0-45cd-9df5-d6baa8e50ef8&token='.$abrp_token.'&tlm='.$jsonData);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
     $response = curl_exec($ch);
     if ($response === FALSE) die(curl_error($ch));
   }
@@ -496,6 +528,8 @@ $postData = array(
 );
 $ch = curl_init('https://api-wired-prod-1-euw1.wrd-aws.com/commerce/v1/accounts/'.$session[2].'/kamereon/kca/car-adapter/v1/cars/'.$vin.'/hvac-status?country='.$country);
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+curl_setopt($ch, CURLOPT_TIMEOUT, 30);
 curl_setopt($ch, CURLOPT_HTTPHEADER, $postData);
 $response = curl_exec($ch);
 if ($response !== FALSE) {

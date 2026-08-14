@@ -1,4 +1,8 @@
 <?php
+/* Jeder curl-Aufruf traegt Zeitschranken (CURLOPT_CONNECTTIMEOUT 10 s,
+ * CURLOPT_TIMEOUT 30 s). Ohne sie haengt ein Abruf, den Gigya oder die
+ * Renault-Schnittstelle nicht beantwortet, bis zum Systemende - im Cron
+ * staut sich das auf. */
 
 require_once "loxberry_web.php";
 
@@ -73,6 +77,8 @@ if ($session[0] !== $date_today) {
   $ch = curl_init('https://accounts.eu1.gigya.com/accounts.login');
   curl_setopt($ch, CURLOPT_POST, TRUE);
   curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+  curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+  curl_setopt($ch, CURLOPT_TIMEOUT, 30);
   curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
   $response = curl_exec($ch);
   if ($response === FALSE) die(curl_error($ch));  
@@ -89,6 +95,8 @@ if ($session[0] !== $date_today) {
   $ch = curl_init('https://accounts.eu1.gigya.com/accounts.getJWT');
   curl_setopt($ch, CURLOPT_POST, TRUE);
   curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+  curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+  curl_setopt($ch, CURLOPT_TIMEOUT, 30);
   curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
   $response = curl_exec($ch);
   if ($response === FALSE) die(curl_error($ch));
@@ -104,6 +112,8 @@ $postData = array(
 );
 $ch = curl_init('https://api-wired-prod-1-euw1.wrd-aws.com/commerce/v1/accounts/'.$session[2].'/kamereon/kca/car-adapter/v1/cars/'.$vin.'/charges?country='.$country.'&start='.date("Ymd", strtotime("-1 months")).'&end='.date("Ymd"));
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+curl_setopt($ch, CURLOPT_TIMEOUT, 30);
 curl_setopt($ch, CURLOPT_HTTPHEADER, $postData);
 
 $response = curl_exec($ch);

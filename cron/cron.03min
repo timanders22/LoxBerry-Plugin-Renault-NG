@@ -23,5 +23,15 @@ if [ ! -d "$VERZ" ]; then
     exit 1
 fi
 
+# ---- Sperre gegen Parallellaeufe -----------------------------------------
+# Die Renault-Schnittstelle ist traege; seit dieser Fassung tragen die
+# curl-Aufrufe zwar Zeitschranken (10 s verbinden, 30 s gesamt), aber ein
+# Lauf kann damit immer noch laenger dauern als der Cron-Takt. Ohne Sperre
+# startete der naechste Abruf, waehrend dieser noch laeuft - zwei Anmeldungen
+# bei Gigya gleichzeitig, doppelte Schreibvorgaenge auf dieselbe Datei.
+# flock ist nicht blockierend: wer nicht drankommt, geht kommentarlos wieder.
+exec 9>"/tmp/renault_abruf.lock" || exit 0
+flock -n 9 || exit 0
+
 cd "$VERZ" || exit 1
 php abruf.php cron
