@@ -33,21 +33,37 @@
 KONF="REPLACELBPCONFIGDIR"
 ALT="REPLACELBPHTMLAUTHDIR"
 
+# ===================================================================
+# DIE ZWEITSCHRIFT LIEGT NEBEN DEM ORDNER, NICHT DARIN
+# ===================================================================
+# Bis 2.0.6 stand sie als "$KONF/config.php.backup" IM Konfigordner -
+# also genau dort, was der Installer beim Deinstallieren mit "rm -rf
+# config/plugins/<ordner>/" abraeumt. Sie sah aus wie ein Schutz und war
+# keiner. rn_lib.php schrieb sie an dieselbe Stelle, obwohl der Kommentar
+# darueber "ausserhalb des Plugin-Ordners" behauptete; uninstall/uninstall
+# beschrieb die Lage seit jeher richtig.
+SICH="${KONF}.backup.config.php"
+
 mkdir -p "$KONF" 2>/dev/null
 
 # Fall A: schon umgezogen (1.6.0 und neuer)
 if [ -f "$KONF/config.php" ]; then
-    cp -f "$KONF/config.php" "$KONF/config.php.backup"
-    chmod 600 "$KONF/config.php.backup" 2>/dev/null
-    echo "<OK> Konfiguration gesichert."
+    cp -f "$KONF/config.php" "$SICH"
+    chmod 600 "$SICH" 2>/dev/null
+    echo "<OK> Konfiguration gesichert nach $SICH."
 # Fall B: Update von 1.4 oder aelter - die Datei liegt noch beim Programm.
 # Sie wird HIER schon in den Konfigordner geholt, denn gleich wird der
 # Programmordner geloescht.
 elif [ -f "$ALT/config.php" ]; then
     cp -f "$ALT/config.php" "$KONF/config.php"
-    cp -f "$ALT/config.php" "$KONF/config.php.backup"
-    chmod 600 "$KONF/config.php" "$KONF/config.php.backup" 2>/dev/null
+    cp -f "$ALT/config.php" "$SICH"
+    chmod 600 "$KONF/config.php" "$SICH" 2>/dev/null
     echo "<OK> Konfiguration aus dem Programmordner in den Konfigordner geholt."
+# Fall C: nur die alte Zweitschrift ist noch da (Update von 2.0.x).
+elif [ -f "$KONF/config.php.backup" ]; then
+    cp -f "$KONF/config.php.backup" "$SICH"
+    chmod 600 "$SICH" 2>/dev/null
+    echo "<OK> Alte Zweitschrift aus dem Konfigordner herausgeholt."
 else
     echo "<INFO> Keine Konfiguration gefunden - vermutlich eine Erstinstallation."
 fi

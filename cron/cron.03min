@@ -3,6 +3,15 @@
 #
 # REPLACELBPHTMLAUTHDIR und REPLACELBPLOGDIR ersetzt der LoxBerry-Installer.
 #
+# ZEILENENDEN: DIESE DATEI IST LF, NICHT CRLF.
+# Bis 2.0.6 war sie vollstaendig CRLF. Der Kernel sucht dann einen
+# Interpreter namens "/bin/bash\r", findet ihn nicht und bricht mit
+# Rueckgabewert 126 und "bad interpreter" ab - der Abruf lief nie. Und es
+# genuegt NICHT, nur die Shebang-Zeile zu richten: mit CRLF im Rest wird aus
+# VERZ der Wert "…\r", die Verzeichnispruefung unten schlaegt fehl, und das
+# Skript schreibt "Plugin-Verzeichnis nicht gefunden" ins Protokoll.
+# Wer diese Datei bearbeitet, prueft die Zeilenenden hinterher nach.
+#
 # WARUM HIER EINE FEHLERMELDUNG STEHT
 # Bis 1.4 lautete die Zeile nur
 #     cd REPLACELBPHTMLAUTHDIR && php abruf.php cron
@@ -13,7 +22,7 @@
 # Die Meldung geht NICHT nach /tmp: das ist auf dem LoxBerry eine Ramdisk,
 # der Hinweis waere beim naechsten Neustart fort - und gerade dann sucht
 # man ihn. Sie geht ins Protokoll des Plugins, das die Oberflaeche im
-# Reiter "Protokoll" anzeigt.
+# Reiter "Logdateien" anzeigt.
 VERZ="REPLACELBPHTMLAUTHDIR"
 PROT="REPLACELBPLOGDIR/renault.log"
 
@@ -24,13 +33,18 @@ if [ ! -d "$VERZ" ]; then
 fi
 
 # ---- Sperre gegen Parallellaeufe -----------------------------------------
-# Die Renault-Schnittstelle ist traege; seit dieser Fassung tragen die
-# curl-Aufrufe zwar Zeitschranken (10 s verbinden, 30 s gesamt), aber ein
-# Lauf kann damit immer noch laenger dauern als der Cron-Takt. Ohne Sperre
-# startete der naechste Abruf, waehrend dieser noch laeuft - zwei Anmeldungen
-# bei Gigya gleichzeitig, doppelte Schreibvorgaenge auf dieselbe Datei.
+# EINE Sperre fuer BEIDE Cron-Skripte. Bis 2.0.6 hatte jedes seine eigene
+# (/tmp/renault_abruf.lock gegen /tmp/renault_history.lock) - sie sperrten
+# sich also gerade nicht gegeneinander, obwohl beide dieselben Dateien unter
+# data/plugins/<ordner>/ lesen und schreiben. Bei einem Zusammentreffen
+# ueberschrieb der langsamere den frischen Abruf des schnelleren mit seinem
+# Stand von vor bis zu 80 Sekunden.
+#
+# Die Renault-Schnittstelle ist traege; die curl-Aufrufe tragen zwar
+# Zeitschranken (10 s verbinden, 30 s gesamt), aber ein Lauf kann damit immer
+# noch laenger dauern als der Cron-Takt.
 # flock ist nicht blockierend: wer nicht drankommt, geht kommentarlos wieder.
-exec 9>"/tmp/renault_abruf.lock" || exit 0
+exec 9>"/tmp/renault_ng.lock" || exit 0
 flock -n 9 || exit 0
 
 cd "$VERZ" || exit 1

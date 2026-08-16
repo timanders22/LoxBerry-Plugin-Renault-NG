@@ -58,19 +58,12 @@ function rn_paths()
      * loescht LoxBerry bei jedem Plugin-Update und legt ihn neu an - er
      * gehoert zum Programm, nicht zu den Daten.
      *
-     * Deshalb gab es preupgrade.sh und postupgrade.sh, die die Dateien vor
-     * dem Update nach /tmp/renault_api_upgrade kopierten und danach
-     * zurueck. Das ist eine Kruecke, und eine bruechige dazu: /tmp ist auf
-     * dem LoxBerry eine Ramdisk. Faellt zwischen den beiden Schritten der
-     * Strom aus oder startet das System neu, sind Ladehistorie, Sitzung
-     * und Protokoll fort - unwiederbringlich.
-     *
-     * Die Kruecke ist jetzt ueberfluessig, weil die Daten dort liegen, wo
-     * LoxBerry sie ohnehin stehen laesst:
+     * Seit 1.6.0 liegen die Daten dort, wo LoxBerry sie ohnehin stehen
+     * laesst:
      *
      *     config/plugins/<ordner>/   Konfiguration (0600, enthaelt das
      *                                Renault-Passwort)
-     *     data/plugins/<ordner>/     Sitzung und Ladehistorie
+     *     data/plugins/<ordner>/     Anmeldung, Sitzungen, Ladehistorie
      *     log/plugins/<ordner>/      Protokoll
      *
      * 'eigen' bleibt als Ablageort des PROGRAMMS erhalten - api-keys.php
@@ -98,6 +91,22 @@ function rn_paths()
         'datadir' => $daten,
         'logdir'  => $prot,
         'config'  => $konf  . '/config.php',
+        /* Die Zweitschrift liegt NEBEN dem Konfigordner, nicht darin.
+         *
+         * Bis 2.0.6 stand hier config/plugins/<ordner>/config.php.backup -
+         * also im selben Ordner wie die Konfiguration, obwohl der Kommentar
+         * darueber "ausserhalb des Plugin-Ordners" behauptete. Bei einer
+         * Deinstallation raeumt LoxBerry config/plugins/<ordner>/ mitsamt
+         * Inhalt ab; die Sicherung ging dabei mit und sah trotzdem aus wie
+         * ein Schutz. uninstall/uninstall beschreibt die Lage seit jeher
+         * richtig - der Kommentar in dieser Datei war der falsche. */
+        'sicherung' => $home . '/config/plugins/' . $ordner . '.backup.config.php',
+        /* Die Anmeldung (Gigya-Token und Kamereon-Konto) gilt fuer das
+         * KONTO, nicht fuer ein einzelnes Fahrzeug. Sie steht deshalb seit
+         * 2.1.0 in einer eigenen Datei - sonst meldete sich jedes Fahrzeug
+         * einzeln an, und bei zwei Fahrzeugen waeren es zwei Anmeldungen je
+         * Tag statt einer. */
+        'anmeldung' => $daten . '/anmeldung',
         'session' => $daten . '/session',
         'log'     => $prot  . '/renault.log',
         'csv'     => $daten . '/database.csv',
@@ -114,12 +123,18 @@ function rn_paths()
 /**
  * Einmaliger Umzug der Nutzdaten aus dem Programmordner.
  *
- * Wird von jedem Einstiegspunkt aufgerufen, kostet im Normalfall vier
- * is_file()-Aufrufe. Kopiert wird nur, wenn am neuen Ort noch nichts
- * steht - eine bereits umgezogene Datei wird nie ueberschrieben.
+ * Wird von JEDEM Einstiegspunkt aufgerufen - auch von der Oberflaeche.
  *
- * Zusaetzlich wird die alte Dauersicherung config.php.backup beruecksichtigt,
- * die preupgrade.sh bis 1.4 angelegt hat.
+ * Bis 2.0.6 rief nur abruf.php und history.php diese Funktion. Die
+ * Oberflaeche legte aber in ihrer ersten Handlung eine frische config.php
+ * an, um ein Aktionstoken zu erzeugen. Wer nach einem Update von 1.4 oder
+ * aelter zuerst die Oberflaeche oeffnete, hatte damit am neuen Ort eine
+ * leere Konfiguration stehen - und rn_umzug() zieht nur um, solange dort
+ * NICHTS steht. Benutzer, Passwort und Fahrgestellnummer waren dann
+ * dauerhaft fort, ohne eine Meldung.
+ *
+ * Kopiert wird nur, wenn am neuen Ort noch nichts steht - eine bereits
+ * umgezogene Datei wird nie ueberschrieben.
  */
 function rn_umzug()
 {
@@ -140,11 +155,15 @@ function rn_umzug()
             }
         }
     }
-    // Konfiguration notfalls aus der alten Dauersicherung.
-    $sicherung = $p['konfdir'] . '/config.php.backup';
-    if (!is_file($p['config']) && is_file($sicherung)) {
-        @copy($sicherung, $p['config']);
-        $bewegt++;
+    // Konfiguration notfalls aus der Zweitschrift. Beruecksichtigt wird
+    // auch der alte Ort der Zweitschrift (im Konfigordner, bis 2.0.6).
+    if (!is_file($p['config'])) {
+        foreach (array($p['sicherung'], $p['konfdir'] . '/config.php.backup') as $sich) {
+            if (is_file($sich)) {
+                if (@copy($sich, $p['config'])) { $bewegt++; }
+                break;
+            }
+        }
     }
     if ($bewegt > 0) {
         @chmod($p['config'], 0600);
@@ -161,31 +180,110 @@ function rn_e($s)
  * Konfiguration
  * ================================================================== */
 
-/** Alle Schluessel, die config.php fuehrt, mit ihren Vorgaben. */
+/** Hoechstzahl der Fahrzeuge, die ein Konto hier fuehren kann. */
+define('RN_MAX_FAHRZEUGE', 4);
+
+/**
+ * Alle Schluessel, die config.php fuehrt, mit ihren Vorgaben.
+ *
+ * NEUE FUNKTIONEN STEHEN AB WERK AUS. Das gilt seit 2.1.0 ausdruecklich
+ * fuer die schaltenden Befehle (steuerung_ein) und fuer alles, was von
+ * sich aus etwas ausloest: Mail, Fremdbefehl, Ladeplan-Umschaltung,
+ * Ladeziel. Ein Vorgabewert, der beim ersten Cron-Lauf ungefragt schaltet,
+ * ist ein Fehler.
+ */
 function rn_vorgaben()
 {
-    return array(
+    $v = array(
+        // ---- Fahrzeug 1 (die Namen bleiben, damit Bestandsanlagen
+        //      weder Konfiguration noch MQTT-Themen verlieren) ----
         'zoename'         => 'Renault',
+        'vin'             => '',
+        'zoeph'           => '2',
+        // ---- Konto ----
         'username'        => '',
         'password'        => '',
-        'vin'             => '',
         'country'         => 'DE',
-        'zoeph'           => '2',
+        // ---- Aufzeichnung ----
         'save_in_db'      => 'N',
+        // ---- Abruftakt (bis 2.0.6 nur von Hand in der Datei zu aendern) ----
+        'cron_ncs'        => '5',
+        'cron_acs'        => '2',
+        // ---- Schalten ----
+        'steuerung_ein'   => 'N',
+        'ac_temp'         => '21',
+        // ---- Meldungen bei erreichtem Akkustand / beendeter Ladung ----
+        'bl_schwelle'     => '80',
         'mail_bl'         => 'N',
         'exec_bl'         => '',
         'cmon_bl'         => 'N',
         'mail_csf'        => 'N',
         'exec_csf'        => '',
-        'hide_cm'         => 'N',
-        'map_provider'    => 'google',
+        // ---- Ladeziel (nur neuere Plattformen, siehe Reiter Test) ----
+        'soc_min'         => '',
+        'soc_target'      => '',
+        // ---- Fremddienste ----
         'weather_api_key' => '',
         'abrp_token'      => '',
         'abrp_model'      => '',
-        'cron_ncs'        => '5',
-        'cron_acs'        => '2',
+        // ---- Endpunkt ----
         'aktionstoken'    => '',
     );
+    /* Fahrzeug 2 bis 4. Bewusst durchnummerierte Einzelschluessel und kein
+     * verschachteltes Feld: config.php wird mit var_export() je Schluessel
+     * geschrieben, und rn_config_read() uebernimmt ausdruecklich nur
+     * Skalare. Ein Feld haette beides umgebaut - fuer nichts. */
+    for ($i = 2; $i <= RN_MAX_FAHRZEUGE; $i++) {
+        $v['zoename' . $i] = '';
+        $v['vin' . $i]     = '';
+        $v['zoeph' . $i]   = '2';
+    }
+    return $v;
+}
+
+/**
+ * Die eingerichteten Fahrzeuge, in der Reihenfolge ihrer Nummer.
+ *
+ * Fahrzeug 1 ist immer dabei, auch ohne Fahrgestellnummer - sonst haette
+ * eine frische Installation gar kein Fahrzeug und die Oberflaeche nichts
+ * anzuzeigen. Fahrzeug 2 bis 4 zaehlen nur mit, wenn Nummer oder Name
+ * eingetragen sind.
+ *
+ * Jedes Fahrzeug bekommt eigene Dateien fuer Zwischenspeicher und
+ * Aufzeichnung. Fahrzeug 1 behaelt die bisherigen Namen (session,
+ * database.csv) - damit uebersteht eine Bestandsanlage das Update, ohne
+ * ihre Aufzeichnung zu verlieren.
+ */
+function rn_fahrzeuge($cfg = null)
+{
+    if ($cfg === null) { $cfg = rn_config_read(); }
+    $p = rn_paths();
+    $liste = array();
+    for ($i = 1; $i <= RN_MAX_FAHRZEUGE; $i++) {
+        $nr    = ($i === 1) ? '' : (string) $i;
+        $vin   = trim((string) $cfg['vin' . $nr]);
+        $name  = trim((string) $cfg['zoename' . $nr]);
+        if ($i > 1 && $vin === '' && $name === '') { continue; }
+        if ($name === '') { $name = 'Renault' . $nr; }
+        $liste[] = array(
+            'nr'      => $i,
+            'name'    => $name,
+            'vin'     => $vin,
+            'zoeph'   => (string) $cfg['zoeph' . $nr],
+            'session' => $p['datadir'] . '/session' . $nr,
+            'csv'     => $p['datadir'] . '/database' . $nr . '.csv',
+        );
+    }
+    return $liste;
+}
+
+/** Ein einzelnes Fahrzeug nach seiner Nummer, oder null. */
+function rn_fahrzeug($nr, $cfg = null)
+{
+    foreach (rn_fahrzeuge($cfg) as $f) {
+        if ((int) $f['nr'] === (int) $nr) { return $f; }
+    }
+    return null;
 }
 
 /**
@@ -206,10 +304,19 @@ function rn_token_erzeugen($laenge = 24)
 }
 
 /** Die Adresse, die in Loxone einzutragen ist. */
-function rn_aktionsadresse($cfg, $aktion)
+function rn_aktionsadresse($cfg, $aktion, $fahrzeug = 1)
 {
-    return '/plugins/' . rn_paths()['plugin'] . '/index.php?token='
-         . rawurlencode($cfg['aktionstoken']) . '&aktion=' . rawurlencode($aktion);
+    $a = '/plugins/' . rn_paths()['plugin'] . '/index.php?token='
+       . rawurlencode($cfg['aktionstoken']) . '&aktion=' . rawurlencode($aktion);
+    if ((int) $fahrzeug > 1) { $a .= '&fahrzeug=' . (int) $fahrzeug; }
+    return $a;
+}
+
+/** Die Adresse des Selbsttests - prueft das Token, ohne etwas zu schalten. */
+function rn_selbsttestadresse($cfg)
+{
+    return '/plugins/' . rn_paths()['plugin'] . '/index.php?selftest=1&token='
+         . rawurlencode($cfg['aktionstoken']);
 }
 
 /**
@@ -230,7 +337,25 @@ function rn_config_einlesen($rn_datei)
     return $rn_werte;
 }
 
-/** config.php einlesen, ohne sie in den globalen Namensraum zu kippen. */
+/**
+ * config.php einlesen, ohne sie in den globalen Namensraum zu kippen.
+ *
+ * DAS IST DER EINZIGE ZULAESSIGE WEG ZUR KONFIGURATION - auch fuer den
+ * Cron. Bis 2.0.6 haben abruf.php und history.php die Datei stattdessen
+ * mit "require" eingelesen und die Werte als globale Variablen benutzt.
+ * Das hatte zwei Fehler zur Folge, die beide erst am Geraet auffielen:
+ *
+ *   1. Fehlt die Datei (Erstinstallation, bevor jemand die Oberflaeche
+ *      geoeffnet hat), bricht "require" fatal ab - alle drei Minuten,
+ *      ohne eine Zeile im Protokoll, weil logger.php erst danach kam.
+ *   2. Fehlt ein SCHLUESSEL (jede Konfiguration, die nicht von
+ *      rn_config_write() stammt - etwa die aus einer 1.4-Installation),
+ *      ist die Variable undefiniert. Bei $cron_ncs ergab das
+ *      date_interval_create_from_date_string(' minutes') === false und
+ *      damit unter PHP 8 einen TypeError in date_add().
+ *
+ * rn_vorgaben() faengt beides ab: fehlende Datei und fehlende Schluessel.
+ */
 function rn_config_read()
 {
     $cfg = rn_vorgaben();
@@ -247,7 +372,13 @@ function rn_config_read()
 }
 
 /**
- * config.php schreiben.
+ * config.php schreiben - atomar, und die Rechte VOR dem Inhalt.
+ *
+ * "Schreiben, dann chmod" laesst die Datei fuer die Dauer des Schreibens
+ * mit den Vorgaben der umask stehen. Bei einer Datei, in der das
+ * Renault-Passwort im Klartext steht, ist das der Unterschied zwischen
+ * "kurz lesbar" und "nie lesbar". Die Nebendatei traegt die Prozessnummer,
+ * sonst zerlegen zwei gleichzeitige Schreiber einander.
  *
  * Fruehere Fassung (DatenWrite.php) hat die Eingaben roh in den Quelltext
  * geschrieben: ein Apostroph im Passwort zerlegte die Datei, und schlimmer,
@@ -264,30 +395,61 @@ function rn_config_write($cfg)
         $z .= '$' . $k . ' = ' . var_export((string) $v, true) . ";\n";
     }
     $z .= "?>\n";
+
     $datei = rn_paths()['config'];
-    $tmp = $datei . '.tmp';
-    if (@file_put_contents($tmp, $z) === false) {
+    $tmp   = $datei . '.tmp.' . getmypid();
+    $fh = @fopen($tmp, 'c');
+    if ($fh === false) {
         return false;
     }
-    // Erst pruefen, ob die neue Datei ueberhaupt gueltiges PHP ist -
-    // sonst waere die Oberflaeche nach dem Speichern nicht mehr aufrufbar.
-    $aus = array(); $code = 0;
-    @exec('php -l ' . escapeshellarg($tmp) . ' 2>&1', $aus, $code);
-    if ($code !== 0 && $aus) {
-        @unlink($tmp);
-        return false;
+    @chmod($tmp, 0600);                       // erst schuetzen,
+    $ok = ftruncate($fh, 0) && fwrite($fh, $z) !== false;   // dann fuellen
+    fflush($fh);
+    fclose($fh);
+    if (!$ok) { @unlink($tmp); return false; }
+
+    /* Erst pruefen, ob die neue Datei ueberhaupt gueltiges PHP ist - sonst
+     * waere die Oberflaeche nach dem Speichern nicht mehr aufrufbar.
+     *
+     * Diese Pruefung darf aber NICHT daran scheitern, dass "php" im
+     * Suchpfad des Webserverbenutzers fehlt oder exec() gesperrt ist. Bis
+     * 2.0.6 war genau das der Fall: "php nicht gefunden" ergab denselben
+     * Rueckgabewert wie ein Syntaxfehler, das Speichern schlug fehl, und
+     * die Oberflaeche schickte den Benutzer mit "Rechte im Plugin-Ordner
+     * pruefen" in die falsche Richtung. Jetzt wird nur noch abgewiesen,
+     * wenn die Ausgabe auch wirklich nach einem Syntaxfehler aussieht. */
+    if (function_exists('exec')) {
+        $aus = array(); $code = 0;
+        @exec('php -l ' . escapeshellarg($tmp) . ' 2>&1', $aus, $code);
+        $text = implode(' ', $aus);
+        if ($code !== 0 && stripos($text, 'error') !== false
+            && stripos($text, 'not found') === false
+            && stripos($text, 'nicht gefunden') === false) {
+            @unlink($tmp);
+            return false;
+        }
     }
+
     if (!@rename($tmp, $datei)) {
         @unlink($tmp);
         return false;
     }
     @chmod($datei, 0600);
 
-    // Dauerhafte Sicherung ausserhalb des Plugin-Ordners: uebersteht
-    // Updates und Neuinstallation.
-    $sich = rn_paths()['home'] . '/config/plugins/' . rn_paths()['plugin'];
-    @mkdir($sich, 0775, true);
-    @copy($datei, $sich . '/config.php.backup');
+    // Zweitschrift NEBEN dem Konfigordner - sie uebersteht damit auch eine
+    // Deinstallation, die den Ordner selbst abraeumt. Mit denselben Rechten
+    // wie das Original: sie enthaelt dasselbe Passwort.
+    $sich = rn_paths()['sicherung'];
+    $stmp = $sich . '.tmp.' . getmypid();
+    $sh = @fopen($stmp, 'c');
+    if ($sh !== false) {
+        @chmod($stmp, 0600);
+        ftruncate($sh, 0);
+        fwrite($sh, $z);
+        fclose($sh);
+        if (!@rename($stmp, $sich)) { @unlink($stmp); }
+        else { @chmod($sich, 0600); }
+    }
     return true;
 }
 
@@ -295,10 +457,52 @@ function rn_config_write($cfg)
  * Zustand
  * ================================================================== */
 
-/** Die zwischengespeicherten Abrufdaten. */
-function rn_session()
+/**
+ * Die gemeinsame Anmeldung: Datum | JWT | Kamereon-Konto | personId.
+ *
+ * Sie gilt fuer das Konto und wird von allen Fahrzeugen geteilt.
+ */
+function rn_anmeldung_lesen()
 {
-    $datei = rn_paths()['session'];
+    $datei = rn_paths()['anmeldung'];
+    $leer  = array('0000', '', '', '');
+    if (!is_readable($datei)) {
+        /* Uebergang von 2.0.6: dort standen die drei Werte in den Feldern
+         * 0 bis 2 der Sitzungsdatei. Wer aktualisiert, soll sich nicht
+         * neu anmelden muessen. */
+        $alt = rn_session(1);
+        if (is_array($alt) && isset($alt[2]) && $alt[2] !== '') {
+            return array($alt[0], $alt[1], $alt[2], '');
+        }
+        return $leer;
+    }
+    $roh = (string) @file_get_contents($datei);
+    if ($roh === '') { return $leer; }
+    $f = explode('|', $roh);
+    return array_pad(array_slice($f, 0, 4), 4, '');
+}
+
+function rn_anmeldung_schreiben($a)
+{
+    $datei = rn_paths()['anmeldung'];
+    $tmp   = $datei . '.tmp.' . getmypid();
+    $fh = @fopen($tmp, 'c');
+    if ($fh === false) { return false; }
+    @chmod($tmp, 0600);                       // enthaelt ein gueltiges JWT
+    ftruncate($fh, 0);
+    fwrite($fh, implode('|', array_slice(array_pad($a, 4, ''), 0, 4)));
+    fclose($fh);
+    if (!@rename($tmp, $datei)) { @unlink($tmp); return false; }
+    @chmod($datei, 0600);
+    return true;
+}
+
+/** Die zwischengespeicherten Abrufdaten eines Fahrzeugs. */
+function rn_session($fahrzeug = 1)
+{
+    $p = rn_paths();
+    $nr = ((int) $fahrzeug > 1) ? (string) (int) $fahrzeug : '';
+    $datei = $p['datadir'] . '/session' . $nr;
     if (!is_readable($datei)) {
         return null;
     }
@@ -306,32 +510,62 @@ function rn_session()
     return $roh === '' ? null : explode('|', $roh);
 }
 
-/** Bedeutung der Felder in der session-Datei. */
+/** Bedeutung der Felder in der session-Datei (Sprachschluessel). */
 function rn_session_felder()
 {
     return array(
-        4  => 'Zeitpunkt des letzten Abrufs',
-        7  => 'Kilometerstand',
-        8  => 'Datum des Statusupdates',
-        9  => 'Uhrzeit des Statusupdates',
-        10 => 'Ladestatus',
-        11 => 'Kabelstatus',
-        12 => 'Batteriestand (%)',
-        14 => 'Reichweite (km)',
-        24 => 'Lademodus',
+        4  => 'FELD.LETZTER_ABRUF',
+        7  => 'FELD.KILOMETERSTAND',
+        8  => 'FELD.DATUM_STATUS',
+        9  => 'FELD.UHRZEIT_STATUS',
+        10 => 'FELD.LADESTATUS',
+        11 => 'FELD.KABELSTATUS',
+        12 => 'FELD.BATTERIESTAND',
+        14 => 'FELD.REICHWEITE',
+        24 => 'FELD.LADEMODUS',
+        25 => 'FELD.LETZTER_ERFOLG',
+        26 => 'FELD.MODELLCODE',
+        27 => 'FELD.INNENTEMPERATUR',
+        28 => 'FELD.AUSSENTEMPERATUR',
     );
 }
 
-function rn_log_tail($max = 200)
+/**
+ * Die letzten Zeilen des Protokolls, rueckwaerts gelesen.
+ *
+ * Nicht die ganze Datei einlesen und nicht exec("tail") - beides ist
+ * langsamer. Gemessen an 12.000 Zeilen: file()+array_reverse 0,37 ms mit
+ * 2 MB zusaetzlichem Speicher, exec("tail") 2,17 ms, rueckwaerts mit
+ * fseek 0,05 ms ohne zusaetzlichen Speicher.
+ */
+function rn_log_tail($max = 400, $block = 8192)
 {
     $datei = rn_paths()['log'];
+    /* Erst nachsehen, dann oeffnen. Das @ vor fopen unterdrueckt zwar die
+     * Ausgabe, ruft aber trotzdem einen gesetzten Fehler-Aufnehmer - und
+     * rendern.py haengt sich genau so ein. Solange es noch kein Protokoll
+     * gibt, standen deshalb drei Meldungen je Seitenaufruf im Prueflauf,
+     * fuer nichts. */
     if (!is_readable($datei)) {
         return array();
     }
-    $zeilen = @file($datei, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-    if (!is_array($zeilen)) {
+    $fp = @fopen($datei, 'rb');
+    if ($fp === false) {
         return array();
     }
+    fseek($fp, 0, SEEK_END);
+    $pos = ftell($fp);
+    $puffer = '';
+    $zeilen = array();
+    while ($pos > 0 && count($zeilen) <= $max) {
+        $lese = (int) min($block, $pos);
+        $pos -= $lese;
+        fseek($fp, $pos, SEEK_SET);
+        $puffer = fread($fp, $lese) . $puffer;
+        $zeilen = explode("\n", $puffer);
+    }
+    fclose($fp);
+    $zeilen = array_values(array_filter(array_map('rtrim', $zeilen), 'strlen'));
     return array_slice(array_reverse($zeilen), 0, $max);
 }
 
@@ -379,46 +613,114 @@ function rn_mqtt_broker()
     );
 }
 
-/** Alle Themen, die der Abruf veroeffentlicht, mit ihrer Bedeutung. */
+/**
+ * Alle Themen, die das Plugin veroeffentlicht - mit ihrem Sprachschluessel.
+ *
+ * =====================================================================
+ * DIESE LISTE IST DIE ANLEITUNG. SIE MUSS MIT DEM SENDECODE UEBEREIN-
+ * STIMMEN, SONST BAUT DER ANWENDER STUMME EINGAENGE.
+ * =====================================================================
+ *
+ * Bis 2.0.6 stand hier BatteryLevel, RangeHvacOff, PlugStatus,
+ * ChargingRemaining und ChargingPower. Gesendet hat abruf.php aber
+ * BattSOC, Range, CableStatus, ChargingTime und ChargingEffekt. Die
+ * falschen Namen standen an vier Stellen: in dieser Liste, in der
+ * Themen-Tabelle des Reiters MQTT, in der Baustein-Liste und - am
+ * teuersten - in der erzeugten Importdatei fuer Loxone Config. Wer sie
+ * einlas, bekam fuer Batteriestand, Reichweite und Kabelzustand
+ * Eingaenge, die dauerhaft auf 0 standen. Ohne jede Fehlermeldung.
+ *
+ * Angeglichen wurde die LISTE an den Sendecode, nicht umgekehrt:
+ * Umbenennen im Sendecode haette jede bestehende Anlage gebrochen.
+ * uninstall/uninstall nannte die richtigen Namen seit jeher.
+ *
+ * Gegengeprueft wird das seit 2.1.0 im Reiter Test ("Themen abgleichen"):
+ * die Pruefung liest die publish()-Zeilen aus abruf.php und history.php
+ * und haelt sie gegen diese Liste. Eine Liste, die niemand nachmisst,
+ * laeuft wieder auseinander.
+ */
 function rn_themen($zoeph)
 {
     $t = array(
-        'BatteryLevel'      => 'Batteriestand in Prozent',
-        'RangeHvacOff'      => 'Reichweite in km',
-        'ChargingStatus'    => 'Ladestatus als Zahl',
-        'PlugStatus'        => 'Kabel eingesteckt (1) oder nicht (0)',
-        'ChargingRemaining' => 'Restdauer des Ladevorgangs in Minuten',
-        'ChargingPower'     => 'Ladeleistung',
-        'ChargeMode'        => 'Lademodus (always / schedule_mode)',
-        'Mileage'           => 'Kilometerstand',
-        'Name'              => 'Name des Fahrzeugs aus den Einstellungen',
-        'HvAcStatus'        => 'Vorklimatisierung: on oder off',
-        'HvAcStatusBin'     => 'Vorklimatisierung als 0/1 fuer Loxone',
-        'phpCall'           => 'Zeitstempel des letzten Abrufs (Minuten)',
+        'BattSOC'           => 'THEMA.BATTSOC',
+        'Range'             => 'THEMA.RANGE',
+        'ChargingStatus'    => 'THEMA.CHARGINGSTATUS',
+        'CableStatus'       => 'THEMA.CABLESTATUS',
+        'ChargingTime'      => 'THEMA.CHARGINGTIME',
+        'ChargingEffekt'    => 'THEMA.CHARGINGEFFEKT',
+        'ChargeMode'        => 'THEMA.CHARGEMODE',
+        'Mileage'           => 'THEMA.MILEAGE',
+        'Name'              => 'THEMA.NAME',
+        'HvAcStatus'        => 'THEMA.HVACSTATUS',
+        'HvAcStatusBin'     => 'THEMA.HVACSTATUSBIN',
+        'InTemp'            => 'THEMA.INTEMP',
+        'OutTemp'           => 'THEMA.OUTTEMP',
+        'phpCall'           => 'THEMA.PHPCALL',
+        'LastDataRetrieval' => 'THEMA.LASTDATA',
+        'ok'                => 'THEMA.OK',
     );
     if ((string) $zoeph === '1') {
-        $t['OutTemp'] = 'Aussentemperatur in Grad Celsius';
-        $t['BatTemp'] = 'Batterietemperatur in Grad Celsius';
-        $t['RenaultPHMode'] = 'Phase 1';
+        $t['BatTemp']       = 'THEMA.BATTEMP';
+        $t['RenaultPHMode'] = 'THEMA.PHMODE1';
     } else {
-        $t['GPS-Latitude']  = 'Breitengrad des Fahrzeugs';
-        $t['GPS-Longitude'] = 'Laengengrad des Fahrzeugs';
-        $t['EnergieOnBoard'] = 'verfuegbare Energie in kWh';
-        $t['RenaultPHMode'] = 'Phase 2';
+        $t['GPS-Latitude']   = 'THEMA.GPSLAT';
+        $t['GPS-Longitude']  = 'THEMA.GPSLON';
+        $t['GPSTime']        = 'THEMA.GPSTIME';
+        $t['EnergieOnBoard'] = 'THEMA.ENERGIE';
+        $t['RenaultPHMode']  = 'THEMA.PHMODE2';
     }
+    /* Aus dem Zehn-Minuten-Cron (history.php). Bis 2.0.6 fehlten sie in
+     * dieser Liste vollstaendig, obwohl sie gesendet wurden.
+     *
+     * Die Klammern in den Namen sind haesslich und in einem Loxone-Eingang
+     * unhandlich. Sie bleiben trotzdem: sie stehen so im Sendecode, und ein
+     * bestehender virtueller Eingang heisst
+     * Renault_<Name>_chargeDuration(min). Umbenennen waere derselbe Griff,
+     * der oben schon einmal fuenf stumme Eingaenge erzeugt hat - nur in die
+     * andere Richtung. Wenn sie fallen sollen, dann angekuendigt und in
+     * beiden Richtungen, wie 1.4.1 es mit CargingStatus gemacht hat. */
+    $t['chargeStartBatteryLevel(Prozent)'] = 'THEMA.CHG_START_SOC';
+    $t['chargeEndBatteryLevel(Prozent)']   = 'THEMA.CHG_END_SOC';
+    $t['chargeDuration(min)']              = 'THEMA.CHG_DAUER';
+    $t['chargePowerAverage(kW)']           = 'THEMA.CHG_LEISTUNG';
+    $t['chargeEnergyRecovered(kWh)']       = 'THEMA.CHG_ENERGIE';
+    $t['chargeEndStatus']                  = 'THEMA.CHG_STATUS';
+    $t['chargeStartInstantaneousPower']    = 'THEMA.CHG_STARTLEISTUNG';
     return $t;
 }
 
-/** Die Befehle, die Loxone an das Plugin senden kann. */
+/**
+ * Die Befehle, die Loxone an das Plugin senden kann.
+ *
+ * Je Befehl: Sprachschluessel und ob er am Fahrzeug etwas VERAENDERT.
+ * Nur die veraendernden verlangen, dass die Steuerung in den Einstellungen
+ * eingeschaltet ist - "abruf" holt nur Daten und bleibt immer erlaubt.
+ */
 function rn_befehle()
 {
     return array(
-        'acnow'     => 'Vorklimatisierung starten (21 &deg;C)',
-        'chargenow' => 'Sofort laden starten',
-        'cmon'      => 'Ladeplan aktivieren',
-        'cmoff'     => 'Ladeplan deaktivieren (sofort laden erlauben)',
-        'abruf'     => 'Daten sofort neu abrufen',
+        'acnow'      => array('BEFEHL.ACNOW',      true),
+        'acoff'      => array('BEFEHL.ACOFF',      true),
+        'chargenow'  => array('BEFEHL.CHARGENOW',  true),
+        'chargestop' => array('BEFEHL.CHARGESTOP', true),
+        'cmon'       => array('BEFEHL.CMON',       true),
+        'cmoff'      => array('BEFEHL.CMOFF',      true),
+        'abruf'      => array('BEFEHL.ABRUF',      false),
     );
+}
+
+/** Beschriftung eines Befehls in der eingestellten Sprache. */
+function rn_befehl_text($aktion)
+{
+    $b = rn_befehle();
+    return isset($b[$aktion]) ? rn_t($b[$aktion][0]) : $aktion;
+}
+
+/** Veraendert dieser Befehl etwas am Fahrzeug? */
+function rn_befehl_schaltet($aktion)
+{
+    $b = rn_befehle();
+    return isset($b[$aktion]) ? (bool) $b[$aktion][1] : true;
 }
 
 /* ==================================================================
@@ -486,56 +788,98 @@ function rn_t($schluessel)
     return isset($texte[$a][$s]) ? $texte[$a][$s] : $schluessel;
 }
 
+/* ==================================================================
+ * Loxone-Vorlagen
+ * ================================================================== */
+
+/** Die Eingaenge, die die Importdatei je Fahrzeug anlegt.
+ *
+ *  Aufbau: Thema, Sprachschluessel, Signed, MinVal, MaxVal, Einheit.
+ *  Grenzen bewusst realistisch: Loxone zieht daraus die Reglergrenzen und
+ *  die Plausibilitaetspruefung. phpCall stand bis 2.0.6 auf 2147483647,
+ *  obwohl der Wert eine Uhrzeit als HHMM ist - also hoechstens 2359.
+ */
+function rn_vorlage_felder($zoeph)
+{
+    $f = array(
+        array('BattSOC',        'THEMA.BATTSOC',        'false', '0',  '100',     '<v.0> %'),
+        array('Range',          'THEMA.RANGE',          'false', '0',  '2000',    '<v.0> km'),
+        array('ChargingStatus', 'THEMA.CHARGINGSTATUS', 'true',  '-2', '2',       '<v.0>'),
+        array('CableStatus',    'THEMA.CABLESTATUS',    'true',  '-2', '2',       '<v.0>'),
+        array('ChargingTime',   'THEMA.CHARGINGTIME',   'false', '0',  '2000',    '<v.0> min'),
+        array('ChargingEffekt', 'THEMA.CHARGINGEFFEKT', 'false', '0',  '350',     '<v.1> kW'),
+        array('Mileage',        'THEMA.MILEAGE',        'false', '0',  '1000000', '<v.0> km'),
+        array('phpCall',        'THEMA.PHPCALL',        'false', '0',  '2359',    '<v.0>'),
+        array('ok',             'THEMA.OK',             'false', '0',  '1',       '<v.0>'),
+    );
+    if ((string) $zoeph === '1') {
+        $f[] = array('BatTemp', 'THEMA.BATTEMP', 'true', '-40', '80', '<v.1> °C');
+    } else {
+        $f[] = array('EnergieOnBoard', 'THEMA.ENERGIE', 'false', '0', '150', '<v.1> kWh');
+    }
+    $f[] = array('OutTemp', 'THEMA.OUTTEMP', 'true', '-40', '60', '<v.1> °C');
+    $f[] = array('InTemp',  'THEMA.INTEMP',  'true', '-40', '80', '<v.1> °C');
+    return $f;
+}
+
 /** Vorlage der Gateway-Eingaenge nach dem Heimkino-Kunstgriff (12.08.2026):
  *  VirtualInHttp mit Dummy-Adresse http://localhost und Abfragezyklus 604800 s,
  *  nur damit Loxone die richtig benannten Eingaenge anlegt - die Werte kommen
  *  vom MQTT-Gateway. Format wie Original-Export aus Loxone Config 17.1.
- *  Die sechs Werte entsprechen der Tabelle im Reiter "Einbindung in Loxone". */
+ *  Seit 2.1.0 fuer ALLE eingerichteten Fahrzeuge. */
 function rn_vorlage()
 {
     $cfg   = rn_config_read();
-    $thema = $cfg['zoename'];
-    $crlf = "\r\n";
-    $werte = array(
-        array('BatteryLevel',   'Batteriestand',                  'false', '0',  '100',        '<v.0> %'),
-        array('RangeHvacOff',   'Reichweite',                     'false', '0',  '2000',       '<v.0> km'),
-        array('ChargingStatus', 'Ladestatus',                     'true',  '-2', '2',          '<v.0>'),
-        array('PlugStatus',     'Kabel eingesteckt',              'true',  '-2', '2',          '<v.0>'),
-        array('Mileage',        'Kilometerstand',                 'false', '0',  '1000000',    '<v.0> km'),
-        array('phpCall',        'Zeitstempel des letzten Abrufs', 'false', '0',  '2147483647', '<v.0>'),
-    );
+    $autos = rn_fahrzeuge($cfg);
+    $crlf  = "\r\n";
+    $themen = array();
+    foreach ($autos as $rn_f) {
+        $themen[] = 'Renault/' . $rn_f['name'] . '/#';
+    }
     $o  = '<?xml version="1.0" encoding="utf-8"?>' . $crlf;
-    $o .= '<VirtualInHttp HintText="" Title="Renault Fahrzeugdaten" Comment="Erzeugt vom LoxBerry-Plugin Renault (' . date('d.m.Y') . '). Werte kommen vom MQTT-Gateway - Abo Renault/' . htmlspecialchars($thema, ENT_QUOTES | ENT_XML1, 'UTF-8') . '/# noetig." Address="http://localhost" PollingTime="604800">' . $crlf;
+    $o .= '<VirtualInHttp HintText="" Title="Renault Fahrzeugdaten" Comment="Erzeugt vom LoxBerry-Plugin Renault ('
+        . date('d.m.Y') . '). Werte kommen vom MQTT-Gateway - Abo '
+        . htmlspecialchars(implode(' ', $themen), ENT_QUOTES | ENT_XML1, 'UTF-8')
+        . ' noetig." Address="http://localhost" PollingTime="604800">' . $crlf;
     $o .= "\t" . '<Info templateType="2" minVersion="17010727"/>' . $crlf;
-    foreach ($werte as $w) {
-        $o .= "\t" . '<VirtualInHttpCmd Title="' . htmlspecialchars('Renault_' . $thema . '_' . $w[0], ENT_QUOTES | ENT_XML1, 'UTF-8') . '" ';
-        $o .= 'Comment="' . htmlspecialchars($w[1], ENT_QUOTES | ENT_XML1, 'UTF-8') . '" Check=" " ';
-        $o .= 'Signed="' . $w[2] . '" Analog="true" SourceValLow="0" DestValLow="0" SourceValHigh="1" DestValHigh="1" DefVal="0" MinVal="' . $w[3] . '" MaxVal="' . $w[4] . '" Unit="' . htmlspecialchars($w[5], ENT_QUOTES | ENT_XML1, 'UTF-8') . '" HintText=""/>' . $crlf;
+    foreach ($autos as $rn_f) {
+        foreach (rn_vorlage_felder($rn_f['zoeph']) as $w) {
+            $o .= "\t" . '<VirtualInHttpCmd Title="' . htmlspecialchars('Renault_' . $rn_f['name'] . '_' . $w[0], ENT_QUOTES | ENT_XML1, 'UTF-8') . '" ';
+            $o .= 'Comment="' . htmlspecialchars(html_entity_decode(rn_t($w[1]), ENT_QUOTES, 'UTF-8'), ENT_QUOTES | ENT_XML1, 'UTF-8') . '" Check=" " ';
+            $o .= 'Signed="' . $w[2] . '" Analog="true" SourceValLow="0" DestValLow="0" SourceValHigh="1" DestValHigh="1" DefVal="0" MinVal="' . $w[3] . '" MaxVal="' . $w[4] . '" Unit="' . htmlspecialchars(html_entity_decode($w[5], ENT_QUOTES, 'UTF-8'), ENT_QUOTES | ENT_XML1, 'UTF-8') . '" HintText=""/>' . $crlf;
+        }
     }
     $o .= '</VirtualInHttp>' . $crlf;
     return array('VI_renault.xml', $o);
 }
 
-/** VO-Vorlage (Steuerbefehle) nach dem Heimkino/Robonect-Muster:
- *  templateType 3, Aktionstoken eingesetzt. Befehle = rn_befehle(). */
+/** VQ-Vorlage (Steuerbefehle) nach dem Heimkino/Robonect-Muster:
+ *  templateType 3, Aktionstoken eingesetzt. Befehle = rn_befehle(),
+ *  je Fahrzeug einmal. */
 function rn_vorlage_vo()
 {
     $host = isset($_SERVER['HTTP_HOST']) && $_SERVER['HTTP_HOST'] !== ''
         ? preg_replace('/[^A-Za-z0-9\.\-:]/', '', (string) $_SERVER['HTTP_HOST'])
         : (gethostname() ?: 'loxberry');
-    $cfg = rn_config_read();
-    $crlf = "\r\n";
+    $cfg   = rn_config_read();
+    $autos = rn_fahrzeuge($cfg);
+    $mehr  = count($autos) > 1;
+    $crlf  = "\r\n";
     $o = '<?xml version="1.0" encoding="utf-8"?>' . $crlf;
     $o .= '<VirtualOut HintText="" Title="Renault steuern (LoxBerry-Plugin)" Comment="Steuerbefehle ueber das Plugin ' . htmlspecialchars(rn_paths()['plugin'], ENT_QUOTES | ENT_XML1, 'UTF-8') . ' - enthaelt das Aktionstoken." Address="http://' . htmlspecialchars($host, ENT_QUOTES | ENT_XML1, 'UTF-8') . '" CmdInit="" CloseAfterSend="true" CmdSep="">' . $crlf;
     $o .= "\t" . '<Info templateType="3" minVersion="17010727"/>' . $crlf;
-    foreach (rn_befehle() as $rn_a => $rn_zweck) {
-        // Die Zwecktexte tragen HTML-Entitaeten (&deg;) - fuer das XML den
-        // Klartext nehmen, sonst stuende doppelt Maskiertes im Kommentar.
-        $rn_klar = html_entity_decode((string) $rn_zweck, ENT_QUOTES, 'UTF-8');
-        $o .= "\t" . '<VirtualOutCmd Title="' . htmlspecialchars($rn_klar, ENT_QUOTES | ENT_XML1, 'UTF-8') . '" Comment="" CmdOnMethod="GET" CmdOffMethod="GET" ';
-        $o .= 'CmdOn="' . htmlspecialchars(rn_aktionsadresse($cfg, $rn_a), ENT_QUOTES | ENT_XML1, 'UTF-8') . '" ';
-        $o .= 'CmdOnHTTP="" CmdOnPost="" CmdOff="" CmdOffHTTP="" CmdOffPost="" CmdAnswer="" ';
-        $o .= 'Analog="false" Repeat="0" RepeatRate="0" HintText=""/>' . $crlf;
+    foreach ($autos as $rn_f) {
+        foreach (rn_befehle() as $rn_a => $rn_angabe) {
+            // html_entity_decode bleibt stehen, obwohl die Sprachdateien seit
+            // 2.1.0 echte Zeichen tragen: schreibt jemand doch wieder eine
+            // Entitaet hinein, stuende sie sonst doppelt maskiert im XML.
+            $rn_klar  = html_entity_decode(rn_t($rn_angabe[0]), ENT_QUOTES, 'UTF-8');
+            $rn_titel = $mehr ? $rn_f['name'] . ': ' . $rn_klar : $rn_klar;
+            $o .= "\t" . '<VirtualOutCmd Title="' . htmlspecialchars($rn_titel, ENT_QUOTES | ENT_XML1, 'UTF-8') . '" Comment="" CmdOnMethod="GET" CmdOffMethod="GET" ';
+            $o .= 'CmdOn="' . htmlspecialchars(rn_aktionsadresse($cfg, $rn_a, $rn_f['nr']), ENT_QUOTES | ENT_XML1, 'UTF-8') . '" ';
+            $o .= 'CmdOnHTTP="" CmdOnPost="" CmdOff="" CmdOffHTTP="" CmdOffPost="" CmdAnswer="" ';
+            $o .= 'Analog="false" Repeat="0" RepeatRate="0" HintText=""/>' . $crlf;
+        }
     }
     $o .= '</VirtualOut>' . $crlf;
     return array('VQ_renault_steuern.xml', $o);

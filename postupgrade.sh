@@ -12,11 +12,16 @@ KONF="REPLACELBPCONFIGDIR"
 
 mkdir -p "$KONF" 2>/dev/null
 
-if [ ! -s "$KONF/config.php" ] && [ -f "$KONF/config.php.backup" ]; then
-    cp -f "$KONF/config.php.backup" "$KONF/config.php"
-    chmod 600 "$KONF/config.php" 2>/dev/null
-    echo "<OK> Konfiguration aus der Sicherheitskopie wiederhergestellt."
-fi
+# Die Zweitschrift liegt seit 2.1.0 NEBEN dem Konfigordner - der Ordner
+# selbst wird beim Deinstallieren abgeraeumt. Der alte Ort wird noch
+# beruecksichtigt, damit ein Update von 2.0.x nichts verliert.
+for SICH in "${KONF}.backup.config.php" "$KONF/config.php.backup"; do
+    if [ ! -s "$KONF/config.php" ] && [ -f "$SICH" ]; then
+        cp -f "$SICH" "$KONF/config.php"
+        chmod 600 "$KONF/config.php" 2>/dev/null
+        echo "<OK> Konfiguration aus der Zweitschrift wiederhergestellt ($SICH)."
+    fi
+done
 
 # Zugangsdaten gehen niemanden ausser loxberry etwas an.
 [ -f "$KONF/config.php" ] && chmod 600 "$KONF/config.php" 2>/dev/null

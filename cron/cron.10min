@@ -1,6 +1,7 @@
 #!/bin/bash
 # Renault - Ladevorgaenge des letzten Monats abholen und per MQTT melden.
-# Aufbau wie cron.03min; die Begruendung fuer die Fehlermeldung steht dort.
+# Aufbau wie cron.03min; die Begruendungen fuer Fehlermeldung, Zeilenenden
+# und gemeinsame Sperre stehen dort.
 VERZ="REPLACELBPHTMLAUTHDIR"
 PROT="REPLACELBPLOGDIR/renault.log"
 
@@ -10,14 +11,8 @@ if [ ! -d "$VERZ" ]; then
     exit 1
 fi
 
-# ---- Sperre gegen Parallellaeufe -----------------------------------------
-# Die Renault-Schnittstelle ist traege; seit dieser Fassung tragen die
-# curl-Aufrufe zwar Zeitschranken (10 s verbinden, 30 s gesamt), aber ein
-# Lauf kann damit immer noch laenger dauern als der Cron-Takt. Ohne Sperre
-# startete der naechste Abruf, waehrend dieser noch laeuft - zwei Anmeldungen
-# bei Gigya gleichzeitig, doppelte Schreibvorgaenge auf dieselbe Datei.
-# flock ist nicht blockierend: wer nicht drankommt, geht kommentarlos wieder.
-exec 9>"/tmp/renault_history.lock" || exit 0
+# Dieselbe Sperrdatei wie cron.03min - siehe dort.
+exec 9>"/tmp/renault_ng.lock" || exit 0
 flock -n 9 || exit 0
 
 cd "$VERZ" || exit 1
