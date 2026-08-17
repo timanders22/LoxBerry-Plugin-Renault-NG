@@ -1,10 +1,22 @@
-# Laufzeit-/Nutzerdaten - niemals einchecken
+# Laufzeit- und Nutzerdaten - niemals einchecken.
+#
+# Seit 1.6.0 liegen sie NICHT mehr im Plugin-Ordner, sondern unter
+# config/plugins/<ordner>/, data/plugins/<ordner>/ und log/plugins/<ordner>/.
+# Die alten Orte stehen hier trotzdem noch: bei einem Update von 1.4 oder
+# aelter liegen die Dateien kurzzeitig wieder hier, bis rn_umzug() sie holt.
+webfrontend/htmlauth/config.php
 webfrontend/htmlauth/session
+webfrontend/htmlauth/session2
+webfrontend/htmlauth/session3
+webfrontend/htmlauth/session4
+webfrontend/htmlauth/anmeldung
 webfrontend/htmlauth/database.csv
+webfrontend/htmlauth/database*.csv
 webfrontend/htmlauth/renault.log
 webfrontend/htmlauth/renault.log.1
-webfrontend/htmlauth/config.php.backup
+webfrontend/htmlauth/renault.log.wdh
 *.backup
+*.tmp.*
 
 # Betriebssystem
 .DS_Store
