@@ -303,6 +303,98 @@ function rn_token_erzeugen($laenge = 24)
     return $t;
 }
 
+/* ---------------- Formularschutz ----------------
+ *
+ * htmlauth schuetzt gegen den unangemeldeten Aufruf - nicht dagegen, dass der
+ * Browser eines angemeldeten Bedieners ein Formular abschickt, das auf einer
+ * fremden Seite steht. Hier waere der Schaden gross: zu den Feldern gehoeren
+ * exec_bl und exec_csf, zwei Befehlszeilen, die der Abruf spaeter ausfuehrt.
+ *
+ * Das Merkmal wird aus dem Aktionstoken ABGELEITET und nicht gespeichert.
+ * Sonst haette die Konfiguration einen Schluessel mehr, den ein
+ * Speichern-Handler vergessen kann - genau dieser Fehler hat in dieser Reihe
+ * schon dreimal das Aktionstoken gekostet, und mit ihm alle Adressen in
+ * Loxone. Eine fremde Seite kann den Wert nicht lesen (gleiche-Herkunft-Regel)
+ * und ihn deshalb nicht mitschicken.
+ */
+function rn_formtoken($cfg)
+{
+    return hash_hmac('sha256', 'formular-v1', (string) $cfg['aktionstoken']);
+}
+
+/** Traegt dieses POST das Merkmal? hash_equals, nicht ===. */
+function rn_formtoken_ok($cfg)
+{
+    $ist = isset($_POST['formtoken']) ? (string) $_POST['formtoken'] : '';
+    if ($ist === '' || (string) $cfg['aktionstoken'] === '') {
+        return false;
+    }
+    return hash_equals(rn_formtoken($cfg), $ist);
+}
+
+/* ---------------- Die beiden Befehlszeilen des Betreibers ----------------
+ *
+ * exec_bl und exec_csf sind bewusste Eingaben in den Einstellungen, kein
+ * Fremdwert - sie duerfen ein Programm mit Argumenten benennen. "Bewusst" ist
+ * aber nicht dasselbe wie "geprueft": ein Semikolon in dem Feld sind zwei
+ * Befehle, und der zweite steht dann in einer Konfigurationsdatei, in die
+ * niemand mehr sieht.
+ *
+ * Geprueft wird deshalb an der Stelle des Aufrufs, nicht nur beim Speichern:
+ * eine Datei kann sich zwischen Speichern und Aufruf geaendert haben, und die
+ * Konfiguration von 1.4 wurde nie geprueft.
+ *
+ *   - Sonderzeichen der Schale ( ; & | ` $ ( ) < > Zeilenumbruch ) -> abgewiesen
+ *   - das erste Wort muss eine vorhandene, ausfuehrbare Datei sein
+ *   - jedes Wort wird EINZELN maskiert; die Meldung kommt als letztes Argument
+ *
+ * Abgewiesen heisst: es wird nichts ausgefuehrt und eine Zeile ins Log
+ * geschrieben. Ein still uebergangener Haken ist schlimmer als ein Fehler.
+ *
+ * Rueckgabe: true, wenn ausgefuehrt wurde.
+ */
+function rn_hook_ausfuehren($roh, $text, $welche)
+{
+    /* renault_log() steht in logger.php, nicht hier. Aufgerufen wird diese
+     * Funktion heute nur aus abruf.php, das logger.php einliest - aber eine
+     * Bibliotheksfunktion, die beim naechsten Aufrufer fatal abbricht, ist
+     * eine Falle. Fehlt der Logger, wird die Ablehnung ins PHP-Log gesagt;
+     * geschwiegen wird nicht. */
+    $melde = function ($text) use ($welche) {
+        if (function_exists('renault_log')) {
+            renault_log('WARN', $text);
+        } else {
+            error_log('renault ' . $welche . ': ' . $text);
+        }
+    };
+    $roh = trim((string) $roh);
+    if ($roh === '') {
+        return false;
+    }
+    if (preg_match('/[;&|`$()<>\r\n]/', $roh)) {
+        $melde('Der Befehl in ' . $welche . ' enthaelt Sonderzeichen der Schale und '
+            . 'wurde NICHT ausgefuehrt. Erlaubt ist ein Programm mit einfachen '
+            . 'Argumenten.');
+        return false;
+    }
+    $teile = preg_split('/\s+/', $roh);
+    $programm = $teile[0];
+    if (!is_file($programm) || !is_executable($programm)) {
+        $melde('Der Befehl in ' . $welche . ' zeigt nicht auf eine ausfuehrbare '
+            . 'Datei (' . $programm . ') und wurde NICHT ausgefuehrt. Bitte den '
+            . 'vollen Pfad eintragen.');
+        return false;
+    }
+    $zeile = '';
+    foreach ($teile as $t) {
+        $zeile .= escapeshellarg($t) . ' ';
+    }
+    // Die Meldung kommt aus Werten der Renault-Schnittstelle - sie war schon
+    // vorher maskiert und bleibt es.
+    shell_exec($zeile . escapeshellarg((string) $text));
+    return true;
+}
+
 /** Die Adresse, die in Loxone einzutragen ist. */
 function rn_aktionsadresse($cfg, $aktion, $fahrzeug = 1)
 {
@@ -707,13 +799,6 @@ function rn_befehle()
         'cmoff'      => array('BEFEHL.CMOFF',      true),
         'abruf'      => array('BEFEHL.ABRUF',      false),
     );
-}
-
-/** Beschriftung eines Befehls in der eingestellten Sprache. */
-function rn_befehl_text($aktion)
-{
-    $b = rn_befehle();
-    return isset($b[$aktion]) ? rn_t($b[$aktion][0]) : $aktion;
 }
 
 /** Veraendert dieser Befehl etwas am Fahrzeug? */

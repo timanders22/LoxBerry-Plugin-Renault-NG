@@ -12,6 +12,59 @@ aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
 
+## Version 2.1.1 — Formularschutz und zwei geprüfte Befehlszeilen
+
+### Kein Formular trug ein Einmalmerkmal
+
+`htmlauth` schützt gegen den unangemeldeten Aufruf — nicht dagegen, dass der
+Browser eines angemeldeten Bedieners ein Formular abschickt, das auf einer
+**fremden Seite** steht. Bei diesem Plugin war das besonders teuer, denn zu den
+Einstellungen gehören `exec_bl` und `exec_csf`: zwei Befehlszeilen, die der
+Abruf später ausführt. Eine fremde Seite konnte also einen Befehl eintragen
+und danach mit *Protokoll leeren* die Spur beseitigen.
+
+Alle **sieben** Formulare tragen jetzt ein Merkmal, das aus dem Aktionstoken
+abgeleitet wird — nicht gespeichert, denn ein weiterer Schlüssel in der
+Konfiguration ist ein weiterer Schlüssel, den ein Speichern-Handler vergessen
+kann. Geprüft wird an **einer** Stelle vor allen Handlern; fehlt das Merkmal,
+wird `$_POST` bis auf den aktiven Reiter geleert. Das ist mit Absicht
+gründlicher als eine Abfrage vor jedem Handler: der achte Handler, den jemand
+später ergänzt, ist damit von selbst mitgeschützt.
+
+Die Reiterwahl steht jetzt **nach** dem Wachposten. Vorher hätte ein
+abgewiesenes Formular wenigstens noch den Reiter umschalten können.
+
+### Die beiden Befehlszeilen werden geprüft, bevor sie laufen
+
+`exec_bl` und `exec_csf` liefen unverändert durch `shell_exec`. Der übergebene
+**Text** war maskiert, der **Befehl** nicht — er ist eine bewusste Eingabe des
+Betreibers, und das bleibt richtig. „Bewusst" ist aber nicht dasselbe wie
+„geprüft": ein Semikolon in dem Feld sind zwei Befehle, und der zweite steht
+dann in einer Konfigurationsdatei, in die niemand mehr sieht.
+
+Geprüft wird jetzt **an der Stelle des Aufrufs**, nicht nur beim Speichern —
+eine Datei kann sich dazwischen geändert haben, und die Konfiguration einer
+1.4-Installation wurde nie geprüft:
+
+* Sonderzeichen der Schale (`; & | ` `` ` `` `$ ( ) < >`, Zeilenumbruch) → abgewiesen
+* das erste Wort muss eine vorhandene, **ausführbare** Datei sein
+* jedes Wort wird einzeln maskiert, die Meldung kommt als letztes Argument
+
+Abgewiesen heißt: es läuft nichts, und im Protokoll steht warum. Ein still
+übergangener Haken ist schlimmer als ein Fehler. **Wer bisher `mein_skript`
+ohne Pfad eingetragen hatte, muss den vollen Pfad nachtragen** — die
+Protokollzeile sagt es.
+
+### `api-keys.php` sagt jetzt, was darin steht
+
+Die Datei trägt zwei feste Schlüssel im Quelltext, und jedes Freigabewerkzeug
+meldet das — zu Recht, denn es kann den Unterschied nicht kennen. Es sind die
+Schlüssel der Renault-**App**, öffentlich bekannt und in jedem freien
+Renault-Projekt nachzulesen; ohne Benutzername und Passwort eines
+Renault-Kontos ist mit ihnen nichts zu erreichen. Persönlich ist einzig, was in
+`config.php` steht. Das steht jetzt über der Datei — samt der Bitte, sie nicht
+„aufzuräumen": ohne die Schlüssel gibt es keine Anmeldung.
+
 ## Version 2.1.0 — was Sie wissen müssen, bevor Sie aktualisieren
 
 Diese Fassung behebt zwei Fehler, die dem Plugin von außen nie anzusehen waren,

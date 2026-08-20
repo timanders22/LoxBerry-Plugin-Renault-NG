@@ -698,11 +698,10 @@ foreach ($rn_mit_vin as $rn_f) {
                     '{"data":{"type":"ChargeMode","attributes":{"action":"schedule_mode"}}}',
                     'Ladeplan bei erreichtem Akkustand (charge-mode)');
             }
-            /* escapeshellarg statt Anfuehrungszeichen von Hand: die Meldung
-             * wird aus Werten der Renault-Schnittstelle zusammengesetzt. Der
-             * Befehl selbst bleibt unmaskiert - er ist eine bewusste Eingabe
-             * des Betreibers in den Einstellungen, kein Fremdwert. */
-            if ($rn_cfg['exec_bl'] !== '') { shell_exec($rn_cfg['exec_bl'] . ' ' . escapeshellarg($rn_text)); }
+            /* Gepruefter Aufruf, siehe rn_hook_ausfuehren(): der Befehl ist
+             * eine bewusste Eingabe des Betreibers - das heisst aber nicht,
+             * dass ein Semikolon darin harmlos waere. */
+            rn_hook_ausfuehren($rn_cfg['exec_bl'], $rn_text, 'exec_bl');
             $rn_s[5] = 'Y';
             renault_log('INFO', 'Akkustand ' . $rn_schwelle . ' % erreicht (' . $rn_name . ') - Meldung ausgeloest.');
         } elseif ($rn_s[5] === 'Y' && $rn_s[10] != 1) {
@@ -717,7 +716,7 @@ foreach ($rn_mit_vin as $rn_f) {
                      . rn_t('MELDUNG.STATUSUPDATE') . ': ' . $rn_s[8] . ' ' . $rn_s[9];
             if ($rn_cfg['mail_csf'] === 'Y') { @mail($rn_cfg['username'], $rn_name, $rn_text); }
             // Bis 1.4 stand hier $exec_bl, obwohl die Bedingung $exec_csf prueft.
-            if ($rn_cfg['exec_csf'] !== '') { shell_exec($rn_cfg['exec_csf'] . ' ' . escapeshellarg($rn_text)); }
+            rn_hook_ausfuehren($rn_cfg['exec_csf'], $rn_text, 'exec_csf');
             renault_log('INFO', 'Ladung beendet (' . $rn_name . ') - Meldung ausgeloest.');
         }
         $rn_s[6] = ($rn_s[10] == 1) ? 'Y' : 'N';

@@ -53,13 +53,6 @@ $rn_muster = '/^tab-(' . implode('|', array_map(function ($k) {
     return preg_quote($k, '/');
 }, array_keys($rn_reiter))) . ')$/';
 
-$rn_tab = 'tab-settings';
-if (isset($_POST['activetab']) && preg_match($rn_muster, (string) $_POST['activetab'])) {
-    $rn_tab = (string) $_POST['activetab'];
-} elseif (isset($_GET['form']) && preg_match($rn_muster, 'tab-' . (string) $_GET['form'])) {
-    $rn_tab = 'tab-' . (string) $_GET['form'];
-}
-
 $rn_cfg = rn_config_read();
 
 // Beim ersten Aufruf ein Token erzeugen, damit der Endpunkt fuer Loxone
@@ -70,6 +63,35 @@ if ($rn_cfg['aktionstoken'] === '') {
     if (!rn_config_write($rn_cfg)) {
         $rn_fehler[] = rn_t('TEXT.F_TOKEN_SCHREIBEN');
     }
+}
+
+/* ---------------------------------------------------------------- *
+ * DER WACHPOSTEN - vor jedem Handler, genau einmal
+ *
+ * Bei fehlendem Merkmal wird $_POST geleert bis auf activetab. Das ist mit
+ * Absicht gruendlicher als ein "wenn" vor jedem der sieben Handler: der
+ * achte Handler, den jemand spaeter ergaenzt, ist damit automatisch
+ * mitgeschuetzt. Ein Schutz, den man beim Erweitern vergessen kann, ist
+ * keiner. activetab bleibt stehen, damit die Seite den Reiter nicht
+ * verliert, auf dem der Bediener gerade war.
+ * ---------------------------------------------------------------- */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !rn_formtoken_ok($rn_cfg)) {
+    $rn_behalten = isset($_POST['activetab']) ? (string) $_POST['activetab'] : '';
+    $_POST = ($rn_behalten !== '') ? array('activetab' => $rn_behalten) : array();
+    $rn_fehler[] = rn_t('TEXT.F_FORMTOKEN');
+}
+$rn_ftoken = rn_formtoken($rn_cfg);
+
+/* Die Reiterwahl steht ABSICHTLICH nach dem Wachposten: sonst uebernaehme sie
+ * das activetab eines abgewiesenen POST, und ein fremdes Formular koennte
+ * wenigstens noch den Reiter umschalten. Gelesen wird erst, wenn geprueft
+ * ist. */
+$rn_tab = 'tab-settings';
+if (isset($_POST['activetab']) && preg_match($rn_muster, (string) $_POST['activetab'])) {
+    $rn_tab = (string) $_POST['activetab'];
+} elseif (isset($_GET['form']) && !is_array($_GET['form'])
+          && preg_match($rn_muster, 'tab-' . (string) $_GET['form'])) {
+    $rn_tab = 'tab-' . (string) $_GET['form'];
 }
 
 /* ---------------------------------------------------------------- *
@@ -359,6 +381,7 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 <!-- ============================ Einstellungen ============================ -->
 <div class="sm-seite<?php echo $rn_tab === 'tab-settings' ? ' sm-active' : ''; ?>" id="tab-settings">
 <form method="post" action="index.php" autocomplete="off">
+<input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
 <input data-role="none" type="hidden" name="activetab" value="tab-settings">
 
 <h2><?php echo rn_e(rn_t('TEXT.H_KONTO')); ?></h2>
@@ -592,11 +615,13 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 </div>
 <div class="sm-knopfreihe">
 <form action="index.php" method="post">
+  <input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
   <input data-role="none" type="hidden" name="activetab" value="tab-loxone">
   <input data-role="none" type="hidden" name="vorlage" value="vi">
   <button data-role="none" class="sm-btn sm-b-technik" type="submit"><?php echo rn_e(rn_t('TEXT.K_VORLAGE_VI')); ?></button>
 </form>
 <form action="index.php" method="post">
+  <input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
   <input data-role="none" type="hidden" name="activetab" value="tab-loxone">
   <input data-role="none" type="hidden" name="vorlage" value="vo">
   <button data-role="none" class="sm-btn sm-b-technik" type="submit"><?php echo rn_e(rn_t('TEXT.K_VORLAGE_VQ')); ?></button>
@@ -625,6 +650,7 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 </div>
 <div class="sm-knopfreihe">
   <form method="post" action="index.php">
+    <input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
     <input data-role="none" type="hidden" name="activetab" value="tab-loxone">
     <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="token_neu" value="1"><?php echo rn_e(rn_t('TEXT.K_TOKEN_NEU')); ?></button>
   </form>
@@ -701,6 +727,7 @@ foreach (rn_test_selbstpruefung($rn_cfg, $rn_broker) as $rn_z) {
                      'zwischen' => 'TEXT.K_ZWISCHEN', 'themen' => 'TEXT.K_THEMEN',
                      'vorlage' => 'TEXT.K_VORLAGE_PRUEFEN') as $rn_w => $rn_k) { ?>
   <form method="post" action="index.php">
+    <input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
     <input data-role="none" type="hidden" name="activetab" value="tab-test">
     <button data-role="none" class="sm-btn sm-b-lesen" type="submit" name="test" value="<?php echo rn_e($rn_w); ?>"><?php echo rn_e(rn_t($rn_k)); ?></button>
   </form>
@@ -710,6 +737,7 @@ foreach (rn_test_selbstpruefung($rn_cfg, $rn_broker) as $rn_z) {
 <h2><?php echo rn_e(rn_t('TEXT.H_TECHNIK')); ?></h2>
 <div class="sm-knopfreihe">
   <form method="post" action="index.php">
+    <input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
     <input data-role="none" type="hidden" name="activetab" value="tab-test">
     <button data-role="none" class="sm-btn sm-b-technik" type="submit" name="cache_leeren" value="1"><?php echo rn_e(rn_t('TEXT.K_CACHE_LEEREN')); ?></button>
   </form>
@@ -842,6 +870,7 @@ foreach ($rn_autos as $rn_f) {
 </div>
 <div class="sm-knopfreihe">
   <form method="post" action="index.php">
+    <input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
     <input data-role="none" type="hidden" name="activetab" value="tab-log">
     <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="log_leeren" value="1"><?php echo rn_e(rn_t('TEXT.K_LOG_LEEREN')); ?></button>
   </form>
