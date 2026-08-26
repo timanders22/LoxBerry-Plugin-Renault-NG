@@ -271,6 +271,54 @@ $template_title = 'Renault NG';
 $helplink       = 'https://wiki.loxberry.de/plugins/renault_ng/start';
 $helptemplate   = 'help.html';
 LBWeb::lbheader($template_title, $helplink, $helptemplate);
+
+/* ---------------- Einstellungen sichern ----------------
+ *
+ * Ausgegeben wird die VOLLE Konfiguration - samt Aktionstoken. Ohne ihn
+ * stuenden nach dem Zurueckspielen alle Felder richtig, und das Plugin
+ * kaeme trotzdem nicht an die Anlage; die Datei waere wertlos. Damit
+ * traegt sie ein Geheimnis, und der Hinweis am Knopf sagt das. */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rn_sichern'])) {
+    $rn_js = json_encode(rn_config_read(),
+        JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($rn_js !== false) {
+        header('Content-Type: application/json; charset=utf-8');
+        header('Content-Disposition: attachment; filename="renault_einstellungen_'
+               . date('Ymd_His') . '.json"');
+        echo $rn_js;
+        exit;
+    }
+    $rn_fehler[] = rn_t('TEXT.SICH_SCHREIBFEHLER');
+}
+
+/* ---------------- Einstellungen zurueckspielen ----------------
+ *
+ * is_uploaded_file() ZUERST: ohne diese Pruefung liesse sich jede Datei
+ * des Servers unterschieben. Dann die Groessengrenze - eine Sicherung
+ * dieses Plugins ist wenige Kilobyte gross; alles darueber wird gar
+ * nicht erst gelesen. */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rn_zurueck'])) {
+    if (!isset($_FILES['rn_sicherung']) || !is_array($_FILES['rn_sicherung'])
+        || !isset($_FILES['rn_sicherung']['tmp_name'])
+        || !@is_uploaded_file($_FILES['rn_sicherung']['tmp_name'])) {
+        $rn_fehler[] = rn_t('TEXT.SICH_KEINE_DATEI');
+    } elseif ((int) $_FILES['rn_sicherung']['size'] > 262144) {
+        $rn_fehler[] = rn_t('TEXT.SICH_ZU_GROSS');
+    } else {
+        list($rn_neu, $rn_mangel, $rn_n) = rn_sicherung_lesen(
+            (string) @file_get_contents($_FILES['rn_sicherung']['tmp_name']));
+        if ($rn_neu === null) {
+            /* ALLE Beanstandungen, nicht nur die erste - und geaendert
+             * wird nichts. */
+            $rn_fehler[] = rn_t('TEXT.SICH_ABGELEHNT') . ' ' . implode(' ', $rn_mangel);
+        } elseif (rn_config_write($rn_neu)) {
+            $rn_meldung = sprintf(rn_t('TEXT.SICH_UEBERNOMMEN'), $rn_n);
+        } else {
+            $rn_fehler[] = rn_t('TEXT.SICH_SCHREIBFEHLER');
+        }
+    }
+}
+
 ?>
 
 <style>
@@ -532,11 +580,33 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 
 <div class="sm-legende">
 <span><i class="sm-punkt sm-b-aktion"></i> <?php echo rn_e(rn_t('LEGENDE.AKTION')); ?></span>
+<span><i class="sm-punkt sm-b-lesen"></i> <?php echo rn_e(rn_t('LEGENDE.LESEN')); ?></span>
 </div>
 <div class="sm-knopfreihe">
   <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="speichern" value="1"><?php echo rn_e(rn_t('TEXT.K_SPEICHERN')); ?></button>
 </div>
 </form>
+
+<h2><?= rn_t('TEXT.H_SICHERUNG') ?></h2>
+<div class="sm-hinweis"><?= rn_t('TEXT.SICH_ERKLAERUNG') ?></div>
+<div class="sm-warnung"><?= rn_t('TEXT.SICH_WARNUNG') ?></div>
+<div class="sm-knopfreihe">
+  <!-- ZWEI GETRENNTE Formulare. Das Sichern schickt einen Download und ruft
+       exit auf; das Zurueckspielen braucht enctype="multipart/form-data".
+       Wer beides in ein Formular legt, bekommt entweder keinen Upload oder
+       einen Download, der das Speichern verschluckt. -->
+  <form action="index.php" method="post">
+    <input data-role="none" type="hidden" name="activetab" value="tab-settings">
+    <input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
+    <button data-role="none" class="sm-btn sm-b-lesen" type="submit" name="rn_sichern" value="1"><?= rn_t('TEXT.K_SICHERN') ?></button>
+  </form>
+  <form action="index.php" method="post" enctype="multipart/form-data">
+    <input data-role="none" type="hidden" name="activetab" value="tab-settings">
+    <input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
+    <input data-role="none" type="file" name="rn_sicherung" accept=".json">
+    <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="rn_zurueck" value="1"><?= rn_t('TEXT.K_ZURUECK') ?></button>
+  </form>
+</div>
 </div>
 
 <!-- ================================= MQTT ================================= -->
@@ -558,7 +628,7 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 <?php } ?>
 
 <h2><?php echo rn_e(rn_t('TEXT.H_ABO')); ?></h2>
-<p class="sm-hilfe"><b><?php echo rn_e(rn_t('TEXT.H_ABO_PFLICHT')); ?></b> <?php echo rn_t('TEXT.H_ABO_WO'); ?></p>
+<p class="sm-hilfe"><b><?php echo rn_abo_text(); ?></b> <?php echo rn_t('TEXT.H_ABO_WO'); ?></p>
 <pre class="sm-vorschau"><?php foreach ($rn_autos as $rn_f) {
     echo 'Renault/' . rn_e($rn_f['name']) . "/#\n"; } ?></pre>
 
@@ -589,7 +659,7 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 
 <div class="sm-step">
 <h3 class="sm-h3"><?php echo rn_e(rn_t('TEXT.SCHRITT2')); ?></h3>
-<p class="sm-hilfe"><b><?php echo rn_e(rn_t('TEXT.H_ABO_PFLICHT')); ?></b> <?php echo rn_t('TEXT.H_ABO_WO'); ?></p>
+<p class="sm-hilfe"><b><?php echo rn_abo_text(); ?></b> <?php echo rn_t('TEXT.H_ABO_WO'); ?></p>
 <pre class="sm-vorschau"><?php foreach ($rn_autos as $rn_f) {
     echo 'Renault/' . rn_e($rn_f['name']) . "/#\n"; } ?></pre>
 </div>
