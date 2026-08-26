@@ -253,6 +253,23 @@ if (isset($_POST['test'])) {
     $rn_tab = 'tab-test';
 }
 
+/* ==================================================================
+ * DIE HANDLER STEHEN VOR lbheader() - DAS IST BAUVORSCHRIFT
+ * ==================================================================
+ *
+ * Stand der Kopf davor, war er beim Aufruf von header() schon
+ * geschrieben - "Cannot modify header information", und der Knopf
+ * "Einstellungen sichern" lieferte eine Seite mit angehaengtem JSON
+ * statt einer Datei.
+ *
+ * Am PHP-CLI ist das unsichtbar: header() ist dort wirkungslos und
+ * headers_sent() immer falsch. Und wer OHNE gueltiges Formularmerkmal
+ * misst, wird vom Wachposten abgewiesen, bevor der Handler anlaeuft.
+ * Beides hat den Fehler lange verdeckt.
+ *
+ * Reihenfolge: Bibliothek, Konfiguration, Wachposten, Reiterwahl,
+ * ALLE Handler samt Downloads, dann erst lbheader(), dann HTML.
+ * ================================================================== */
 // ---------- Loxone-Vorlage herunterladen (Hausstandard) ----------
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['vorlage'])) {
     list($rn_vname, $rn_vinhalt) = ($_POST['vorlage'] === 'vo')
@@ -270,7 +287,6 @@ $rn_zeilen  = rn_log_tail();
 $template_title = 'Renault NG';
 $helplink       = 'https://wiki.loxberry.de/plugins/renault_ng/start';
 $helptemplate   = 'help.html';
-LBWeb::lbheader($template_title, $helplink, $helptemplate);
 
 /* ---------------- Einstellungen sichern ----------------
  *
@@ -318,6 +334,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rn_zurueck'])) {
         }
     }
 }
+
+
+LBWeb::lbheader($template_title, $helplink, $helptemplate);
 
 ?>
 
