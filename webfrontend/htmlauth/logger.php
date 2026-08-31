@@ -35,6 +35,14 @@ define('RENAULT_LOG_WDH', 3600);     // Wiederholungsbremse in Sekunden
 function renault_log_kappen()
 {
     $f = RENAULT_LOGFILE;
+    /* PHP merkt sich die Antworten von stat(). Ohne diese Zeile sieht
+     * filesize() innerhalb EINES Prozesses die Groesse des ersten Aufrufs und
+     * danach nie wieder eine neue - file_put_contents(..., FILE_APPEND) macht
+     * den Eintrag nicht ungueltig. renault_log_kappen() haengt an
+     * renault_log_roh(), also an JEDER Protokollzeile; die Kappung fiele nach
+     * dem ersten Mal fuer den ganzen Lauf aus, und log/plugins liegt auf einer
+     * Ramdisk. */
+    clearstatcache(true, $f);
     if (!is_file($f) || filesize($f) <= RENAULT_LOG_MAX) {
         return;
     }
