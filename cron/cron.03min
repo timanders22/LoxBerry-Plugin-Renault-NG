@@ -43,8 +43,22 @@ fi
 # Die Renault-Schnittstelle ist traege; die curl-Aufrufe tragen zwar
 # Zeitschranken (10 s verbinden, 30 s gesamt), aber ein Lauf kann damit immer
 # noch laenger dauern als der Cron-Takt.
-# flock ist nicht blockierend: wer nicht drankommt, geht kommentarlos wieder.
-exec 9>"/tmp/renault_ng.lock" || exit 0
+# Der Name der Sperrdatei kommt aus dem ORDNERNAMEN, nicht fest aus dem
+# Text. Bei einer Zweitinstallation haengt LoxBerry einen Zaehler an
+# (renault_ng_01); mit einem festen Namen sperrten sich die beiden
+# Installationen gegenseitig aus, und je Minute liefe nur eine von beiden.
+SPERRE="/tmp/$(basename "$VERZ").lock"
+#
+# flock ist nicht blockierend: wer nicht drankommt, geht kommentarlos wieder -
+# das ist der Normalfall und keine Meldung wert. Laesst sich die Sperrdatei
+# gar nicht erst oeffnen (fremder Eigentuemer, volle Ramdisk), ist das etwas
+# anderes: dann laeuft der Abruf nie wieder an, und bis 2.1.5 geschah das
+# lautlos - in genau der Datei, die Lautlosigkeit zwanzig Zeilen weiter oben
+# anprangert.
+if ! exec 9>"$SPERRE"; then
+    echo "$(date '+%d.%m.%Y %H:%M:%S') [ERROR] Cron: Sperrdatei $SPERRE nicht zu oeffnen - der Abruf laeuft nicht. Rechte und freien Platz auf der Ramdisk pruefen." >> "$PROT"
+    exit 1
+fi
 flock -n 9 || exit 0
 
 cd "$VERZ" || exit 1

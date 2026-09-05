@@ -11,6 +11,13 @@ error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE);
 
 require_once 'loxberry_web.php';
 require_once __DIR__ . '/rn_lib.php';
+/* logger.php gehoert HIERHER.
+ *
+ * Bis 2.1.5 band die Oberflaeche es nicht ein und rief renault_log() kein
+ * einziges Mal. Damit hinterliess weder ein neu erzeugtes Aktionstoken noch
+ * eine abgelehnte Sicherung noch ein Werksrueckfall eine Spur - wer spaeter
+ * fragte, wann sein Token verlorenging, fand nichts. */
+require_once __DIR__ . '/logger.php';
 
 /* rn_umzug() gehoert HIERHER, nicht nur in abruf.php.
  *
@@ -59,9 +66,23 @@ $rn_cfg = rn_config_read();
 // sofort benutzbar ist. Der Rueckgabewert wird geprueft - schlaegt das
 // Schreiben fehl, soll das nicht stillschweigend untergehen.
 if ($rn_cfg['aktionstoken'] === '') {
+    /* Der Unterschied zwischen "noch nie gesetzt" und "verlorengegangen"
+     * steht in rn_konfig_lage(): war die Konfiguration beschaedigt, hat
+     * rn_config_read() sie vorher aus der Zweitschrift geheilt und den
+     * Zustand gemerkt. Ein neues Token macht JEDE im Miniserver eingetragene
+     * Adresse ungueltig, und ein Virtueller Ausgang wertet die 403 nicht
+     * aus - der Verlust waere stumm. Deshalb steht er im Protokoll. */
+    $rn_lage = rn_konfig_lage();
     $rn_cfg['aktionstoken'] = rn_token_erzeugen();
     if (!rn_config_write($rn_cfg)) {
         $rn_fehler[] = rn_t('TEXT.F_TOKEN_SCHREIBEN');
+        renault_log('ERROR', 'Ein neues Aktionstoken liess sich nicht schreiben.');
+    } else {
+        renault_log($rn_lage === 'fehlt' ? 'INFO' : 'WARN',
+            'Neues Aktionstoken erzeugt (Lage der Konfiguration: ' . $rn_lage . ').'
+            . ($rn_lage === 'fehlt' ? '' : ' Die Adressen im Miniserver sind damit '
+              . 'ungueltig geworden - sie stehen im Reiter "Einbindung in Loxone" '
+              . 'zum Abschreiben bereit.'));
     }
 }
 
@@ -101,8 +122,12 @@ if (isset($_POST['token_neu'])) {
     $rn_cfg['aktionstoken'] = rn_token_erzeugen();
     if (rn_config_write($rn_cfg)) {
         $rn_meldung = rn_t('TEXT.M_TOKEN_NEU');
+        renault_log('WARN', 'Aktionstoken auf Knopfdruck neu erzeugt. Alle bisher '
+            . 'im Miniserver eingetragenen Adressen antworten ab jetzt mit 403 und '
+            . 'muessen neu abgeschrieben werden.');
     } else {
         $rn_fehler[] = rn_t('TEXT.F_TOKEN_SCHREIBEN');
+        renault_log('ERROR', 'Das neue Aktionstoken liess sich nicht schreiben.');
     }
     $rn_cfg = rn_config_read();
     $rn_tab = 'tab-loxone';
@@ -295,9 +320,24 @@ $helptemplate   = 'help.html';
  * kaeme trotzdem nicht an die Anlage; die Datei waere wertlos. Damit
  * traegt sie ein Geheimnis, und der Hinweis am Knopf sagt das. */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rn_sichern'])) {
-    $rn_js = json_encode(rn_config_read(),
+    /* Lesbarer Kopf: der Datei sieht sonst niemand an, von welchem Plugin,
+     * welcher Anlage und welchem Tag sie stammt - und beim Umzug auf einen
+     * zweiten LoxBerry ist genau das der Zweck. Die Schluessel beginnen mit
+     * einem Unterstrich; rn_sicherung_lesen() UEBERGEHT sie, statt sie zu
+     * beanstanden. */
+    $rn_kopf = array(
+        '_hinweis' => 'Sicherung der Einstellungen des LoxBerry-Plugins Renault NG. '
+                    . 'Diese Datei enthaelt Ihr Renault-Kennwort und das Aktionstoken '
+                    . 'im Klartext - behandeln Sie sie wie ein Passwort.',
+        '_plugin'  => 'renault_ng',
+        '_fassung' => rn_fassung(),
+        '_stand'   => date('Y-m-d H:i:s'),
+    );
+    $rn_js = json_encode(array_merge($rn_kopf, rn_config_read()),
         JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if ($rn_js !== false) {
+        renault_log('INFO', 'Einstellungen gesichert (Datei enthaelt Zugangsdaten '
+            . 'und das Aktionstoken).');
         header('Content-Type: application/json; charset=utf-8');
         header('Content-Disposition: attachment; filename="renault_einstellungen_'
                . date('Ymd_His') . '.json"');
@@ -318,7 +358,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rn_zurueck'])) {
         || !isset($_FILES['rn_sicherung']['tmp_name'])
         || !@is_uploaded_file($_FILES['rn_sicherung']['tmp_name'])) {
         $rn_fehler[] = rn_t('TEXT.SICH_KEINE_DATEI');
-    } elseif ((int) $_FILES['rn_sicherung']['size'] > 262144) {
+    // 64 kB wie im Hausmuster; die echte Datei ist rund ein Kilobyte gross.
+    } elseif ((int) $_FILES['rn_sicherung']['size'] > 65536) {
         $rn_fehler[] = rn_t('TEXT.SICH_ZU_GROSS');
     } else {
         list($rn_neu, $rn_mangel, $rn_n) = rn_sicherung_lesen(
@@ -327,10 +368,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rn_zurueck'])) {
             /* ALLE Beanstandungen, nicht nur die erste - und geaendert
              * wird nichts. */
             $rn_fehler[] = rn_t('TEXT.SICH_ABGELEHNT') . ' ' . implode(' ', $rn_mangel);
+            renault_log('WARN', 'Eine zurueckgespielte Sicherung wurde abgelehnt, '
+                . 'die Konfiguration ist unveraendert. Erste Beanstandung: '
+                . strip_tags((string) $rn_mangel[0]));
         } elseif (rn_config_write($rn_neu)) {
-            $rn_meldung = sprintf(rn_t('TEXT.SICH_UEBERNOMMEN'), $rn_n);
+            /* Der Zwischenspeicher gehoert zu einer anderen Fahrgestellnummer
+             * und die Anmeldung zu einem anderen Konto - beides wird
+             * verworfen, wie es der Speichern-Handler auch tut. Und dem
+             * Anwender wird gesagt, was mit dem Abruf geschieht: einen Dienst
+             * zum Nachziehen gibt es nicht, den Takt macht der Cron. */
+            foreach (rn_fahrzeuge($rn_neu) as $rn_f2) {
+                if (is_file($rn_f2['session'])) { @unlink($rn_f2['session']); }
+            }
+            if (is_file($rn_p['anmeldung'])) { @unlink($rn_p['anmeldung']); }
+            $rn_meldung = sprintf(rn_t('TEXT.SICH_UEBERNOMMEN'), $rn_n) . ' '
+                        . sprintf(rn_t('TEXT.SICH_DIENST'),
+                                  max(1, (int) $rn_neu['cron_ncs']));
+            renault_log('INFO', 'Sicherung zurueckgespielt: ' . $rn_n . ' Werte. '
+                . 'Zwischenspeicher und Anmeldung verworfen; der naechste Cron-Lauf '
+                . 'meldet sich mit den neuen Zugangsdaten an.');
+            $rn_cfg = rn_config_read();
         } else {
             $rn_fehler[] = rn_t('TEXT.SICH_SCHREIBFEHLER');
+            renault_log('ERROR', 'Die zurueckgespielte Sicherung liess sich nicht '
+                . 'schreiben; die alte Konfiguration steht unveraendert.');
         }
     }
 }
@@ -343,9 +404,15 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 <style>
 /* Hausstandard: eigener Behaelter, kein Schattenwurf, Reiter im Fluss.
    Uebernommen aus VORLAGE_hausstandard.css.html - bis 2.0.6 fuehrte dieses
-   Plugin eine eigene Fassung mit .sm-pane statt .sm-seite. Damit lief die
-   Gegenprobe aus der Pflichtpruefung ins Leere, die genau nach
-   'sm-seite sm-active" id="tab-' sucht. */
+   Plugin fuer die Reiterflaechen einen eigenen Klassennamen. Damit lief die
+   Gegenprobe aus der Pflichtpruefung ins Leere: sie sucht die Hausklasse der
+   Flaeche zusammen mit der Kennung des Reiters.
+
+   Der gesuchte Wortlaut steht hier ABSICHTLICH nicht - ein Kommentar, der
+   die Zeichenfolge traegt, nach der ein Werkzeug sucht, wird als erste
+   Fundstelle gelesen und das Werkzeug misst dann den Kommentar. Bis 2.1.5
+   war genau das der Fall: die Zeile war die einzige woertliche Fundstelle
+   in der ganzen Datei. */
 .sm-wrap { max-width: 1100px; margin: 0 auto; font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; color: #333; }
 .sm-wrap, .sm-wrap *, .sm-tabs, .sm-tabs * { text-shadow: none !important; }
 .sm-wrap h2 { color: #6dac20; margin: 24px 0 10px; font-size: 1.15em; border-bottom: 2px solid #e0e0e0; padding-bottom: 6px; }
@@ -369,7 +436,27 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 .sm-tbl th { background: #eef3e6; font-weight: 600; }
 .sm-mono { font-family: Consolas, "Courier New", monospace; background: #f0f0f0;
     padding: 1px 4px; border-radius: 3px; font-size: 0.94em; word-break: break-all; }
-.sm-pre, .sm-vorschau { background: #f4f4f4; border: 1px solid #ccc; padding: 10px;
+/* Rollbehaelter fuer breite Tabellen. Ohne ihn sind Spalten ausserhalb des
+   Fensters unerreichbar: .sm-tbl steht auf width:100%, der Behaelter auf
+   max-width. Die Ladehistorie hat 17 Spalten. Wortgetreu aus
+   VORLAGE_hausstandard.css.html. */
+.sm-breit { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 10px 0; }
+.sm-breit .sm-tbl { margin: 0; min-width: 760px; }
+
+/* Ein Auswahlfeld muss man als Auswahlfeld erkennen.
+   Die Rahmen-CSS von jQuery Mobile setzt appearance:none und nimmt den Pfeil
+   weg; data-role="none" haelt nur deren Umbauten fern, nicht deren
+   Stilregeln. Ohne diese Regel sehen alle zehn Auswahlfelder dieser Seite
+   aus wie Textfelder. Die Raute im SVG steht als %23 - eine rohe Raute
+   beendet den CSS-Wert. Wortgetreu aus VORLAGE_hausstandard.css.html. */
+.sm-wrap select {
+    appearance: none; -webkit-appearance: none; -moz-appearance: none;
+    background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='9' viewBox='0 0 14 9'%3E%3Cpath d='M1 1l6 6 6-6' fill='none' stroke='%234f7d17' stroke-width='2'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 10px center;
+    padding-right: 32px; cursor: pointer; }
+.sm-tbl select { padding-right: 28px; background-position: right 7px center; }
+
+.sm-vorschau { background: #f4f4f4; border: 1px solid #ccc; padding: 10px;
     font-family: monospace; white-space: pre-wrap; font-size: 0.86em; overflow: auto; margin: 8px 0; }
 .sm-knopfreihe { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0 4px; align-items: stretch; }
 .sm-knopfreihe form { margin: 0; display: flex; }
@@ -412,9 +499,10 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
     padding: 10px 12px; margin: 12px 0; font-size: 0.9em; }
 .sm-log { background: #1e1e1e; color: #ddd; font-family: monospace; font-size: 0.82em;
   padding: 10px; border-radius: 6px; max-height: 460px; overflow: auto; white-space: pre-wrap; }
-.sm-kacheln { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0; }
-.sm-kachel { border: 1px solid #ddd; border-radius: 10px; padding: 10px 14px; min-width: 130px; }
-.sm-kachel b { display: block; font-size: 1.35em; color: #33691e; }
+/* sm-kacheln, sm-kachel und sm-pre sind mit 2.1.6 entfallen: sie standen
+   im Stilblock und kamen in der ganzen Linie kein einziges Mal vor.
+   sm-an bleibt und wird jetzt auch benutzt - bis 2.1.5 war nur das rote
+   sm-aus verdrahtet, die Zustandsanzeige also einseitig gefaerbt. */
 .sm-an  { color: #1a7f1a; font-weight: 700; }
 .sm-aus { color: #b00000; font-weight: 700; }
 </style>
@@ -641,7 +729,7 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 <tr><th style="width:34%"><?php echo rn_e(rn_t('TEXT.S_GROESSE')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_WERT')); ?></th></tr>
 <tr><td><?php echo rn_e(rn_t('TEXT.S_BROKER')); ?></td><td class="sm-mono"><?php echo rn_e($rn_broker['host'] . ':' . $rn_broker['port']); ?></td></tr>
 <tr><td><?php echo rn_e(rn_t('TEXT.S_LOKAL')); ?></td><td><?php echo $rn_broker['lokal'] ? rn_e(rn_t('TEXT.O_JA')) : rn_e(rn_t('TEXT.S_FREMDER_BROKER')); ?></td></tr>
-<tr><td><?php echo rn_e(rn_t('TEXT.S_AUTOSTART')); ?></td><td><?php echo $rn_broker['autostart'] ? rn_e(rn_t('TEXT.O_JA')) : '<span class="sm-aus">' . rn_e(rn_t('TEXT.S_KEIN_AUTOSTART')) . '</span>'; ?></td></tr>
+<tr><td><?php echo rn_e(rn_t('TEXT.S_AUTOSTART')); ?></td><td><?php echo $rn_broker['autostart'] ? '<span class="sm-an">' . rn_e(rn_t('TEXT.O_JA')) . '</span>' : '<span class="sm-aus">' . rn_e(rn_t('TEXT.S_KEIN_AUTOSTART')) . '</span>'; ?></td></tr>
 <tr><td><?php echo rn_e(rn_t('TEXT.S_BENUTZER')); ?></td><td class="sm-mono"><?php echo $rn_broker['benutzer'] !== '' ? rn_e($rn_broker['benutzer']) : '–'; ?></td></tr>
 </table>
 <?php } ?>
@@ -797,9 +885,30 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 <tr><th style="width:52%"><?php echo rn_e(rn_t('TEXT.S_FRAGE')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_ANTWORT')); ?></th></tr>
 <?php
 require_once __DIR__ . '/rn_test.php';
-foreach (rn_test_selbstpruefung($rn_cfg, $rn_broker) as $rn_z) {
+/* DREI Ausgaenge, nicht zwei.
+ *
+ * Bis 2.1.5 war das zweite Feld ein Boolescher Wert: es gab nur Haken oder
+ * Kreuz. Damit standen Zeilen rot, die nichts bedeuteten - ein leeres
+ * Protokoll (log/plugins liegt auf einer Ramdisk und ist nach jedem
+ * Neustart leer), ein nicht feststellbarer Gateway-Autostart, eine noch
+ * nicht geschriebene Konfiguration. "Ich konnte hier nichts messen" ist
+ * weder Haken noch Kreuz; ein rotes Kreuz, das nichts bedeutet, ist
+ * schlimmer als keine Pruefung.
+ *
+ *   true   Haken
+ *   false  Kreuz
+ *   null   Punkt - nicht feststellbar */
+$rn_striche = 0;
+foreach (rn_test_selbstpruefung($rn_cfg, $rn_broker, $rn_tab === 'tab-test') as $rn_z) {
+    if ($rn_z[1] === null) { $rn_zeichen = '&#9679; '; $rn_striche++; }
+    elseif ($rn_z[1])      { $rn_zeichen = '&#10004; '; }
+    else                   { $rn_zeichen = '&#10008; '; }
     echo '<tr><td>' . rn_e($rn_z[0]) . '</td><td>'
-       . ($rn_z[1] ? '&#10004; ' : '&#10008; ') . rn_e($rn_z[2]) . '</td></tr>';
+       . $rn_zeichen . rn_e($rn_z[2]) . '</td></tr>';
+}
+if ($rn_striche > 0) {
+    echo '<tr><td colspan="2" class="sm-hilfe">'
+       . rn_e(sprintf(rn_t('TEXT.S_NICHT_MESSBAR'), $rn_striche)) . '</td></tr>';
 }
 ?>
 </table>
@@ -832,13 +941,40 @@ foreach (rn_test_selbstpruefung($rn_cfg, $rn_broker) as $rn_z) {
   </form>
 </div>
 
+<?php
+/* Lesende und schaltende Knoepfe in GETRENNTEN Reihen.
+ *
+ * Bis 2.1.5 standen alle sieben Befehle orange (sm-b-aktion) unter der
+ * Ueberschrift "Schalten" - auch "Daten sofort neu abrufen", das
+ * rn_befehle() selbst als nicht veraendernd fuehrt. Orange heisst nach der
+ * Farblegende "haelt den Betrieb an / veraendert"; und der Satz ueber der
+ * Reihe sagt, die Knoepfe wirkten am Fahrzeug. Fuer den Abruf stimmt beides
+ * nicht. Die Einteilung kommt jetzt aus rn_befehl_schaltet() - derselben
+ * Funktion, an der auch der Endpunkt entscheidet. */
+$rn_lesend = array();
+$rn_schaltend = array();
+foreach (rn_befehle() as $rn_a => $rn_ang) {
+    if (rn_befehl_schaltet($rn_a)) { $rn_schaltend[$rn_a] = $rn_ang; }
+    else                          { $rn_lesend[$rn_a]   = $rn_ang; }
+}
+?>
+<h2><?php echo rn_e(rn_t('TEXT.H_ABRUF_TEST')); ?></h2>
+<p class="sm-hilfe"><?php echo rn_t('TEXT.H_ABRUF_TEST_TEXT'); ?></p>
+<div class="sm-knopfreihe">
+<?php foreach ($rn_autos as $rn_f) { foreach ($rn_lesend as $rn_a => $rn_ang) { ?>
+  <a data-role="none" class="sm-btn sm-b-lesen" target="_blank"
+     href="<?php echo rn_e(rn_aktionsadresse($rn_cfg, $rn_a, $rn_f['nr'])); ?>"><?php
+    echo rn_e((count($rn_autos) > 1 ? $rn_f['name'] . ': ' : '') . rn_t($rn_ang[0])); ?></a>
+<?php } } ?>
+</div>
+
 <h2><?php echo rn_e(rn_t('TEXT.H_SCHALTEN_TEST')); ?></h2>
 <p class="sm-hilfe"><?php echo rn_t('TEXT.H_SCHALTEN_TEST_TEXT'); ?></p>
 <?php if ($rn_cfg['steuerung_ein'] !== 'Y') { ?>
 <div class="sm-warnung"><?php echo rn_t('TEXT.H_STEUERUNG_AUS'); ?></div>
 <?php } ?>
 <div class="sm-knopfreihe">
-<?php foreach ($rn_autos as $rn_f) { foreach (rn_befehle() as $rn_a => $rn_ang) { ?>
+<?php foreach ($rn_autos as $rn_f) { foreach ($rn_schaltend as $rn_a => $rn_ang) { ?>
   <a data-role="none" class="sm-btn sm-b-aktion" target="_blank"
      href="<?php echo rn_e(rn_aktionsadresse($rn_cfg, $rn_a, $rn_f['nr'])); ?>"><?php
     echo rn_e((count($rn_autos) > 1 ? $rn_f['name'] . ': ' : '') . rn_t($rn_ang[0])); ?></a>
@@ -886,7 +1022,7 @@ foreach ($rn_autos as $rn_f) {
         echo '<div class="sm-info">' . rn_e(rn_t('TEXT.H_CSV_LEER')) . '</div>';
         continue;
     }
-    array_shift($rn_reihen);                       // Kopfzeile
+    $rn_kopfzeile = array_shift($rn_reihen);       // Kopfzeile - wird unten gebraucht
     $rn_punkte = array();
     foreach (array_slice($rn_reihen, -288) as $rn_z) {   // hoechstens 24 h
         $rn_sp = explode(';', $rn_z);
@@ -931,14 +1067,26 @@ foreach ($rn_autos as $rn_f) {
         <?php
     }
     // Tabelle bleibt zusaetzlich stehen - sie zeigt, was das Diagramm zeichnet.
+    /* Die Tabelle hat 17 Spalten. Bis 2.1.5 stand sie OHNE Kopfzeile - die
+     * wurde oben weggeworfen - und ohne Rollbehaelter in einem Behaelter
+     * mit fester Hoechstbreite: siebzehn namenlose, gequetschte Spalten.
+     * Die Ueberschriften kommen aus der Kopfzeile der Datei selbst, durch
+     * die Sprachtabelle uebersetzt; damit stimmt ihre Zahl immer mit den
+     * Daten ueberein, auch bei einer aelteren Aufzeichnung. */
     $rn_letzte = array_slice(array_reverse($rn_reihen), 0, 30);
-    echo '<p class="sm-hilfe">' . rn_e(rn_t('TEXT.H_TABELLE_30')) . '</p><table class="sm-tbl">';
+    echo '<p class="sm-hilfe">' . rn_e(rn_t('TEXT.H_TABELLE_30')) . '</p>';
+    echo '<div class="sm-breit"><table class="sm-tbl">';
+    echo '<tr>';
+    foreach (explode(';', (string) $rn_kopfzeile) as $rn_sp) {
+        echo '<th>' . rn_e(rn_csv_spalte($rn_sp)) . '</th>';
+    }
+    echo '</tr>';
     foreach ($rn_letzte as $rn_z) {
         echo '<tr>';
         foreach (explode(';', $rn_z) as $rn_feld) { echo '<td class="sm-mono">' . rn_e($rn_feld) . '</td>'; }
         echo '</tr>';
     }
-    echo '</table>';
+    echo '</table></div>';
 }
 ?>
 </div>
@@ -948,6 +1096,7 @@ foreach ($rn_autos as $rn_f) {
 <h2><?php echo rn_e(rn_t('TEXT.H_LOG')); ?></h2>
 <p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.H_LOG_TEXT')); ?>
 <span class="sm-mono"><?php echo rn_e($rn_p['log']); ?></span></p>
+<div class="sm-hinweis"><?php echo rn_t('TEXT.H_LOG_RAMDISK'); ?></div>
 <?php if (!$rn_zeilen) { ?>
 <div class="sm-info"><?php echo rn_e(rn_t('TEXT.H_LOG_LEER')); ?></div>
 <?php } else { ?>

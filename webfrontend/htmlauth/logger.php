@@ -77,7 +77,14 @@ function renault_log($level, $msg)
      * unterdrueckt sie ausgerechnet die erste Zeile in einer leeren Datei,
      * und der Benutzer sieht nach dem Leeren gar nichts. Gemessen, weil ein
      * Pruefdurchlauf genau das gezeigt hat. */
-    if (!is_file(RENAULT_LOGFILE)) {
+    /* is_file() VOR dem unlink: das @ unterdrueckt zwar die Ausgabe, ruft
+     * aber trotzdem einen gesetzten Fehler-Aufnehmer - und rendern.py haengt
+     * sich genau so ein. Solange es weder Protokoll noch Merker gibt (der
+     * Normalfall beim ersten Seitenaufruf und nach jedem Neustart der
+     * Ramdisk), stand sonst bei jedem Prueflauf eine Warnung, die keine ist.
+     * Aufgefallen, als die Oberflaeche mit 2.1.6 anfing, logger.php
+     * einzubinden. */
+    if (!is_file(RENAULT_LOGFILE) && is_file($merker)) {
         @unlink($merker);
     }
 

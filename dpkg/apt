@@ -1,0 +1,26 @@
+# Diese Pakete installiert LoxBerry mit "apt-get -y install" - und zwar als
+# root, waehrend der Plugin-Installation.
+#
+# WARUM DAS HIER STEHT UND NICHT IN postinstall.sh:
+# postinstall.sh laeuft als Benutzer loxberry. Ein "apt-get install" dort
+# scheitert mangels Rechten - immer, still, und mit einem Hinweistext, den
+# man leicht ueberliest. Diese Liste ist der vorgesehene Weg.
+#
+# php-curl ist fuer dieses Plugin NICHT optional: der gesamte Verkehr mit
+# Renault (Gigya-Anmeldung, Kamereon-Abfragen, alle Schaltbefehle) laeuft
+# darueber. Bis 2.1.5 stand die Erweiterung nirgends, und es gab auch keine
+# Wache: "Call to undefined function curl_init()" ist ein fataler Fehler,
+# den kein @ und kein error_reporting aufhaelt - ueber den Endpunkt haette
+# ihn der catch-Zweig gefangen, im Cron waere der Lauf mit Rueckgabewert 255
+# gestorben und haette nach /dev/null geschrieben.
+#
+# Seit 2.1.6 steht die Erweiterung hier UND es gibt die Wache in abruf.php.
+# Beides: die Liste sorgt dafuer, dass sie da ist, die Wache dafuer, dass man
+# es erfaehrt, wenn sie es doch nicht ist.
+#
+# Bewusst NICHT eingetragen:
+#   php-json     Kernbestandteil seit PHP 8, in 7.4 auf jedem LoxBerry dabei
+#   php-openssl  dito; der Reiter Test zeigt beide als Auskunft an
+#   php-sockets  wird nicht gebraucht - das Plugin spricht MQTT ueber die
+#                phpMQTT-Bibliothek des LoxBerry-Kerns
+php-curl

@@ -10,44 +10,100 @@
 # ===================================================================
 #
 # Bis 1.5 stand hier die unveraenderte LoxBerry-Beispieldatei: zwoelf
-# Variablenzuweisungen (PCGI, PHTML, PTEMPL, PDATA, PLOG, PCONFIG,
-# PSBIN, PBIN ...), elf echo-Zeilen, die diese Pfade ins
-# Installationsprotokoll schrieben, und "exit 0". Sie hat nichts
-# aufgeraeumt - sie hat nur ausgesehen, als taete sie es.
+# Variablenzuweisungen, elf echo-Zeilen mit Pfaden und "exit 0". Sie hat
+# nichts aufgeraeumt - sie hat nur ausgesehen, als taete sie es.
 #
-# Nachgesehen, was das Plugin ausserhalb seiner eigenen Ordner
-# hinterlaesst:
+# Bis 2.1.5 stand hier dann etwas Falsches: der Text behauptete, die
+# dauerhafte Konfigurationssicherung liege IM Konfigordner und werde mit
+# ihm zusammen entfernt. (Der alte Wortlaut steht hier absichtlich nicht -
+# sonst faende ihn jede Suche, die pruefen soll, ob er fort ist.)
+# Er beschrieb den Stand bis 2.0.6. Seit 2.1.0 liegt die Zweitschrift
+# NEBEN dem Ordner (config/plugins/<ordner>.backup.config.php) - genau
+# deshalb ueberlebt sie das Loeschen, und genau deshalb blieb nach dem
+# Entfernen des Plugins das My-Renault-Kennwort im Klartext auf der Anlage
+# stehen. Eine spaetere Neuinstallation holte es ueber rn_umzug() samt
+# Aktionstoken von selbst zurueck: was als Selbstheilung gedacht ist, war
+# beim Entfernen das Gegenteil.
 #
-#   Dateien:  nichts. Die dauerhafte Konfigurationssicherung liegt in
-#             config/plugins/<ordner>/config.php.backup, also INNERHALB
-#             des Plugin-Konfigordners - LoxBerry raeumt ihn mit weg.
-#             Ebenso data/, log/ und die beiden webfrontend-Ordner.
-#             Die Zugangsdaten (webfrontend/htmlauth/config.php) gehen
-#             damit ebenfalls.
-#   Prozesse: keine. Das Plugin arbeitet ueber cron (cron.03min,
-#             cron.10min); LoxBerry entfernt die Eintraege selbst.
-#             Einen Dienst gibt es nicht.
-#   MQTT:     hier bleibt etwas stehen - siehe unten.
-#
-# Deshalb tut diese Datei genau eine Sache: sie sagt, was der Broker
-# noch enthaelt. Etwas vorzutaeuschen, das sie nicht kann, waere
-# schlechter als die alte Beispieldatei.
+# Seit 2.1.6 raeumt diese Datei deshalb selbst auf. Was sie NICHT kann,
+# sagt sie ebenfalls - der MQTT-Broker bleibt.
 
-PDIR=$3
+PDIR="$3"
 [ -n "$PDIR" ] || PDIR="renault_ng"
+BASE="$5"
+if [ -z "$BASE" ] || [ ! -d "$BASE" ]; then
+    BASE="$LBHOMEDIR"
+fi
+# Fail closed: ohne Wurzel wird nichts geloescht, sondern gesagt, was
+# liegenbleibt. Ein rm mit leerem Praefix ist schlimmer als ein Rest.
+if [ -z "$BASE" ] || [ ! -d "$BASE/config/plugins" ]; then
+    echo "<WARNING> Der LoxBerry-Ordner liess sich nicht bestimmen."
+    echo "<WARNING> Die Zweitschrift der Konfiguration wurde NICHT entfernt."
+    echo "<INFO> Sie enthaelt Benutzername und Kennwort des My-Renault-Kontos"
+    echo "<INFO> im Klartext und liegt unter"
+    echo "<INFO>     <loxberry>/config/plugins/$PDIR.backup.config.php"
+    echo "<INFO> Bitte von Hand loeschen."
+    exit 1
+fi
+
+rc=0
+
+# ---- 1. Zweitschrift der Konfiguration ----------------------------
+# Sie liegt NEBEN dem Konfigordner und ueberlebt dessen Loeschung.
+# Vor dem Entfernen wird sie ueberschrieben: eine geloeschte Datei mit
+# einem Kennwort darin ist auf einer SD-Karte noch eine Weile lesbar.
+SICH="$BASE/config/plugins/$PDIR.backup.config.php"
+if [ -f "$SICH" ]; then
+    dd if=/dev/zero of="$SICH" bs=1024 count=8 conv=notrunc >/dev/null 2>&1
+    if rm -f "$SICH"; then
+        echo "<OK> Zweitschrift der Konfiguration entfernt (enthielt die Zugangsdaten)."
+    else
+        echo "<ERROR> Zweitschrift $SICH liess sich nicht entfernen - bitte von Hand."
+        rc=1
+    fi
+else
+    echo "<INFO> Keine Zweitschrift der Konfiguration vorhanden."
+fi
+
+# ---- 2. Rettungsordner der Ladehistorie ---------------------------
+# Er entsteht in preupgrade.sh neben data/plugins/<ordner>/ und wird vom
+# Installer nicht mit abgeraeumt.
+RETTUNG="$BASE/data/plugins/$PDIR.rettung"
+if [ -d "$RETTUNG" ]; then
+    if rm -rf "$RETTUNG"; then
+        echo "<OK> Rettungsordner der Ladehistorie entfernt ($RETTUNG)."
+    else
+        echo "<ERROR> Rettungsordner $RETTUNG liess sich nicht entfernen."
+        rc=1
+    fi
+fi
+
+# ---- 3. Nachzaehlen -----------------------------------------------
+# Gemeldet wird, was gemessen ist - nicht, was beabsichtigt war.
+REST=0
+[ -f "$SICH" ] && REST=$((REST + 1))
+[ -d "$RETTUNG" ] && REST=$((REST + 1))
+if [ "$REST" -eq 0 ]; then
+    echo "<OK> Ausserhalb der Plugin-Ordner ist nichts von diesem Plugin uebrig."
+else
+    echo "<WARNING> $REST Rest(e) ausserhalb der Plugin-Ordner - siehe oben."
+    rc=1
+fi
 
 echo "<INFO> Plugin-Ordner, Konfiguration und Zugangsdaten entfernt LoxBerry selbst."
-echo "<INFO> Das Plugin hat weder einen Dienst noch Dateien ausserhalb seiner Ordner."
+echo "<INFO> Einen Dienst hat das Plugin nicht; es arbeitet ueber cron.03min und"
+echo "<INFO> cron.10min, und diese Eintraege entfernt LoxBerry ebenfalls."
 echo ""
 echo "<WARNING> Im MQTT-Broker bleiben Werte stehen."
-echo "<INFO> Das Plugin sendet seine Werte mit gesetztem Retain-Merker"
+echo "<INFO> Das Plugin sendet seine Zustaende mit gesetztem Retain-Merker"
 echo "<INFO> (abruf.php: \$mqtt->publish(..., 0, 1) - die letzte 1 ist Retain)."
 echo "<INFO> Ein solcher Wert bleibt im Broker gespeichert, bis ihn jemand"
 echo "<INFO> ueberschreibt oder loescht; das Entfernen des Plugins beruehrt ihn"
-echo "<INFO> nicht. Betroffen sind alle Topics unter"
+echo "<INFO> nicht. Betroffen sind die Zustandsthemen unter"
 echo "<INFO>     Renault/<Fahrzeugname>/..."
-echo "<INFO> (BattSOC, ChargingStatus, CableStatus, Range, ChargingTime,"
-echo "<INFO> ChargingEffekt, ChargeMode, GPSTime, LastDataRetrieval u. a.)."
+echo "<INFO> (ChargingStatus, CableStatus, ChargeMode, HvAcStatus, Name, ok,"
+echo "<INFO> Mileage, chargeEndStatus). Die Messwerte und das Lebenszeichen"
+echo "<INFO> gehen seit 2.1.6 OHNE Retain hinaus und verschwinden von selbst."
 echo "<INFO>"
 echo "<INFO> Zum Aufraeumen: LoxBerry -> System -> MQTT Gateway, dort in der"
 echo "<INFO> Uebersicht der eingehenden Topics die Renault-Eintraege loeschen."
@@ -55,4 +111,4 @@ echo "<INFO> Wer das nicht tut, sieht dort noch jahrelang den Ladestand vom"
 echo "<INFO> Tag der Deinstallation - und Loxone liest ihn beim naechsten"
 echo "<INFO> Verbinden erneut ein."
 
-exit 0
+exit $rc

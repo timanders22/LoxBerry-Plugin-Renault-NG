@@ -11,8 +11,13 @@ if [ ! -d "$VERZ" ]; then
     exit 1
 fi
 
-# Dieselbe Sperrdatei wie cron.03min - siehe dort.
-exec 9>"/tmp/renault_ng.lock" || exit 0
+# Dieselbe Sperrdatei wie cron.03min - der Name kommt aus dem Ordnernamen,
+# damit eine Zweitinstallation ihre eigene bekommt. Begruendung dort.
+SPERRE="/tmp/$(basename "$VERZ").lock"
+if ! exec 9>"$SPERRE"; then
+    echo "$(date '+%d.%m.%Y %H:%M:%S') [ERROR] Cron: Sperrdatei $SPERRE nicht zu oeffnen - die Ladehistorie wird nicht geholt." >> "$PROT"
+    exit 1
+fi
 flock -n 9 || exit 0
 
 cd "$VERZ" || exit 1

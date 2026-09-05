@@ -77,6 +77,18 @@ $rn_ist_cron  = false;
 $rn_aktion    = '';
 $rn_fahrzeugnr = 1;
 
+/* Der HTTP-Statuscode, den der Endpunkt aus diesem Lauf ableitet.
+ *
+ * Bis 2.1.5 antwortete webfrontend/html/index.php auf JEDEN Ausgang dieser
+ * Datei mit HTTP 200 - auch auf LOGIN FAILED, NO CREDENTIALS und OK=0. Das
+ * ist wortgleich die Klasse, die der Kopf jener Datei fuer behoben erklaert
+ * ("eine Erfolgsmeldung fuer eine nicht ausgefuehrte Handlung"): der Text
+ * hatte gewechselt, der Statuscode nicht. Loxone wertet nur den Code aus.
+ *
+ * Ueber die Kommandozeile (Cron) hat die Zahl keine Bedeutung; sie stoert
+ * dort auch nicht. */
+$rn_http_status = 200;
+
 if (isset($rn_auftrag) && is_array($rn_auftrag)) {
     $rn_aktion     = isset($rn_auftrag['aktion']) ? (string) $rn_auftrag['aktion'] : '';
     $rn_fahrzeugnr = isset($rn_auftrag['fahrzeug']) ? (int) $rn_auftrag['fahrzeug'] : 1;
@@ -87,6 +99,22 @@ if (isset($rn_auftrag) && is_array($rn_auftrag)) {
 }
 header('Content-Type: text/plain; charset=utf-8');
 
+/* Ohne die curl-Erweiterung geht hier gar nichts.
+ *
+ * Sie steht in dpkg/apt, wird also mitinstalliert - aber "Call to undefined
+ * function curl_init()" ist ein fataler Fehler, den kein @ und kein
+ * error_reporting aufhaelt. Ueber den Endpunkt faengt ihn der catch-Zweig;
+ * im Cron stirbt der Lauf mit Rueckgabewert 255 und schreibt nach
+ * /dev/null. Eine gelesene Zeile ist billiger als eine Stunde Suchen. */
+if (!function_exists('curl_init')) {
+    renault_log('ERROR', 'Die PHP-Erweiterung "curl" fehlt. Ohne sie kann das '
+        . 'Plugin Renault nicht erreichen. Auf dem LoxBerry nachinstallieren: '
+        . 'sudo apt-get install php-curl, danach den Webserver neu starten.');
+    $rn_http_status = 500;
+    echo "NO CURL\n";
+    return;
+}
+
 $rn_cfg   = rn_config_read();
 $rn_autos = rn_fahrzeuge($rn_cfg);
 
@@ -96,6 +124,7 @@ $rn_autos = rn_fahrzeuge($rn_cfg);
 if ($rn_cfg['username'] === '' || $rn_cfg['password'] === '') {
     renault_log('ERROR', 'Zugangsdaten unvollstaendig (Benutzer oder Passwort leer) - '
         . 'bitte im Plugin die Einstellungen ausfuellen. Es wird nichts an Renault gesendet.');
+    $rn_http_status = 503;        // Einrichtung unvollstaendig
     echo "NO CREDENTIALS\n";
     return;
 }
@@ -106,6 +135,7 @@ foreach ($rn_autos as $rn_f) {
 if (!$rn_mit_vin) {
     renault_log('ERROR', 'Keine Fahrgestellnummer eingetragen - bitte im Plugin die '
         . 'Einstellungen ausfuellen. Es wird nichts an Renault gesendet.');
+    $rn_http_status = 503;
     echo "NO VIN\n";
     return;
 }
@@ -196,6 +226,7 @@ if ($rn_anm[1] === '' || $rn_anm[0] !== $rn_heute) {
     curl_close($rn_ch);
     if ($rn_r === FALSE) {
         renault_log('ERROR', 'Gigya Login: keine Antwort (Zeitueberschreitung oder Netzfehler).');
+        $rn_http_status = 502;    // die Gegenstelle hat abgewiesen
         echo "LOGIN FAILED\n";
         return;
     }
@@ -209,6 +240,7 @@ if ($rn_anm[1] === '' || $rn_anm[0] !== $rn_heute) {
     $rn_oauth  = isset($rn_d['sessionInfo']['cookieValue']) ? $rn_d['sessionInfo']['cookieValue'] : '';
     if ($rn_oauth === '') {
         renault_log('ERROR', 'Gigya Login: kein Sitzungswert (cookieValue) erhalten - Anmeldung abgebrochen.');
+        $rn_http_status = 502;    // die Gegenstelle hat abgewiesen
         echo "LOGIN FAILED\n";
         return;
     }
@@ -233,6 +265,7 @@ if ($rn_anm[1] === '' || $rn_anm[0] !== $rn_heute) {
         renault_log('ERROR', 'Gigya JWT: kein id_token erhalten. Antwort: '
             . substr(preg_replace('/\s+/', ' ', (string) $rn_r), 0, 300));
         rn_anmeldung_schreiben(array('0000', '', $rn_anm[2], $rn_person));
+        $rn_http_status = 502;    // die Gegenstelle hat abgewiesen
         echo "LOGIN FAILED\n";
         return;
     }
@@ -252,6 +285,7 @@ if ($rn_anm[2] === '') {
         renault_log('ERROR', 'Kein Kamereon-Konto und keine personId bekannt - '
             . 'die Anmeldung wird beim naechsten Lauf wiederholt.');
         rn_anmeldung_schreiben(array('0000', '', '', ''));
+        $rn_http_status = 502;
         echo "NO ACCOUNT\n";
         return;
     }
@@ -279,6 +313,7 @@ if ($rn_anm[2] === '') {
     }
     if ($rn_anm[2] === '') {
         renault_log('ERROR', 'Keine Konto-Kennung erhalten (HTTP ' . $rn_code . ').');
+        $rn_http_status = 502;
         echo "NO ACCOUNT\n";
         return;
     }
@@ -300,6 +335,7 @@ if ($rn_aktion !== '' && $rn_aktion !== 'abruf') {
     $rn_ziel = rn_fahrzeug($rn_fahrzeugnr, $rn_cfg);
     if (!$rn_ziel || $rn_ziel['vin'] === '') {
         renault_log('ERROR', 'Befehl ' . $rn_aktion . ': Fahrzeug ' . $rn_fahrzeugnr . ' ist nicht eingerichtet.');
+        $rn_http_status = 400;
         echo "UNKNOWN VEHICLE\n";
         return;
     }
@@ -310,13 +346,29 @@ if ($rn_aktion !== '' && $rn_aktion !== 'abruf') {
     if (rn_befehl_schaltet($rn_aktion) && $rn_cfg['steuerung_ein'] !== 'Y') {
         renault_log('WARN', 'Befehl ' . $rn_aktion . ' abgewiesen: die Steuerung ist in den '
             . 'Einstellungen ausgeschaltet (Vorgabe). Wer aus Loxone schalten will, schaltet sie dort ein.');
+        $rn_http_status = 403;
         echo "STEUERUNG AUS\n";
         return;
     }
 
     $rn_vin = $rn_ziel['vin'];
+    /* Ein unzulaessiger Wert wird abgewiesen und gemeldet, nicht still auf
+     * 21 gebogen. Bis 2.1.5 geschah genau das: wer 35 eintrug - oder wessen
+     * Konfiguration den Schluessel aus einer aelteren Fassung gar nicht
+     * fuehrte -, klimatisierte auf 21 Grad und erfuhr es nie. Das Formular
+     * laesst nur 16 bis 30 zu; hierher kommt ein anderer Wert nur aus einer
+     * von Hand geaenderten Datei. */
     $rn_temp = (int) $rn_cfg['ac_temp'];
-    if ($rn_temp < 16 || $rn_temp > 30) { $rn_temp = 21; }
+    if (preg_match('/^[0-9]+$/', (string) $rn_cfg['ac_temp']) !== 1
+        || $rn_temp < 16 || $rn_temp > 30) {
+        renault_log('ERROR', 'Die Zieltemperatur der Vorklimatisierung ist '
+            . 'unzulaessig (ac_temp = "' . $rn_cfg['ac_temp'] . '", erlaubt sind '
+            . '16 bis 30 Grad). Es wurde NICHTS an das Fahrzeug gesendet; bitte '
+            . 'den Wert in den Einstellungen richtigstellen.');
+        $rn_http_status = 409;
+        echo "AC TEMP UNZULAESSIG\n";
+        return;
+    }
 
     switch ($rn_aktion) {
         case 'acnow':
@@ -378,6 +430,7 @@ if ($rn_aktion !== '' && $rn_aktion !== 'abruf') {
             break;
         default:
             renault_log('ERROR', 'Unbekannter Befehl: ' . $rn_aktion);
+            $rn_http_status = 400;
             echo "UNKNOWN ACTION\n";
             return;
     }
@@ -405,11 +458,45 @@ if (is_array($rn_broker) && !empty($rn_broker['brokerhost'])) {
     renault_log('ERROR', 'Kein MQTT-Broker in general.json - System, MQTT Gateway einrichten.');
 }
 
-/** Ein Thema veroeffentlichen, retained. */
+/**
+ * Ein Thema veroeffentlichen - retained oder nicht, je Thema.
+ *
+ * Bis 2.1.5 stand hier fest publish(…, 0, 1): alle 29 Themen gingen mit
+ * gesetztem Retain-Merker hinaus, auch der Zeitstempel des Plugins. Ein
+ * zurueckbehaltenes Lebenszeichen zeigt einem neu verbindenden Teilnehmer
+ * einen alten Wert als frisch - es meldet also immer "lebt". Welches Thema
+ * retained geht, entscheidet rn_thema_retained() in rn_lib.php; dort steht
+ * es an EINER Stelle, und die Themen-Tabelle im Reiter MQTT zeigt es.
+ */
 function rn_sende($mqtt, $name, $thema, $wert)
 {
     if ($mqtt === null) { return; }
-    $mqtt->publish('Renault/' . $name . '/' . $thema, (string) $wert, 0, 1);
+    $mqtt->publish('Renault/' . $name . '/' . $thema, (string) $wert,
+                   0, rn_thema_retained($thema) ? 1 : 0);
+}
+
+/**
+ * Das Lebenszeichen - bei JEDEM Durchgang, nie retained.
+ *
+ * Bis 2.1.5 ging bei einem uebersprungenen Lauf gar nichts hinaus, auch
+ * kein "ok": das continue der Abrufbremse stand vor dem ganzen MQTT-Block.
+ * Bei der Werkseinstellung (Takt 5 Minuten, Cron alle 3) ist das jeder
+ * zweite Lauf - ein stillstehender Cron war am Broker von einem regulaeren
+ * Sprungzweig nicht zu unterscheiden.
+ *
+ * $ts sind Unix-Sekunden, nicht HHMM: aus HHMM laesst sich kein Alter
+ * rechnen, und um Mitternacht faellt der Wert von 2359 auf 0005. Der
+ * Zaehler laeuft 0…999 um; -1 gibt es nicht, weil er bei jedem Lauf
+ * fortgeschrieben wird.
+ */
+function rn_lebenszeichen($mqtt, $name, $datadir)
+{
+    $zdatei = $datadir . '/zaehler';
+    $z = is_readable($zdatei) ? (int) @file_get_contents($zdatei) : -1;
+    $z = ($z + 1) % 1000;
+    @file_put_contents($zdatei, (string) $z);
+    rn_sende($mqtt, $name, 'status/ts',      time());
+    rn_sende($mqtt, $name, 'status/zaehler', $z);
 }
 
 $rn_irgendwas_ok = false;
@@ -464,6 +551,10 @@ foreach ($rn_mit_vin as $rn_f) {
     if ($rn_jetzt < date_format($rn_d, 'YmdHi')) { $rn_hole = false; }
 
     if (!$rn_hole) {
+        /* Der Lauf holt nichts - aber er hat stattgefunden, und genau das
+         * soll am Broker ankommen. Das Lebenszeichen geht deshalb VOR dem
+         * continue hinaus, am Doppelt-senden-Filter vorbei. */
+        rn_lebenszeichen($rn_mqtt, $rn_name, dirname($rn_f['session']));
         $rn_ausgabe[] = $rn_name . ';SKIP';
         continue;
     }
@@ -814,9 +905,16 @@ foreach ($rn_mit_vin as $rn_f) {
         rn_sende($rn_mqtt, $rn_name, 'phpCall',           $rn_hhmm);
         rn_sende($rn_mqtt, $rn_name, 'LastDataRetrieval', $rn_hhmm);
         rn_sende($rn_mqtt, $rn_name, 'ok', 1);
+        rn_lebenszeichen($rn_mqtt, $rn_name, dirname($rn_f['session']));
         $rn_ausgabe[] = $rn_name . ';OK=1;SOC=' . $rn_s[12] . ';RANGE=' . $rn_s[14];
     } else {
+        /* Bei einer Stoerung geht nur das Signal hinaus, nicht die Werte:
+         * die Werte im Broker sind das Letzte, was wirklich gemessen wurde.
+         * Das Lebenszeichen gehoert trotzdem dazu - sonst ist ein toter
+         * Cron von einem gestoerten Abruf nicht zu unterscheiden. */
         rn_sende($rn_mqtt, $rn_name, 'ok', 0);
+        rn_lebenszeichen($rn_mqtt, $rn_name, dirname($rn_f['session']));
+        $rn_http_status = 502;
         $rn_ausgabe[] = $rn_name . ';OK=0';
     }
 

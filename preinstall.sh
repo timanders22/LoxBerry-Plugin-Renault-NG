@@ -48,3 +48,8 @@ echo "<INFO> Plugin Template folder is: $PTEMPL"
 echo "<INFO> Plugin Data folder is: $PDATA"
 echo "<INFO> Plugin Log folder (on RAMDISK!) is: $PLOG"
 echo "<INFO> Plugin CONFIG folder is: $PCONFIG"
+
+# Ausdruecklich 0: der Rueckgabewert waere sonst der des letzten echo -
+# richtig, aber zufaellig. postinstall.sh und postroot.sh sagen es
+# ausdruecklich; diese beiden jetzt auch.
+exit 0

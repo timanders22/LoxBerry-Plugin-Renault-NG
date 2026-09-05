@@ -84,10 +84,19 @@ if (is_array($rn_broker) && !empty($rn_broker['brokerhost'])) {
     }
 }
 
+/**
+ * Wie rn_sende() in abruf.php - Retain je Thema, nicht pauschal.
+ *
+ * Die Entscheidung steht in rn_thema_retained() (rn_lib.php) an EINER
+ * Stelle. Von den sieben Themen dieser Datei ist nur chargeEndStatus ein
+ * Zustand; die uebrigen sechs sind Messwerte eines abgeschlossenen
+ * Ladevorgangs und gehen ohne Retain hinaus.
+ */
 function rn_h_sende($mqtt, $name, $thema, $wert)
 {
     if ($mqtt === null) { return; }
-    $mqtt->publish('Renault/' . $name . '/' . $thema, (string) $wert, 0, 1);
+    $mqtt->publish('Renault/' . $name . '/' . $thema, (string) $wert,
+                   0, rn_thema_retained($thema) ? 1 : 0);
 }
 
 /** Dauer eines Ladevorgangs in Minuten, aus Anfang und Ende. */

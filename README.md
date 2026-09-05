@@ -1,5 +1,7 @@
 # LoxBerry-Plugin: Renault NG
 
+Version 2.1.6 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
 Kilometerstand, Position u. v. m. werden regelmäßig abgerufen und per **MQTT**
@@ -11,6 +13,85 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Version 2.1.6 — was eine Durchsicht bei grünem Prüfwerkzeug noch findet
+
+Am 04./05.09.2026 ist 2.1.5 vollständig gegengelesen worden. Die
+Freigabeprüfung des Hauses meldete dabei **14 Prüfungen, 0 Beanstandungen** —
+und trotzdem fanden sich 33 Befunde, fünf davon schwer. Alle liegen außerhalb
+dessen, was ein Prüfwerkzeug am Quelltext sehen kann; drei findet man nur,
+indem man die Konfigurationsdatei absichtlich beschädigt und den Endpunkt
+gegen einen echten Webserver fährt.
+
+### Woran Sie merken, dass Sie betroffen waren
+
+- **Ihr Aktionstoken hat sich ohne Ihr Zutun geändert**, und die Adressen im
+  Miniserver antworteten plötzlich mit 403 (ein Virtueller Ausgang zeigt das
+  nicht an — er wirkt nur nicht mehr). Ursache: eine leere oder unlesbare
+  `config.php` wurde wie eine Werkseinstellung gelesen.
+- **Ihre Ladehistorie ist nach einem Update verschwunden.**
+- **Ein Loxone-Baustein meldete Erfolg, obwohl nichts geschaltet wurde** — der
+  Endpunkt antwortete auf jeden Fehler mit HTTP 200.
+
+### Behoben
+
+- **Die Konfiguration heilt sich nach Inhalt, nicht nach Form.** Eine leere,
+  unlesbare oder halb geschriebene `config.php` wird erkannt, als `.kaputt`
+  beiseitegelegt, aus der Zweitschrift wiederhergestellt und **einmal**
+  protokolliert. Bis 2.1.5 hing die Selbstheilung allein daran, ob die Datei
+  *fehlte* — eine vorhandene, aber unlesbare galt als in Ordnung, das Plugin
+  würfelte ein neues Token und überschrieb damit die heile Zweitschrift.
+- **`config.php` wird nicht mehr mit `include` gelesen**, sondern zerlegt. Ein
+  Syntaxfehler darin ist damit kein `E_COMPILE_ERROR` mehr, der Oberfläche,
+  Cron und Endpunkt gleichzeitig stilllegt.
+- **Die Ladehistorie überlebt ein Update** (`data/plugins/<ordner>.rettung/`).
+- **Der Endpunkt sagt die Wahrheit:** 502 bei einer abweisenden Gegenstelle,
+  503 bei fehlenden Zugangsdaten, 403 bei ausgeschalteter Steuerung, 409 bei
+  einer unzulässigen Zieltemperatur. Ein Ladefehler ergibt keinen leeren
+  HTTP 500 mehr, sondern eine lesbare Zeile.
+- **Jede Abweisung am Endpunkt steht im Protokoll**, mit der Adresse des
+  Anrufers und ohne das Token.
+- **Der unangemeldete Endpunkt legt nichts mehr an.** Bis 2.1.5 entstanden aus
+  einem einzigen Aufruf ohne Token sechs Verzeichnisse im LoxBerry-Baum.
+- **Eine Fahrzeugnummer, die nicht aus Ziffern besteht, wird abgewiesen.**
+  `fahrzeug=2abc`, `2.9`, `" 2"` wurden alle zu 2 — und `fahrzeug[]=2` zu 1;
+  ein `chargestop` traf damit das falsche Fahrzeug.
+- **Zurückspielen prüft jeden Wert und behält, was in der Datei fehlt.** Eine
+  Sicherung mit einem einzigen Schlüssel setzte bis 2.1.5 alles Übrige auf
+  Werk — Token, Kennwort und Fahrgestellnummer eingeschlossen — und meldete
+  dazu „1 Werte übernommen“. Die Datei trägt jetzt einen lesbaren `_`-Kopf.
+- **Retain je Thema.** Zustände bleiben zurückbehalten, Messwerte mit
+  Zeitbezug nicht mehr, das Lebenszeichen nie. Bis 2.1.5 gingen alle Themen
+  retained hinaus, auch der Zeitstempel — ein zurückbehaltenes Lebenszeichen
+  meldet immer „lebt“.
+- **Zwei neue Themen: `status/ts` und `status/zaehler`.** Sie gehen bei
+  **jedem** Cron-Durchgang hinaus, auch wenn die Abrufbremse den Datenabruf
+  überspringt. Bis 2.1.5 wurde in einem übersprungenen Lauf gar nichts
+  veröffentlicht — bei der Werkseinstellung jeder zweite.
+- **Der Reiter Test kennt einen dritten Ausgang** (Punkt statt Kreuz) und ruft
+  den eigenen Endpunkt wirklich auf. Dazu vier neue Prüfzeilen: Formularmerkmal,
+  serverseitiger Reiter, Vollständigkeit der Konfiguration, Cron-Einträge.
+- **Die Auswahlfelder haben wieder einen Pfeil**, die Ladehistorie eine
+  Kopfzeile und einen Rollbehälter, und „Daten sofort neu abrufen“ steht grün
+  bei den lesenden Knöpfen statt orange unter „Schalten“.
+- **Die Ausgaben der fünf Prüfknöpfe sind zweisprachig.**
+- **`uninstall` entfernt die Zweitschrift.** Sie liegt neben dem Konfigordner
+  und blieb deshalb nach dem Entfernen des Plugins mit dem My-Renault-Kennwort
+  im Klartext liegen; eine spätere Neuinstallation holte sie von selbst zurück.
+- **`php-curl` steht in `dpkg/apt`**, und es gibt eine Wache davor.
+- Kleineres: `ac_temp` außerhalb 16–30 wird abgewiesen statt still auf 21
+  gebogen; die Sperrdatei der Cron-Läufe kommt aus dem Ordnernamen (eine
+  Zweitinstallation sperrte sich sonst selbst aus); Obergrenze der
+  Sicherungsdatei 64 kB; kein fester Pfad `/home/loxberry/loxberry` mehr;
+  tote CSS-Regeln entfernt; die Hilfe nennt keine veraltete Fassungsnummer
+  mehr.
+
+### Bewusst nicht gemacht
+
+- **Die Themennamen bleiben.** `chargeDuration(min)` ist unhandlich, aber an
+  jedem Namen hängt ein virtueller Eingang in einer fremden Anlage.
+- **Der Themenvorsatz `Renault/` bleibt unveränderlich.** Ein Eingabefeld
+  dafür würde auf jeder bestehenden Anlage sämtliche Themen umbenennen.
 
 ## Version 2.1.1 — Formularschutz und zwei geprüfte Befehlszeilen
 
@@ -319,6 +400,27 @@ gelöscht und neu angelegt. Deshalb gab es bis 1.4 eine Sicherung nach `/tmp` �
 eine Krücke um einen Konstruktionsfehler herum, und eine brüchige dazu, weil
 `/tmp` auf dem LoxBerry eine Ramdisk ist. `rn_umzug()` holt beim ersten Aufruf
 nach, was noch am alten Ort liegt.
+
+### Was ein Update wirklich überlebt
+
+Gemessen an `sbin/plugininstall.pl` (Zweig `master`, 2054 Zeilen, geholt am
+04.09.2026): die Unterroutine `purge_installation` hat **zwei** Aufrufstellen —
+eine bei der Deinstallation und eine im Upgrade-Zweig. Ihr Löschblock steht
+ohne Prüfung auf die Betriebsart und entfernt bei **jedem** Update unter
+anderem `config/plugins/<ordner>/` **und** `data/plugins/<ordner>/`. Nur
+`log/plugins/<ordner>/` hängt an der Betriebsart und bleibt stehen.
+
+| Was | überlebt ein Update? | wie |
+|---|---|---|
+| Konfiguration | ja | `preupgrade.sh` legt die Zweitschrift **neben** den Ordner, `postupgrade.sh` holt sie zurück |
+| Ladehistorie `database*.csv` | **seit 2.1.6** ja | ebenso, über `data/plugins/<ordner>.rettung/` |
+| Anmeldung, Zwischenspeicher | nein — und das ist richtig | beides wird beim nächsten Abruf neu geholt |
+| Protokoll | ja, aber nicht über einen Neustart | `log/plugins` ist eine Ramdisk |
+
+Bis 2.1.5 stand hier und in drei weiteren Texten das Gegenteil: `data/`
+überstehe ein Update. Die Ladehistorie war deshalb nach jedem Auto-Update
+fort — ohne Meldung, und der Reiter *Ladehistorie* hatte im selben Atemzug
+versprochen, die Datei überlebe Updates und Neuinstallationen.
 
 ## Installation
 

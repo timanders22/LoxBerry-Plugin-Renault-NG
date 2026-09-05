@@ -34,17 +34,31 @@ if (!function_exists('lb_wurzel_ermitteln')) {
     }
 }
 
-function rn_paths()
+/**
+ * Die Pfade des Plugins.
+ *
+ * $anlegen = false legt KEINE Verzeichnisse an. Der unangemeldete Endpunkt
+ * ruft so auf: bis 2.1.5 entstanden bei jedem tokenlosen Aufruf sechs
+ * Verzeichnisse im LoxBerry-Baum (config/plugins, config/plugins/<ordner>,
+ * data/plugins, data/plugins/<ordner>, log/plugins, log/plugins/<ordner>),
+ * gemessen an einem frischen Baum. Der Hausstandard sagt: was ein Endpunkt
+ * anlegt, legt er NACH der Tokenpruefung an - und der unangemeldete legt gar
+ * nichts an.
+ *
+ * Das Ergebnis wird nur dann gemerkt, wenn wirklich angelegt werden durfte:
+ * sonst merkte sich ein Endpunktaufruf die Pfade, und ein spaeterer Aufruf
+ * mit Token faende die Ordner nicht vor.
+ */
+function rn_paths($anlegen = true)
 {
     static $p = null;
-    if ($p !== null) {
+    static $angelegt = false;
+    if ($p !== null && ($angelegt || !$anlegen)) {
         return $p;
     }
     $home = getenv('LBHOMEDIR');
     if (!$home || !is_dir($home)) {
-        foreach (array(lb_wurzel_ermitteln(), '/home/loxberry/loxberry') as $k) {
-            if (is_dir($k)) { $home = $k; break; }
-        }
+        $home = lb_wurzel_ermitteln();
     }
     $home = $home ? $home : lb_wurzel_ermitteln();
     $eigen = dirname(__FILE__);
@@ -79,8 +93,11 @@ function rn_paths()
     $konf   = $home . '/config/plugins/' . $ordner;
     $daten  = $home . '/data/plugins/'   . $ordner;
     $prot   = $home . '/log/plugins/'    . $ordner;
-    foreach (array($konf, $daten, $prot) as $d) {
-        if (!is_dir($d)) { @mkdir($d, 0775, true); }
+    if ($anlegen) {
+        foreach (array($konf, $daten, $prot) as $d) {
+            if (!is_dir($d)) { @mkdir($d, 0775, true); }
+        }
+        $angelegt = true;
     }
 
     $p = array(
@@ -123,7 +140,12 @@ function rn_paths()
 /**
  * Einmaliger Umzug der Nutzdaten aus dem Programmordner.
  *
- * Wird von JEDEM Einstiegspunkt aufgerufen - auch von der Oberflaeche.
+ * Aufgerufen wird sie von den drei Einstiegspunkten, die SCHREIBEN duerfen:
+ * der Oberflaeche, abruf.php und history.php. Der unangemeldete Endpunkt
+ * ruft sie NICHT - er legt nichts an und zieht nichts um. Nach einem Update
+ * von 1.4 oder aelter holt der Drei-Minuten-Cron den Umzug also nach, nicht
+ * der erste Loxone-Aufruf; bis dahin antwortet der Endpunkt mit 403, weil
+ * am neuen Ort noch kein Token steht.
  *
  * Bis 2.0.6 rief nur abruf.php und history.php diese Funktion. Die
  * Oberflaeche legte aber in ihrer ersten Handlung eine frische config.php
@@ -149,7 +171,7 @@ function rn_umzug()
     foreach ($paare as $paar) {
         list($alt, $neu) = $paar;
         if (is_file($alt) && !is_file($neu)) {
-            if (@copy($alt, $neu)) {
+            if (rn_datei_uebernehmen($alt, $neu)) {
                 @unlink($alt);
                 $bewegt++;
             }
@@ -157,12 +179,21 @@ function rn_umzug()
     }
     // Konfiguration notfalls aus der Zweitschrift. Beruecksichtigt wird
     // auch der alte Ort der Zweitschrift (im Konfigordner, bis 2.0.6).
+    // Genommen wird sie nur, wenn sie das Merkwort traegt - eine
+    // Zweitschrift ohne Aktionstoken ist keine Rettung.
     if (!is_file($p['config'])) {
         foreach (array($p['sicherung'], $p['konfdir'] . '/config.php.backup') as $sich) {
-            if (is_file($sich)) {
-                if (@copy($sich, $p['config'])) { $bewegt++; }
-                break;
+            if (!is_readable($sich)) { continue; }
+            $w = rn_config_einlesen($sich);
+            if (!is_array($w) || !array_key_exists('aktionstoken', $w)
+                || (string) $w['aktionstoken'] === '') {
+                continue;
             }
+            if (rn_datei_uebernehmen($sich, $p['config'])) {
+                $bewegt++;
+                rn_lage_merken('aus der Zweitschrift');
+            }
+            break;
         }
     }
     if ($bewegt > 0) {
@@ -171,9 +202,68 @@ function rn_umzug()
     return $bewegt;
 }
 
+/**
+ * Eine Datei unteilbar uebernehmen: Nebendatei mit Prozessnummer, Rechte vor
+ * dem Inhalt, dann rename().
+ *
+ * @copy() schreibt am Ziel vorwaerts. Bricht es ab (volle Platte, Stromausfall),
+ * steht dort eine halb geschriebene config.php - und die war bis 2.1.5 ein
+ * Parsefehler, der Oberflaeche, Cron und Endpunkt zugleich stilllegte. Nach
+ * rename() gibt es nur zwei Zustaende: alte Datei oder neue.
+ */
+function rn_datei_uebernehmen($quelle, $ziel)
+{
+    $roh = @file_get_contents($quelle);
+    if ($roh === false) { return false; }
+    $tmp = $ziel . '.tmp.' . getmypid();
+    $fh = @fopen($tmp, 'c');
+    if ($fh === false) { return false; }
+    @chmod($tmp, 0600);
+    $ok = ftruncate($fh, 0) && fwrite($fh, $roh) === strlen($roh);
+    fflush($fh);
+    fclose($fh);
+    if (!$ok) { @unlink($tmp); return false; }
+    if (!@rename($tmp, $ziel)) { @unlink($tmp); return false; }
+    return true;
+}
+
 function rn_e($s)
 {
     return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
+}
+
+/**
+ * Die Fassungsnummer - aus EINER Quelle, der plugin.cfg.
+ *
+ * Keine Konstante im PHP: die waere eine zweite Stelle, die beim Anheben
+ * der Nummer vergessen wird. Gelesen wird die installierte plugin.cfg,
+ * ersatzweise die im entpackten Archiv.
+ *
+ * parse_ini_file() scheitert an dieser Datei: sie kommentiert mit '#', und
+ * PHPs INI-Zerleger kennt nur ';' - er gibt dann false zurueck. Deshalb
+ * werden die Kommentarzeilen vorher entfernt.
+ */
+function rn_fassung()
+{
+    static $f = null;
+    if ($f !== null) { return $f; }
+    $f = '';
+    $p = rn_paths(false);
+    $kandidaten = array(
+        $p['home'] . '/data/system/plugins/' . $p['plugin'] . '/plugin.cfg',
+        dirname(dirname(dirname(__FILE__))) . '/plugin.cfg',
+    );
+    foreach ($kandidaten as $datei) {
+        $roh = @file_get_contents($datei);
+        if ($roh === false) { continue; }
+        $d = @parse_ini_string(preg_replace('/^[ \t]*#.*$/m', '', $roh),
+                               true, INI_SCANNER_RAW);
+        if (is_array($d) && isset($d['PLUGIN']['VERSION'])) {
+            $f = trim((string) $d['PLUGIN']['VERSION'], " \t\"");
+            break;
+        }
+    }
+    return $f;
 }
 
 /* ==================================================================
@@ -419,14 +509,116 @@ function rn_selbsttestadresse($cfg)
  * schliessende ?> noch ein Leerzeichen und einen Zeilenumbruch gehaengt.
  * Ohne Puffer landet das in der Seite - und zwar vor den HTTP-Kopfzeilen.
  */
-function rn_config_einlesen($rn_datei)
+function rn_config_einlesen($rn_datei, &$heil = null)
 {
-    ob_start();
-    include $rn_datei;
-    ob_end_clean();
-    $rn_werte = get_defined_vars();
-    unset($rn_werte['rn_datei']);
-    return $rn_werte;
+    $heil = false;
+    $roh = @file_get_contents($rn_datei);
+    if ($roh === false) {
+        return null;
+    }
+    return rn_config_zerlegen($roh, $heil);
+}
+
+/**
+ * Den Quelltext der config.php zerlegen, OHNE ihn auszufuehren.
+ *
+ * Bis 2.1.5 wurde die Datei EINGEBUNDEN und damit ausgefuehrt. Eine halb
+ * geschriebene Datei ist so ein E_COMPILE_ERROR - und der ist von
+ * catch (Throwable) NICHT zu fangen. (Die Anweisung steht hier absichtlich
+ * nicht im Wortlaut: eine Suche danach soll den Kommentar nicht finden.) Gemessen an einer abgeschnittenen Datei, unter 7.4.33 und
+ * 8.4.24 gleich: "Parse error … on line 3", Rueckgabewert 255, null Byte
+ * Ausgabe. Mit ini_set('display_errors','0') im Endpunkt heisst das HTTP 500
+ * mit leerem Rumpf - fuer Oberflaeche, Cron und Endpunkt gleichzeitig, und
+ * die heile Zweitschrift daneben wird nie gelesen.
+ *
+ * Der Zerleger kennt genau die Formen, die vorkommen koennen:
+ *   $name = '…';   var_export() maskiert darin nur \ und '
+ *   $name = "…";   aus einer von Hand geschriebenen Datei
+ *   $name = 42;    $name = true;   $name = null;
+ * Ein Wert darf einen Zeilenumbruch enthalten (bis 2.1.5 liess sich einer
+ * ueber eine Sicherungsdatei einschleusen), deshalb wird ueber den ganzen
+ * Text gelaufen und nicht Zeile fuer Zeile.
+ *
+ * Was nicht auf diese Formen passt, wird uebergangen - der Zerleger bricht
+ * nicht ab, sondern liefert, was er sicher lesen konnte. Ob das genug ist,
+ * entscheidet rn_config_read() am Inhalt, nicht an der Form.
+ */
+function rn_config_zerlegen($roh, &$heil = null)
+{
+    $heil = true;
+    $werte = array();
+    $n = strlen($roh);
+    $i = 0;
+    while ($i < $n) {
+        $d = strpos($roh, '$', $i);
+        if ($d === false) { break; }
+        // Nur ein $ am Zeilenanfang (hoechstens Leerraum davor) zaehlt.
+        $zeilenanfang = ($d === 0);
+        for ($j = $d - 1; $j >= 0; $j--) {
+            if ($roh[$j] === "\n") { $zeilenanfang = true; break; }
+            if ($roh[$j] !== ' ' && $roh[$j] !== "\t" && $roh[$j] !== "\r") { break; }
+        }
+        if (!$zeilenanfang) { $i = $d + 1; continue; }
+        if (!preg_match('/^\$([A-Za-z_][A-Za-z0-9_]*)\s*=\s*/',
+                        substr($roh, $d, 200), $m)) {
+            $i = $d + 1;
+            continue;
+        }
+        $name = $m[1];
+        $k = $d + strlen($m[0]);          // erstes Zeichen des Wertes
+        if ($k >= $n) { break; }
+        $z = $roh[$k];
+        if ($z === "'" || $z === '"') {
+            $wert = '';
+            $k++;
+            $offen = true;
+            while ($k < $n) {
+                $c = $roh[$k];
+                if ($c === '\\' && $k + 1 < $n) {
+                    $f = $roh[$k + 1];
+                    if ($z === "'") {
+                        // In einfachen Anfuehrungszeichen sind nur \\ und \'
+                        // Fluchtzeichen; alles andere bleibt woertlich.
+                        $wert .= ($f === '\\' || $f === "'") ? $f : '\\' . $f;
+                    } else {
+                        switch ($f) {
+                            case 'n': $wert .= "\n"; break;
+                            case 'r': $wert .= "\r"; break;
+                            case 't': $wert .= "\t"; break;
+                            case '"': $wert .= '"';  break;
+                            case '\\': $wert .= '\\'; break;
+                            case '$': $wert .= '$';  break;
+                            default: $wert .= '\\' . $f;
+                        }
+                    }
+                    $k += 2;
+                    continue;
+                }
+                if ($c === $z) { $offen = false; $k++; break; }
+                $wert .= $c;
+                $k++;
+            }
+            if ($offen) {
+                // Zeichenkette ohne Ende - die Datei ist abgeschnitten.
+                $heil = false;
+                break;
+            }
+            $werte[$name] = $wert;
+        } else {
+            $e = strpos($roh, ';', $k);
+            if ($e === false) { $heil = false; break; }
+            $t = trim(substr($roh, $k, $e - $k));
+            if ($t === 'true')       { $werte[$name] = '1'; }
+            elseif ($t === 'false')  { $werte[$name] = ''; }
+            elseif ($t === 'null')   { $werte[$name] = ''; }
+            elseif (preg_match('/^-?[0-9]+(\.[0-9]+)?$/', $t)) { $werte[$name] = $t; }
+            // Alles andere (Ausdruecke, Felder) wird uebergangen.
+            $k = $e;
+        }
+        $e = strpos($roh, ';', $k);
+        $i = ($e === false) ? $k + 1 : $e + 1;
+    }
+    return $werte;
 }
 
 /**
@@ -448,19 +640,197 @@ function rn_config_einlesen($rn_datei)
  *
  * rn_vorgaben() faengt beides ab: fehlende Datei und fehlende Schluessel.
  */
-function rn_config_read()
+function rn_config_read($erzeugen = true)
 {
-    $cfg = rn_vorgaben();
-    $datei = rn_paths()['config'];
-    if (is_readable($datei)) {
-        $werte = rn_config_einlesen($datei);
-        foreach ($cfg as $k => $v) {
-            if (array_key_exists($k, $werte) && !is_array($werte[$k])) {
-                $cfg[$k] = (string) $werte[$k];
-            }
+    $cfg   = rn_vorgaben();
+    $p     = rn_paths($erzeugen);
+    $datei = $p['config'];
+
+    if (!is_readable($datei)) {
+        rn_lage_merken('fehlt');
+        return $cfg;
+    }
+
+    $heil = false;
+    $werte = rn_config_einlesen($datei, $heil);
+    if ($werte === null) {
+        rn_lage_merken('unlesbar');
+        return $cfg;
+    }
+
+    /* Die Lage wird am INHALT entschieden, nicht an der Form.
+     *
+     * Bis 2.1.5 hiess "Datei vorhanden" gleich "Datei in Ordnung", und die
+     * Selbstheilung haing allein an !is_file(). Gemessen an einer 0 Byte
+     * grossen und an einer Datei mit dem Inhalt "das ist kein PHP", unter
+     * beiden PHP-Fassungen gleich: die Oberflaeche las Werkseinstellungen,
+     * erzeugte ein neues Aktionstoken, schrieb es - und ueberschrieb dabei
+     * die heile Zweitschrift mit denselben Werkswerten. Verloren waren
+     * Aktionstoken (jede Loxone-Adresse antwortet danach mit 403, was ein
+     * Virtueller Ausgang nicht auswertet), Kennwort, Fahrgestellnummern und
+     * alle Einstellungen. Ohne eine Zeile im Protokoll.
+     *
+     * Das Merkwort ist der Aktionstoken: er steht in JEDER Konfiguration,
+     * die dieses Plugin je geschrieben hat, denn die Oberflaeche erzeugt ihn
+     * beim ersten Aufruf. Fehlt er UND fehlt jeder andere bekannte
+     * Schluessel, ist die Datei beschaedigt und nicht etwa neu. */
+    $bekannt = 0;
+    foreach ($cfg as $k => $v) {
+        if (array_key_exists($k, $werte)) { $bekannt++; }
+    }
+    $hat_merkwort = array_key_exists('aktionstoken', $werte)
+                    && (string) $werte['aktionstoken'] !== '';
+
+    /* Drei Schadensbilder, jedes einzeln gemessen:
+     *
+     *   leer / kein PHP      keine einzige bekannte Einstellung
+     *   abgeschnitten        eine Zeichenkette ohne Ende ($heil === false);
+     *                        das ist die halb geschriebene Datei, die bis
+     *                        2.1.5 einen Parsefehler ausloeste
+     *   Token verloren       die Datei traegt kein Aktionstoken, die
+     *                        Zweitschrift aber schon
+     *
+     * Der dritte Fall ist noetig, weil eine abgeschnittene Datei nicht
+     * immer mitten in einer Zeichenkette endet - sie kann auch sauber nach
+     * einer Zuweisung aufhoeren und dabei den Token verloren haben. Er darf
+     * NICHT allein am fehlenden Token haengen: eine Konfiguration aus 1.4
+     * kennt den Schluessel gar nicht, und die ist in Ordnung. Deshalb die
+     * zweite Bedingung - die Zweitschrift hat eines, die Konfiguration
+     * nicht, also ist es dort verlorengegangen. */
+    $schaden = '';
+    if ($bekannt === 0)                                    { $schaden = 'kaputt'; }
+    elseif (!$heil)                                        { $schaden = 'abgeschnitten'; }
+    elseif (!$hat_merkwort && rn_zweitschrift_hat_token()) { $schaden = 'ohne Token'; }
+
+    if ($schaden !== '') {
+        rn_lage_merken($schaden);
+        if ($erzeugen && rn_konfig_heilen()) {
+            /* Einmal wiederherstellen, einmal melden - und danach neu
+             * lesen. Der zuerst festgestellte Zustand bleibt gemerkt: ein
+             * geheilter Schaden ist kein Nicht-Schaden, die Zweitschrift
+             * kann aelter sein als das, was verlorenging. */
+            return rn_config_read(false);
+        }
+        if ($bekannt === 0) {
+            return $cfg;
+        }
+        /* Nicht geheilt (unangemeldeter Aufruf oder keine Zweitschrift):
+         * dann wenigstens das lesen, was lesbar war. */
+    }
+
+    foreach ($cfg as $k => $v) {
+        if (array_key_exists($k, $werte) && !is_array($werte[$k])) {
+            $cfg[$k] = (string) $werte[$k];
         }
     }
+    rn_lage_merken($hat_merkwort ? 'ok' : 'ohne Token');
     return $cfg;
+}
+
+/** Traegt die Zweitschrift ein Aktionstoken? */
+function rn_zweitschrift_hat_token()
+{
+    $p = rn_paths(false);
+    foreach (array($p['sicherung'], $p['konfdir'] . '/config.php.backup') as $sich) {
+        if (!is_readable($sich)) { continue; }
+        $w = rn_config_einlesen($sich);
+        if (is_array($w) && array_key_exists('aktionstoken', $w)
+            && (string) $w['aktionstoken'] !== '') {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Der zuerst festgestellte Zustand der Konfiguration, fuer den Reiter Test.
+ *
+ * Er wird fuer die Dauer des Prozesses festgehalten und von einem spaeteren
+ * "ok" NICHT ueberschrieben: sonst meldete die Pruefzeile "in Ordnung",
+ * waehrend die Datei beim selben Seitenaufruf beschaedigt war - der erste
+ * Aufruf heilt sie, der zweite sieht eine heile Datei.
+ */
+function rn_lage_merken($lage = null)
+{
+    static $erste = '';
+    if ($lage !== null && $erste === '') {
+        $erste = $lage;
+    }
+    return $erste;
+}
+
+/** Fuer die Oberflaeche: ok, fehlt, leer, kaputt, aus der Zweitschrift. */
+function rn_konfig_lage()
+{
+    $l = rn_lage_merken();
+    return $l === '' ? 'nicht gelesen' : $l;
+}
+
+/**
+ * Die Konfiguration aus der Zweitschrift wiederherstellen - einmal.
+ *
+ * Die beschaedigte Datei wird als <name>.kaputt beiseitegelegt, damit sie
+ * nachgesehen werden kann; die Zweitschrift wird nur genommen, wenn sie
+ * selbst Inhalt hat UND das Merkwort traegt. Eine Zweitschrift ohne Token
+ * ist keine Rettung, sondern die Werkseinstellung mit anderem Datum.
+ */
+function rn_konfig_heilen()
+{
+    static $gelaufen = false;
+    if ($gelaufen) { return false; }
+    $gelaufen = true;
+
+    $p = rn_paths();
+    foreach (array($p['sicherung'], $p['konfdir'] . '/config.php.backup') as $sich) {
+        if (!is_readable($sich)) { continue; }
+        $w = rn_config_einlesen($sich);
+        if (!is_array($w) || !array_key_exists('aktionstoken', $w)
+            || (string) $w['aktionstoken'] === '') {
+            continue;
+        }
+        $kaputt = $p['config'] . '.kaputt';
+        if (is_file($p['config'])) { @rename($p['config'], $kaputt); }
+        if (@copy($sich, $p['config'])) {
+            @chmod($p['config'], 0600);
+            rn_lage_merken('aus der Zweitschrift');
+            rn_melden('WARN', 'Die Konfiguration war unlesbar und wurde aus der '
+                . 'Zweitschrift wiederhergestellt (' . basename($sich) . '). Die '
+                . 'beschaedigte Datei liegt als ' . basename($kaputt) . ' daneben. '
+                . 'Bitte die Einstellungen nachsehen - die Zweitschrift kann aelter '
+                . 'sein als das, was verlorenging.');
+            return true;
+        }
+    }
+    rn_melden('ERROR', 'Die Konfiguration ist unlesbar, und es gibt keine '
+        . 'brauchbare Zweitschrift. Es wird mit den Werkseinstellungen '
+        . 'gearbeitet; das Aktionstoken und die Zugangsdaten fehlen.');
+    rn_lage_merken('kaputt ohne Zweitschrift');
+    return false;
+}
+
+/**
+ * Eine Zeile ins Protokoll - auch dort, wo logger.php nicht eingebunden ist.
+ *
+ * renault_log() steht in logger.php. Die Oberflaeche band sie bis 2.1.5 gar
+ * nicht ein und schrieb deshalb keine einzige Zeile: weder zum erzeugten
+ * Token noch zu einer abgelehnten Sicherung noch zu einem Werksrueckfall.
+ * Wer spaeter fragt, wann sein Token verlorenging, fand nichts.
+ */
+function rn_melden($stufe, $text)
+{
+    if (function_exists('renault_log')) {
+        renault_log($stufe, $text);
+        return;
+    }
+    $logger = __DIR__ . '/logger.php';
+    if (is_file($logger)) {
+        require_once $logger;
+        if (function_exists('renault_log')) {
+            renault_log($stufe, $text);
+            return;
+        }
+    }
+    error_log('renault_ng [' . $stufe . '] ' . $text);
 }
 
 /**
@@ -528,9 +898,22 @@ function rn_config_write($cfg)
     }
     @chmod($datei, 0600);
 
-    // Zweitschrift NEBEN dem Konfigordner - sie uebersteht damit auch eine
-    // Deinstallation, die den Ordner selbst abraeumt. Mit denselben Rechten
-    // wie das Original: sie enthaelt dasselbe Passwort.
+    /* Zweitschrift NEBEN dem Konfigordner - sie uebersteht damit auch eine
+     * Deinstallation, die den Ordner selbst abraeumt. Mit denselben Rechten
+     * wie das Original: sie enthaelt dasselbe Passwort.
+     *
+     * Sie wird NUR mitgezogen, wenn der zu schreibende Stand das Merkwort
+     * traegt. Bis 2.1.5 geschah es bedingungslos - und damit ueberschrieb
+     * ein Werksrueckfall (unlesbare config.php, neues Token) die heile
+     * Zweitschrift mit genau den Werkswerten, vor denen sie schuetzen
+     * sollte. Gemessen an einer 0 Byte grossen Datei: vorher 609 Byte mit
+     * Token, nachher 563 Byte mit dem frisch gewuerfelten. */
+    if ((string) $voll['aktionstoken'] === '') {
+        rn_melden('WARN', 'Die Konfiguration wurde OHNE Aktionstoken geschrieben; '
+            . 'die Zweitschrift bleibt deshalb unberuehrt. Im Reiter '
+            . '"Einbindung in Loxone" ein Token erzeugen.');
+        return true;
+    }
     $sich = rn_paths()['sicherung'];
     $stmp = $sich . '.tmp.' . getmypid();
     $sh = @fopen($stmp, 'c');
@@ -778,7 +1161,82 @@ function rn_themen($zoeph)
     $t['chargeEnergyRecovered(kWh)']       = 'THEMA.CHG_ENERGIE';
     $t['chargeEndStatus']                  = 'THEMA.CHG_STATUS';
     $t['chargeStartInstantaneousPower']    = 'THEMA.CHG_STARTLEISTUNG';
+    /* Das Lebenszeichen. Es geht bei JEDEM Cron-Durchgang hinaus, auch wenn
+     * die Abrufbremse den Datenabruf ueberspringt - bis 2.1.5 wurde in einem
+     * uebersprungenen Lauf gar nichts veroeffentlicht, auch kein "ok". Bei
+     * der Werkseinstellung (Takt 5 Minuten, Cron alle 3) ist das jeder
+     * zweite Lauf; ein stillstehender Cron war am Broker von einem regulaeren
+     * Sprungzweig nicht zu unterscheiden. */
+    $t['status/ts']      = 'THEMA.STATUS_TS';
+    $t['status/zaehler'] = 'THEMA.STATUS_ZAEHLER';
     return $t;
+}
+
+/**
+ * Die Beschriftung einer Spalte der Aufzeichnung.
+ *
+ * Die Kopfzeile in database.csv ist englisch und bleibt es - an ihr haengen
+ * Auswertungen, die jemand ausserhalb dieses Plugins gebaut hat. Fuer die
+ * Anzeige wird sie uebersetzt; ein unbekannter Name bleibt stehen, statt
+ * durch eine leere Zelle ersetzt zu werden.
+ */
+function rn_csv_spalte($roh)
+{
+    $roh = trim((string) $roh);
+    $tafel = array(
+        'Date'                     => 'CSV.DATUM',
+        'Time'                     => 'CSV.ZEIT',
+        'Mileage'                  => 'CSV.KM',
+        'Battery level'            => 'CSV.SOC',
+        'Battery capacity'         => 'CSV.KAPAZITAET',
+        'Range'                    => 'CSV.REICHWEITE',
+        'Cable status'             => 'CSV.KABEL',
+        'Charging status'          => 'CSV.LADESTATUS',
+        'Charging speed'           => 'CSV.LADELEISTUNG',
+        'Remaining charging time'  => 'CSV.RESTZEIT',
+        'GPS Latitude'             => 'CSV.GPSBREITE',
+        'GPS Longitude'            => 'CSV.GPSLAENGE',
+        'GPS date'                 => 'CSV.GPSDATUM',
+        'GPS time'                 => 'CSV.GPSZEIT',
+        'Outside temperature'      => 'CSV.AUSSEN',
+        'Weather condition'        => 'CSV.WETTER',
+        'Charging schedule'        => 'CSV.LADEMODUS',
+    );
+    if (!isset($tafel[$roh])) {
+        return $roh;
+    }
+    $t = rn_t($tafel[$roh]);
+    return $t === $tafel[$roh] ? $roh : $t;
+}
+
+/**
+ * Geht dieses Thema mit gesetztem Retain-Merker hinaus?
+ *
+ * Hausstandard seit 03.09.2026: Zustaende retained, Messwerte mit Zeitbezug
+ * nicht, das Lebenszeichen nie. Bis 2.1.5 gingen ALLE 29 Themen retained
+ * hinaus - eine Sendefunktion je Datei, beide mit publish(…, 0, 1), kein
+ * Zweig ohne Retain.
+ *
+ * Die Unterscheidung steht hier an EINER Stelle; abruf.php und history.php
+ * fragen beide danach, und die Themen-Tabelle im Reiter MQTT zeigt sie dem
+ * Anwender in einer eigenen Spalte.
+ *
+ * Warum das Lebenszeichen nie retained ist: ein zurueckbehaltener
+ * Zeitstempel zeigt einem neu verbindenden Teilnehmer einen alten Wert als
+ * frisch - es meldet also immer "lebt", gerade dann nicht mehr, wenn es
+ * darauf ankaeme.
+ */
+function rn_thema_retained($thema)
+{
+    /* Zustaende: an/aus, Betriebsart, Fehlerflag, letzter Kilometerstand.
+     * Nach einem Neustart des Miniservers oder des Gateways soll der Stand
+     * sofort dastehen. */
+    $zustaende = array(
+        'ChargingStatus', 'CableStatus', 'ChargeMode', 'HvAcStatus',
+        'HvAcStatusBin', 'RenaultPHMode', 'Name', 'ok', 'Mileage',
+        'chargeEndStatus',
+    );
+    return in_array((string) $thema, $zustaende, true);
 }
 
 /**
@@ -829,7 +1287,10 @@ function rn_sprache()
 }
 
 /**
- * Text zu einem Schluessel "ABSCHNITT.SCHLUESSEL".
+ * Text zu einem Schluessel: Abschnittsname, Punkt, Name innerhalb des
+ * Abschnitts. Ein Beispiel steht hier absichtlich nicht - eine Zeichenfolge
+ * dieser Gestalt im Kommentar liest jeder Schluesselpruefer als benutzten
+ * Schluessel und meldet ihn als fehlend.
  *
  * Ist der Schluessel unbekannt, wird er selbst zurueckgegeben - so faellt
  * beim Durchsehen sofort auf, was noch fehlt, statt dass die Seite leer
@@ -844,9 +1305,7 @@ function rn_t($schluessel)
         // sich aus dem Ablageort dieser Datei.
         $home = getenv('LBHOMEDIR');
         if (!$home || !is_dir($home)) {
-            foreach (array(lb_wurzel_ermitteln(), '/home/loxberry/loxberry') as $k) {
-                if (is_dir($k)) { $home = $k; break; }
-            }
+            $home = lb_wurzel_ermitteln();
         }
         $ordner = basename(dirname(__FILE__));
         $pfad = $home . '/templates/plugins/' . $ordner . '/lang';
@@ -1053,20 +1512,151 @@ function rn_sicherung_lesen($roh)
     if (!is_array($daten)) {
         return array(null, array(rn_t('TEXT.SICH_KEIN_JSON')), 0);
     }
-    $neu = rn_vorgaben();
-    $bekannt = array_keys($neu);
+
+    /* Grundlage ist der AKTUELLE Stand, nicht die Werkseinstellung.
+     *
+     * Bis 2.1.5 stand hier $neu = rn_vorgaben(). Gemessen an einer
+     * eingerichteten Anlage mit der Datei {"username":"neu@example.org"}:
+     * "UEBERNOMMEN, 1 Werte" - und danach waren Aktionstoken, Kennwort,
+     * Fahrgestellnummer, Fahrzeugname, die Freigabe zum Schalten und der
+     * Abruftakt auf Werk. Ein in der Sicherung fehlender Schluessel behaelt
+     * jetzt seinen jetzigen Wert; dass welche fehlen, wird gesagt. */
+    $neu = rn_config_read();
+    $bekannt = array_keys(rn_vorgaben());
     $anzahl = 0;
+    $gesehen = array();
+
     foreach ($daten as $k => $w) {
+        $k = (string) $k;
+        /* Der lesbare Kopf wird UEBERGANGEN, nicht beanstandet. */
+        if ($k !== '' && $k[0] === '_') {
+            continue;
+        }
         if (!in_array($k, $bekannt, true)) {
             $mangel[] = sprintf(rn_t('TEXT.SICH_FREMD'),
-                                 htmlspecialchars((string) $k, ENT_QUOTES, 'UTF-8'));
+                                 htmlspecialchars($k, ENT_QUOTES, 'UTF-8'));
+            continue;
+        }
+        /* Jeder WERT wird geprueft, nicht nur der Schluessel.
+         *
+         * Bis 2.1.5 stand hier schlicht $neu[$k] = $w. Gemessen gingen damit
+         * durch: country=NICHTEINLAND, zoeph=9, steuerung_ein=JA,
+         * vin=KEINEVIN, ac_temp=999, cron_ncs=0, ein Fahrzeugname mit / # +
+         * und ein Zeilenumbruch im Namen, dazu ein Feld statt eines Skalars
+         * (aus dem im Quelltext die Zeichenkette 'Array' wurde). Dieselben
+         * Werte weist der Speicher-Handler alle zurueck - die Sicherung war
+         * der Weg um die eigene Formpruefung herum. */
+        if (!rn_wert_taugt($w)) {
+            $mangel[] = sprintf(rn_t('TEXT.SICH_WERT'),
+                                 htmlspecialchars($k, ENT_QUOTES, 'UTF-8'));
+            continue;
+        }
+        $w = (string) $w;
+        if (!rn_wert_pruefen($k, $w)) {
+            $mangel[] = sprintf(rn_t('TEXT.SICH_WERT'),
+                                 htmlspecialchars($k, ENT_QUOTES, 'UTF-8'));
             continue;
         }
         $neu[$k] = $w;
+        $gesehen[$k] = true;
         $anzahl++;
+    }
+
+    $fehlend = array_values(array_diff($bekannt, array_keys($gesehen)));
+    if ($fehlend) {
+        $mangel[] = sprintf(rn_t('TEXT.SICH_FEHLT'), count($fehlend), count($bekannt),
+            htmlspecialchars(implode(', ', array_slice($fehlend, 0, 8))
+                . (count($fehlend) > 8 ? ' …' : ''), ENT_QUOTES, 'UTF-8'));
     }
     if ($anzahl === 0) {
         $mangel[] = rn_t('TEXT.SICH_LEER');
     }
+    /* Alle Beanstandungen werden gesammelt; eine halb gueltige Datei aendert
+     * GAR NICHTS. */
     return array($mangel ? null : $neu, $mangel, $anzahl);
+}
+
+/**
+ * Taugt der Wert ueberhaupt fuer eine Zeile dieser Konfiguration?
+ *
+ * config.php ist PHP-Quelltext, in den var_export() schreibt. Ein Feld, ein
+ * Objekt oder ein Steuerzeichen hat dort nichts zu suchen; ein Zeilenumbruch
+ * im Fahrzeugnamen wandert in den MQTT-Themenpfad und in die Loxone-Vorlage.
+ */
+function rn_wert_taugt($v)
+{
+    if (is_array($v) || is_object($v) || is_bool($v) || is_null($v)) {
+        return false;
+    }
+    $s = (string) $v;
+    if (strlen($s) > 4096) {
+        return false;
+    }
+    return preg_match('/[\x00-\x1F\x7F]/', $s) !== 1;
+}
+
+/**
+ * Ist der Wert fuer DIESEN Schluessel zulaessig?
+ *
+ * Dieselbe Positivliste, die der Speicher-Handler in index.php fuehrt -
+ * Formular und Sicherung beantworten die Frage sonst verschieden. Wer hier
+ * etwas aendert, aendert es dort mit; die Pruefzeile im Reiter Test haelt
+ * beide gegeneinander.
+ */
+function rn_wert_pruefen($k, $w)
+{
+    $w = (string) $w;
+
+    /* Die Felder, aus denen das Formular Anfuehrungszeichen entfernt,
+     * duerfen auch aus der Sicherung keine tragen. Das Kennwort ist
+     * ausgenommen - es wird im Formular ebenfalls nicht beschnitten. */
+    if ($k !== 'password' && preg_match('/["\']/', $w)) {
+        return false;
+    }
+
+    if (preg_match('/^zoename[2-4]?$/', $k)) {
+        return strpos($w, '/') === false && strpos($w, '#') === false
+            && strpos($w, '+') === false;
+    }
+    if (preg_match('/^vin[2-4]?$/', $k)) {
+        return $w === '' || preg_match('/^[A-HJ-NPR-Z0-9]{17}$/i', $w) === 1;
+    }
+    if (preg_match('/^zoeph[2-4]?$/', $k)) {
+        return in_array($w, array('1', '2'), true);
+    }
+    switch ($k) {
+        case 'country':
+            return preg_match('/^[A-Z]{2}$/', $w) === 1;
+        case 'save_in_db':
+        case 'steuerung_ein':
+        case 'mail_bl':
+        case 'cmon_bl':
+        case 'mail_csf':
+            return in_array($w, array('Y', 'N'), true);
+        case 'cron_ncs':
+        case 'cron_acs':
+            return preg_match('/^[0-9]+$/', $w) === 1 && (int) $w >= 1 && (int) $w <= 60;
+        case 'ac_temp':
+            return preg_match('/^[0-9]+$/', $w) === 1 && (int) $w >= 16 && (int) $w <= 30;
+        case 'bl_schwelle':
+            return preg_match('/^[0-9]+$/', $w) === 1 && (int) $w >= 1 && (int) $w <= 99;
+        case 'soc_min':
+        case 'soc_target':
+            return $w === '' || (preg_match('/^[0-9]+$/', $w) === 1
+                && (int) $w >= 20 && (int) $w <= 100);
+        case 'aktionstoken':
+            /* Weit gefasst: zugelassen ist, was ohne Kodierung in eine
+             * Adresse passt. Ein zu enges Muster verwirft ein von Hand
+             * gesetztes oder aus einer aelteren Fassung uebernommenes
+             * Token - und der Schaden ist derselbe wie bei einem verlorenen.
+             * Die Laenge 0 ist zulaessig: "kein Token gesichert" ist kein
+             * unzulaessiger Wert. */
+            return preg_match('/^[A-Za-z0-9_.\-]{0,64}$/', $w) === 1;
+        case 'exec_bl':
+        case 'exec_csf':
+            /* Dieselben Sonderzeichen, die rn_hook_ausfuehren() vor dem
+             * Ausfuehren abweist - hier schon beim Hereinkommen. */
+            return preg_match('/[;&|`$()<>\r\n]/', $w) !== 1;
+    }
+    return true;
 }
