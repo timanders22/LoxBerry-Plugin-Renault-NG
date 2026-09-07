@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.6 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.7 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,31 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Version 2.1.7 — die sieben Steuerbefehle tragen einen Namen
+
+Bis 2.1.6 lieferte die Vorlage der Steuerbefehle **sieben Ausgänge ohne
+Beschriftung**.
+
+Loxone Config nimmt den `Comment` einer Vorlage als **Anzeigenamen**. Stand
+dort nichts, zeigte Config den Titel. Jetzt steht dort ein Name mit
+Gerätevorsatz — die Bausteinsuche des Miniservers kennt den Geräteknoten
+nicht, und „Automatik" gibt es auch im Batterie-Plugin.
+
+**Die Titel sind unverändert geblieben** — ein geänderter Titel legt beim
+erneuten Import neue Ausgänge **neben** die alten. Wer die Vorlage neu
+einliest, bekommt dieselben Ausgänge, nur mit Namen.
+
+`Vorklimatisierung starten` → **Renault: Vorklimatisierung starten**; bei
+mehreren Fahrzeugen steht der Fahrzeugname dazwischen
+(**Renault Zoe: …**), so wie der Titel es schon tut.
+
+Gemessen: 7 von 7 Titeln und Befehlen byteweise wie in 2.1.6, 0 Ausgänge ohne
+Beschriftung (vorher 7). Ein Name liegt mit 42 Zeichen zwei über dem
+Richtwert von etwa 40 — `Renault: Ladeplan abschalten (immer laden)`; der
+Klammerzusatz steht so in der Beschriftung, aus der auch der Titel kommt, und
+wurde nicht angetastet. Im Kopf der Vorlage steht jetzt außerdem, dass Loxone
+Config beim Import neu anlegt und nichts überschreibt.
 
 ## Version 2.1.6 — was eine Durchsicht bei grünem Prüfwerkzeug noch findet
 

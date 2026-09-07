@@ -1410,7 +1410,7 @@ function rn_vorlage_vo()
     $mehr  = count($autos) > 1;
     $crlf  = "\r\n";
     $o = '<?xml version="1.0" encoding="utf-8"?>' . $crlf;
-    $o .= '<VirtualOut HintText="" Title="Renault steuern (LoxBerry-Plugin)" Comment="Steuerbefehle ueber das Plugin ' . htmlspecialchars(rn_paths()['plugin'], ENT_QUOTES | ENT_XML1, 'UTF-8') . ' - enthaelt das Aktionstoken." Address="http://' . htmlspecialchars($host, ENT_QUOTES | ENT_XML1, 'UTF-8') . '" CmdInit="" CloseAfterSend="true" CmdSep="">' . $crlf;
+    $o .= '<VirtualOut HintText="" Title="Renault steuern (LoxBerry-Plugin)" Comment="Steuerbefehle über das Plugin ' . htmlspecialchars(rn_paths()['plugin'], ENT_QUOTES | ENT_XML1, 'UTF-8') . ' - enthält das Aktionstoken. Loxone Config legt beim Import neu an und überschreibt nichts." Address="http://' . htmlspecialchars($host, ENT_QUOTES | ENT_XML1, 'UTF-8') . '" CmdInit="" CloseAfterSend="true" CmdSep="">' . $crlf;
     $o .= "\t" . '<Info templateType="3" minVersion="17010727"/>' . $crlf;
     foreach ($autos as $rn_f) {
         foreach (rn_befehle() as $rn_a => $rn_angabe) {
@@ -1419,7 +1419,15 @@ function rn_vorlage_vo()
             // Entitaet hinein, stuende sie sonst doppelt maskiert im XML.
             $rn_klar  = html_entity_decode(rn_t($rn_angabe[0]), ENT_QUOTES, 'UTF-8');
             $rn_titel = $mehr ? $rn_f['name'] . ': ' . $rn_klar : $rn_klar;
-            $o .= "\t" . '<VirtualOutCmd Title="' . htmlspecialchars($rn_titel, ENT_QUOTES | ENT_XML1, 'UTF-8') . '" Comment="" CmdOnMethod="GET" CmdOffMethod="GET" ';
+            /* Der Comment ist der ANZEIGENAME in Loxone Config (Regeln/07);
+             * bis 2.1.6 stand dort "", und Config zeigte den Titel. Der
+             * Vorsatz nennt das Fahrzeug, weil die Bausteinsuche des
+             * Miniservers den Geraeteknoten nicht kennt. Uebersetzt wird
+             * nichts Neues - die Beschriftung ist derselbe Text. */
+            $rn_anzeige = $mehr
+                ? 'Renault ' . $rn_f['name'] . ': ' . $rn_klar
+                : 'Renault: ' . $rn_klar;
+            $o .= "\t" . '<VirtualOutCmd Title="' . htmlspecialchars($rn_titel, ENT_QUOTES | ENT_XML1, 'UTF-8') . '" Comment="' . htmlspecialchars($rn_anzeige, ENT_QUOTES | ENT_XML1, 'UTF-8') . '" CmdOnMethod="GET" CmdOffMethod="GET" ';
             $o .= 'CmdOn="' . htmlspecialchars(rn_aktionsadresse($cfg, $rn_a, $rn_f['nr']), ENT_QUOTES | ENT_XML1, 'UTF-8') . '" ';
             $o .= 'CmdOnHTTP="" CmdOnPost="" CmdOff="" CmdOffHTTP="" CmdOffPost="" CmdAnswer="" ';
             $o .= 'Analog="false" Repeat="0" RepeatRate="0" HintText=""/>' . $crlf;
