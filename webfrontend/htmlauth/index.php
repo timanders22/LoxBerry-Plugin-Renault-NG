@@ -296,9 +296,12 @@ if (isset($_POST['test'])) {
  * ALLE Handler samt Downloads, dann erst lbheader(), dann HTML.
  * ================================================================== */
 // ---------- Loxone-Vorlage herunterladen (Hausstandard) ----------
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['vorlage'])) {
-    list($rn_vname, $rn_vinhalt) = ($_POST['vorlage'] === 'vo')
-        ? rn_vorlage_vo() : rn_vorlage();
+/* Nur noch die Befehle (vo). Die Eingangsvorlage (vi) ist mit 2.1.9
+ * entfallen; ein Absenden aus einer noch offenen alten Seite laeuft ins
+ * normale Seitenrendern statt in eine falsche Datei. */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['vorlage'])
+    && $_POST['vorlage'] === 'vo') {
+    list($rn_vname, $rn_vinhalt) = rn_vorlage_vo();
     header('Content-Type: application/x-download');
     header('Content-Disposition: attachment; filename="' . $rn_vname . '"');
     echo $rn_vinhalt;
@@ -744,9 +747,10 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 <?php foreach ($rn_autos as $rn_f) { ?>
 <h3><?php echo rn_e($rn_f['name']); ?> <span class="sm-small">(<?php echo rn_e(sprintf(rn_t('TEXT.S_PHASE'), $rn_f['zoeph'])); ?>)</span></h3>
 <table class="sm-tbl">
-<tr><th style="width:46%"><?php echo rn_e(rn_t('TEXT.S_THEMA')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_BEDEUTUNG')); ?></th></tr>
+<tr><th style="width:42%"><?php echo rn_e(rn_t('TEXT.S_THEMA')); ?></th><th style="width:10%"><?php echo rn_e(rn_t('TEXT.S_RETAINED')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_BEDEUTUNG')); ?></th></tr>
 <?php foreach (rn_themen($rn_f['zoeph']) as $rn_thema => $rn_schl) { ?>
 <tr><td class="sm-mono">Renault/<?php echo rn_e($rn_f['name'] . '/' . $rn_thema); ?></td>
+    <td><?php echo rn_e(rn_t(rn_thema_retained($rn_thema) ? 'TEXT.O_JA' : 'TEXT.O_NEIN')); ?></td>
     <td><?php echo rn_e(rn_t($rn_schl)); ?></td></tr>
 <?php } ?>
 </table>
@@ -776,27 +780,32 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 <p class="sm-hilfe"><?php echo rn_t('TEXT.SCHRITT3_TEXT'); ?></p>
 <?php foreach ($rn_autos as $rn_f) { ?>
 <table class="sm-tbl">
-<tr><th><?php echo rn_e(rn_t('TEXT.S_TITEL')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_EINHEIT')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_BEDEUTUNG')); ?></th></tr>
-<?php foreach (rn_vorlage_felder($rn_f['zoeph']) as $rn_w) { ?>
-<tr><td class="sm-mono">Renault_<?php echo rn_e($rn_f['name'] . '_' . $rn_w[0]); ?></td>
-    <td><?php echo rn_e($rn_w[5]); ?></td>
-    <td><?php echo rn_e(rn_t($rn_w[1])); ?></td></tr>
+<?php
+    /* Die Namenstabelle: ALLE Themen aus rn_themen(), dieselbe Liste, die
+     * der Reiter Test gegen den Sendecode haelt. Der Titel ist das Thema mit
+     * Unterstrich statt Schraegstrich und Prozentzeichen - so benennt das
+     * Gateway den Eingang (mqttgateway.pl: s/[\/%]/_/g, am Geraet gelesen
+     * 17.09.2026). */
+    $rn_einheit = array();
+    foreach (rn_vorlage_felder($rn_f['zoeph']) as $rn_w) { $rn_einheit[$rn_w[0]] = $rn_w[5]; } ?>
+<tr><th style="width:40%"><?php echo rn_e(rn_t('TEXT.S_TITEL')); ?></th><th style="width:9%"><?php echo rn_e(rn_t('TEXT.S_RETAINED')); ?></th><th style="width:11%"><?php echo rn_e(rn_t('TEXT.S_EINHEIT')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_BEDEUTUNG')); ?></th></tr>
+<?php foreach (rn_themen($rn_f['zoeph']) as $rn_thema => $rn_schl) { ?>
+<tr><td class="sm-mono"><?php echo rn_e(str_replace(array('/', '%'), '_', 'Renault/' . $rn_f['name'] . '/' . $rn_thema)); ?></td>
+    <td><?php echo rn_e(rn_t(rn_thema_retained($rn_thema) ? 'TEXT.O_JA' : 'TEXT.O_NEIN')); ?></td>
+    <td><?php echo isset($rn_einheit[$rn_thema]) ? rn_e(trim(str_replace(array('<v.0>', '<v.1>'), '', $rn_einheit[$rn_thema]))) : ''; ?></td>
+    <td><?php echo rn_e(rn_t($rn_schl)); ?></td></tr>
 <?php } ?>
 </table>
 <?php } ?>
+</div>
 
+<div class="sm-step">
 <h3 class="sm-h3"><?php echo rn_e(rn_t('TEXT.H_VORLAGE')); ?></h3>
 <div class="sm-hinweis"><?php echo rn_t('TEXT.H_VORLAGE_TEXT'); ?></div>
 <div class="sm-legende">
 <span><i class="sm-punkt sm-b-technik"></i> <?php echo rn_e(rn_t('LEGENDE.TECHNIK')); ?></span>
 </div>
 <div class="sm-knopfreihe">
-<form action="index.php" method="post">
-  <input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
-  <input data-role="none" type="hidden" name="activetab" value="tab-loxone">
-  <input data-role="none" type="hidden" name="vorlage" value="vi">
-  <button data-role="none" class="sm-btn sm-b-technik" type="submit"><?php echo rn_e(rn_t('TEXT.K_VORLAGE_VI')); ?></button>
-</form>
 <form action="index.php" method="post">
   <input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
   <input data-role="none" type="hidden" name="activetab" value="tab-loxone">

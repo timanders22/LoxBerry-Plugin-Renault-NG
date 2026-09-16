@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.8 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.9 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,54 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Version 2.1.9 — das Abo kommt mit, die Eingangsvorlage geht, ein leerer Wert löscht nichts mehr
+
+**Zwei Änderungen, die Sie bemerken:**
+
+- **Das Abonnement im MQTT-Gateway kommt mit.** Das Plugin liefert
+  `config/mqtt_subscriptions.cfg` mit dem Thema `Renault/#`. Das Gateway
+  liest diese Datei bei jeder Installation und jedem Update selbst (am
+  Gateway des LoxBerry 4.0.0.15 im Quelltext nachgelesen). Ein Eintrag von
+  Hand unter *System → MQTT Gateway → Subscriptions* ist nicht mehr nötig; ein
+  vorhandener darf stehen bleiben. Der Reiter Test prüft, ob die Datei da
+  ist. Beim Entfernen des Plugins verschwindet das Abo mit dem
+  Konfigurationsordner.
+- **Die Importdatei für die Eingänge ist entfallen.** Sie legte über einen
+  Kunstgriff (virtueller HTTP-Eingang mit `http://localhost` und einem
+  Abfragezyklus von einer Woche) nur die Zahlenthemen an; die Werte kamen
+  trotzdem vom Gateway. An ihrer Stelle steht im Reiter *Einbindung in
+  Loxone* die **vollständige Namenstabelle**: jeder Eingangsname, wie das
+  Gateway ihn anlegt, mit Retain-Angabe, Einheit und Bedeutung. **Wer die
+  Datei früher eingelesen hat, muss nichts tun** — die Eingänge bleiben und
+  bekommen weiter Werte. Die Importdatei für die **Befehle** bleibt.
+
+**Gefunden bei der Durchsicht am 17.09.2026**, am installierten 2.1.8 und am
+Quelltext gemessen:
+
+- **Ein leerer Zustand ging retained hinaus — und löschte damit den letzten
+  guten Stand im Broker.** Eine leere Nutzlast mit Retain-Merker entfernt ein
+  zurückbehaltenes Thema. Liefert die Schnittstelle etwa `plugStatus` einmal
+  nicht, ging `CableStatus` leer und retained hinaus; nach einem Neustart des
+  Miniservers stand dort nichts mehr. Gemessen an beiden Sendefunktionen
+  (`abruf.php`, `history.php`): in 2.1.8 trugen 8 von 16 Probesendungen den
+  falschen Merker, in 2.1.9 keine. Ein leerer Wert geht jetzt **nie**
+  retained; die Null (`ok = 0`, Kabel = 0) ist kein leerer Wert und bleibt es.
+- **Der Reiter MQTT behauptete „Alle Werte werden retained gesendet".** Das
+  stimmt seit 2.1.6 nicht mehr; ebenso die Hilfe und die Funktionsliste
+  dieser Datei. Die Themen-Tabelle hat jetzt eine Spalte **retained**, die aus
+  derselben Tabelle kommt, nach der gesendet wird.
+- **Die Fassungsnummer** wird bei LoxBerry über den Ordnernamen erfragt. Ohne
+  ihn hängt die Antwort daran, welches Skript zuerst geladen wurde; am Gerät
+  gemessen lieferte derselbe Aufruf je nach Einstieg `2.1.8` oder nichts.
+- Der Deinstallationshinweis nennt alle zurückbehaltenen Themen
+  (`HvAcStatusBin` und `RenaultPHMode` fehlten).
+- `plugin.cfg`, `release.cfg` und `prerelease.cfg` haben jetzt LF-Zeilenenden
+  wie alle übrigen Dateien.
+
+**Unverändert:** Themennamen, Befehle, Konfiguration, Sicherung. Wer nichts
+tut, bekommt beim nächsten erfolgreichen Abruf alle Zustände wieder in den
+Broker.
 
 ## Version 2.1.7 — die sieben Steuerbefehle tragen einen Namen
 
@@ -403,7 +451,8 @@ ist, zeigten alle Pfade der Zweitinstallation auf die erste.
 
 - Abruf von Batterie-, Lade- und Fahrzeugdaten über die My-Renault-Schnittstelle
   (Gigya/Kamereon), für bis zu vier Fahrzeuge desselben Kontos
-- MQTT über das LoxBerry MQTT Gateway, alle Werte **retained**, Themen
+- MQTT über das LoxBerry MQTT Gateway, **Zustände retained**, Messwerte und
+  Lebenszeichen ohne Retain (Spalte „retained" im Reiter MQTT), Themen
   `Renault/<Fahrzeugname>/…`
 - Befehle über `/plugins/renault_ng/index.php?token=<TOKEN>&aktion=…` (ohne
   LoxBerry-Anmeldung, dafür mit Token; ab Werk gesperrt)
@@ -419,6 +468,7 @@ ist, zeigten alle Pfade der Zweitinstallation auf die erste.
 | Zweitschrift | – | `config/plugins/renault_ng.backup.config.php` (0600, ab 2.1.0 **neben** dem Ordner) |
 | Anmeldung, Sitzungen, Ladehistorie | `webfrontend/htmlauth/` | `data/plugins/renault_ng/` |
 | Protokoll | `webfrontend/htmlauth/` | `log/plugins/renault_ng/` |
+| Gateway-Abo | von Hand | `config/plugins/renault_ng/mqtt_subscriptions.cfg` (ab 2.1.9, kommt mit jedem Update neu) |
 
 `webfrontend/htmlauth` gehört zum **Programm** und wird bei jedem Update
 gelöscht und neu angelegt. Deshalb gab es bis 1.4 eine Sicherung nach `/tmp` –

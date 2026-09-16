@@ -466,13 +466,18 @@ if (is_array($rn_broker) && !empty($rn_broker['brokerhost'])) {
  * zurueckbehaltenes Lebenszeichen zeigt einem neu verbindenden Teilnehmer
  * einen alten Wert als frisch - es meldet also immer "lebt". Welches Thema
  * retained geht, entscheidet rn_thema_retained() in rn_lib.php; dort steht
- * es an EINER Stelle, und die Themen-Tabelle im Reiter MQTT zeigt es.
+ * es an EINER Stelle, und die Themen-Tabelle im Reiter MQTT zeigt es (seit
+ * 2.1.9 als eigene Spalte - bis dahin stand dort das Gegenteil).
+ *
+ * Den Merker selbst liefert rn_retain_merker(): ein LEERER Wert geht nie
+ * retained hinaus, denn eine leere Nutzlast mit Retain loescht das Thema im
+ * Broker. Bis 2.1.8 fehlte diese Ausnahme.
  */
 function rn_sende($mqtt, $name, $thema, $wert)
 {
     if ($mqtt === null) { return; }
     $mqtt->publish('Renault/' . $name . '/' . $thema, (string) $wert,
-                   0, rn_thema_retained($thema) ? 1 : 0);
+                   0, rn_retain_merker($thema, $wert));
 }
 
 /**

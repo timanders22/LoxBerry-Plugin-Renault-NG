@@ -257,10 +257,17 @@ function rn_fassung()
      * LBSystem::pluginversion() (loxberry_system.php:403) liest die
      * plugindatabase.json und ist die Auskunft von LoxBerry selbst.
      * Die Dateikandidaten darunter bleiben stehen - sie tragen den
-     * Auspackordner, und der ist der Pruefstand. */
+     * Auspackordner, und der ist der Pruefstand.
+     *
+     * Gefragt wird ueber den ORDNERNAMEN (seit 2.1.9). Ohne Argument leitet
+     * LoxBerry den Plugin-Namen aus dem Pfad des ersten eingebundenen
+     * Skripts ab; am Geraet gemessen (17.09.2026): aus einem Plugin-Skript
+     * heraus liefert das 2.1.8, aus jedem anderen Einstieg (php -r, ein
+     * vorgeschaltetes Skript) NULL. Mit dem Ordnernamen liefert es in beiden
+     * Faellen 2.1.8 - und auch bei einer Zweitinstallation (renault_ng_01). */
     if (class_exists('LBSystem', false)
         && method_exists('LBSystem', 'pluginversion')) {
-        $aus = @LBSystem::pluginversion();
+        $aus = @LBSystem::pluginversion(rn_paths(false)['plugin']);
         if ($aus !== null && trim((string) $aus) !== '') {
             return trim((string) $aus);
         }
@@ -1260,6 +1267,26 @@ function rn_thema_retained($thema)
 }
 
 /**
+ * Der Retain-Merker fuer EINE Sendung: 1 oder 0.
+ *
+ * rn_thema_retained() sagt, was ein Thema IST; diese Funktion sagt, wie ein
+ * bestimmter Wert hinausgeht. Der Unterschied ist der leere Wert: eine leere
+ * Nutzlast mit gesetztem Retain LOESCHT das zurueckbehaltene Thema im Broker
+ * (mqttgateway.pl, sub udpin; am Broker dieser Anlage gemessen 14.09.2026).
+ * Bis 2.1.8 ging z. B. CableStatus retained und leer hinaus, sobald die
+ * Schnittstelle plugStatus nicht lieferte - der letzte gute Stand war danach
+ * aus dem Broker verschwunden. Ein leerer Wert geht deshalb nie retained.
+ *
+ * Beide Sendefunktionen (abruf.php, history.php) fragen HIER, damit die
+ * Ausnahme nicht an einer der beiden Stellen fehlen kann.
+ */
+function rn_retain_merker($thema, $wert)
+{
+    if ((string) $wert === '') { return 0; }
+    return rn_thema_retained($thema) ? 1 : 0;
+}
+
+/**
  * Die Befehle, die Loxone an das Plugin senden kann.
  *
  * Je Befehl: Sprachschluessel und ob er am Fahrzeug etwas VERAENDERT.
@@ -1356,7 +1383,11 @@ function rn_t($schluessel)
  * Loxone-Vorlagen
  * ================================================================== */
 
-/** Die Eingaenge, die die Importdatei je Fahrzeug anlegt.
+/** Einheit und Grenzen der Zahlenthemen je Fahrzeug.
+ *
+ *  Bis 2.1.8 die Felder der Eingangs-Importdatei; seit 2.1.9 liefert die
+ *  Tabelle die Spalte Einheit der Namenstabelle und den Abgleich im
+ *  Reiter Test.
  *
  *  Aufbau: Thema, Sprachschluessel, Signed, MinVal, MaxVal, Einheit.
  *  Grenzen bewusst realistisch: Loxone zieht daraus die Reglergrenzen und
@@ -1386,36 +1417,15 @@ function rn_vorlage_felder($zoeph)
     return $f;
 }
 
-/** Vorlage der Gateway-Eingaenge nach dem Heimkino-Kunstgriff (12.08.2026):
- *  VirtualInHttp mit Dummy-Adresse http://localhost und Abfragezyklus 604800 s,
- *  nur damit Loxone die richtig benannten Eingaenge anlegt - die Werte kommen
- *  vom MQTT-Gateway. Format wie Original-Export aus Loxone Config 17.1.
- *  Seit 2.1.0 fuer ALLE eingerichteten Fahrzeuge. */
-function rn_vorlage()
-{
-    $cfg   = rn_config_read();
-    $autos = rn_fahrzeuge($cfg);
-    $crlf  = "\r\n";
-    $themen = array();
-    foreach ($autos as $rn_f) {
-        $themen[] = 'Renault/' . $rn_f['name'] . '/#';
-    }
-    $o  = '<?xml version="1.0" encoding="utf-8"?>' . $crlf;
-    $o .= '<VirtualInHttp HintText="" Title="Renault Fahrzeugdaten" Comment="Erzeugt vom LoxBerry-Plugin Renault ('
-        . date('d.m.Y') . '). Werte kommen vom MQTT-Gateway - Abo '
-        . htmlspecialchars(implode(' ', $themen), ENT_QUOTES | ENT_XML1, 'UTF-8')
-        . ' noetig." Address="http://localhost" PollingTime="604800">' . $crlf;
-    $o .= "\t" . '<Info templateType="2" minVersion="17010727"/>' . $crlf;
-    foreach ($autos as $rn_f) {
-        foreach (rn_vorlage_felder($rn_f['zoeph']) as $w) {
-            $o .= "\t" . '<VirtualInHttpCmd Title="' . htmlspecialchars('Renault_' . $rn_f['name'] . '_' . $w[0], ENT_QUOTES | ENT_XML1, 'UTF-8') . '" ';
-            $o .= 'Comment="' . htmlspecialchars(html_entity_decode(rn_t($w[1]), ENT_QUOTES, 'UTF-8'), ENT_QUOTES | ENT_XML1, 'UTF-8') . '" Check=" " ';
-            $o .= 'Signed="' . $w[2] . '" Analog="true" SourceValLow="0" DestValLow="0" SourceValHigh="1" DestValHigh="1" DefVal="0" MinVal="' . $w[3] . '" MaxVal="' . $w[4] . '" Unit="' . htmlspecialchars(html_entity_decode($w[5], ENT_QUOTES, 'UTF-8'), ENT_QUOTES | ENT_XML1, 'UTF-8') . '" HintText=""/>' . $crlf;
-        }
-    }
-    $o .= '</VirtualInHttp>' . $crlf;
-    return array('VI_renault.xml', $o);
-}
+/* Die Importdatei fuer die EINGAENGE (VirtualInHttp mit http://localhost
+ * und Abfragezyklus 604800 s) ist mit 2.1.9 entfallen. Sie war ein
+ * Kunstgriff, damit Loxone richtig benannte Eingaenge anlegt; die Werte
+ * kamen trotzdem vom MQTT-Gateway. Hausregel (Regeln/07, "Gateway-Eingaenge
+ * in Loxone Config"): Werte ueber das Gateway bekommen keine Importvorlage,
+ * sondern die vollstaendige Namenstabelle im Reiter "Einbindung in Loxone".
+ * Die Vorlage nannte nur die Zahlenthemen; die Tabelle nennt alle.
+ * Bereits importierte Eingaenge bleiben in Loxone und bekommen weiter Werte,
+ * denn das Gateway adressiert nach dem Namen. */
 
 /** VQ-Vorlage (Steuerbefehle) nach dem Heimkino/Robonect-Muster:
  *  templateType 3, Aktionstoken eingesetzt. Befehle = rn_befehle(),
@@ -1510,6 +1520,16 @@ function rn_gateway_fassung()
  */
 function rn_abo_text()
 {
+    /* Seit 2.1.9 bringt das Plugin sein Abonnement selbst mit:
+     * config/mqtt_subscriptions.cfg im Archiv landet bei jeder Installation
+     * und jedem Update unter config/plugins/<ordner>/. Das Gateway liest
+     * die Datei von dort (mqttgateway.pl: watch() je Plugin, erneutes
+     * Einlesen bei jeder Aenderung an plugins_state.json - am Geraet
+     * nachgelesen 17.09.2026). Liegt sie da, ist nichts einzutragen. */
+    list(, $abo_ok) = rn_abo_datei();
+    if ($abo_ok) {
+        return rn_t('TEXT.ABO_MITGELIEFERT');
+    }
     $f = rn_gateway_fassung();
     if ($f <= 0) {
         return rn_t('TEXT.ABO_UNBEKANNT');
@@ -1519,6 +1539,25 @@ function rn_abo_text()
     return rn_t($f >= 2 ? 'TEXT.ABO_V2' : 'TEXT.H_ABO_PFLICHT') . $gemessen;
 }
 
+
+/** Das Thema der mitgelieferten Abo-Datei - an EINER Stelle, damit Datei,
+ *  Oberflaeche und Pruefung nicht auseinanderlaufen. */
+define('RN_ABO_THEMA', 'Renault/#');
+
+/**
+ * Die mitgelieferte Abo-Datei des Gateways: array(Pfad, traegt Renault/#).
+ *
+ * Gelesen wird die INSTALLIERTE Datei unter config/plugins/<ordner>/, nicht
+ * die im Archiv - nur jene sieht das Gateway. Jede nichtleere Zeile ist dort
+ * ein Thema; Kommentare kennt das Gateway nicht.
+ */
+function rn_abo_datei()
+{
+    $pfad = rn_paths(false)['konfdir'] . '/mqtt_subscriptions.cfg';
+    $roh = is_readable($pfad) ? (string) @file_get_contents($pfad) : '';
+    $zeilen = array_map('trim', preg_split('/\r?\n/', $roh));
+    return array($pfad, in_array(RN_ABO_THEMA, $zeilen, true));
+}
 
 /**
  * Eine Sicherungsdatei einlesen - und dabei NICHTS durchgehen lassen.

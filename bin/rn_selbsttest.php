@@ -155,6 +155,18 @@ pruefe('Retain: phpCall (Lebenszeichen)',    rn_thema_retained('phpCall'), false
 pruefe('Retain: status/ts (Lebenszeichen)',  rn_thema_retained('status/ts'), false);
 pruefe('Retain: status/zaehler',             rn_thema_retained('status/zaehler'), false);
 
+/* 3b. Der Merker einer einzelnen Sendung (seit 2.1.9). Eine leere Nutzlast
+ * mit Retain loescht das Thema im Broker - ein leerer Zustand geht deshalb
+ * ohne Retain hinaus. Die Null als Wert ist NICHT leer (ok=0, Kabel=0). */
+pruefe('Merker: CableStatus mit Wert',       rn_retain_merker('CableStatus', '1'), 1);
+pruefe('Merker: CableStatus leer',           rn_retain_merker('CableStatus', ''), 0);
+pruefe('Merker: Mileage leer',               rn_retain_merker('Mileage', ''), 0);
+pruefe('Merker: ok mit 0 bleibt retained',   rn_retain_merker('ok', 0), 1);
+pruefe('Merker: ok mit "0" bleibt retained', rn_retain_merker('ok', '0'), 1);
+pruefe('Merker: BattSOC mit Wert',           rn_retain_merker('BattSOC', '80'), 0);
+pruefe('Merker: status/ts mit Wert',         rn_retain_merker('status/ts', 1789600000), 0);
+pruefe('Merker: unbekanntes Thema',          rn_retain_merker('Erfunden', 'x'), 0);
+
 /* 4. Befehle: veraendert er etwas am Fahrzeug? */
 pruefe('Befehl acnow schaltet',      rn_befehl_schaltet('acnow'), true);
 pruefe('Befehl chargestop schaltet', rn_befehl_schaltet('chargestop'), true);

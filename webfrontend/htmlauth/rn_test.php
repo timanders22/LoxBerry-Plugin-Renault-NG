@@ -120,6 +120,14 @@ function rn_test_selbstpruefung($cfg, $broker, $voll = true)
         !$broker ? rn_t('PRUEF.UNBEKANNT')
                  : ($broker['autostart'] ? rn_t('PRUEF.JA') : rn_t('PRUEF.KEIN_AUTOSTART')));
 
+    /* Bringt das Plugin sein Abonnement mit? Gemessen wird die installierte
+     * Datei, die das Gateway liest - nicht die Abo-Liste des Anwenders
+     * (mqttgateway.json), in der Plugin-Abos nie landen (Regeln/07). */
+    list($abo_pfad, $abo_ok) = rn_abo_datei();
+    $z[] = array(rn_t('PRUEF.ABO_DATEI'), $abo_ok,
+        $abo_ok ? sprintf(rn_t('PRUEF.ABO_DATEI_OK'), RN_ABO_THEMA)
+                : sprintf(rn_t('PRUEF.ABO_DATEI_FEHLT'), $abo_pfad));
+
     // Alter des letzten ERFOLGREICHEN Abrufs, je Fahrzeug.
     foreach ($autos as $f) {
         if ($f['vin'] === '') { continue; }
@@ -556,7 +564,7 @@ function rn_test_ausfuehren($was, $cfg)
         case 'vorlage':
             $z = array();
             $gesendet = rn_test_gesendete_themen();
-            foreach (array('rn_vorlage', 'rn_vorlage_vo') as $fn) {
+            foreach (array('rn_vorlage_vo') as $fn) {
                 list($name, $inhalt) = $fn();
                 $vorher = libxml_use_internal_errors(true);
                 $xml = simplexml_load_string($inhalt);
