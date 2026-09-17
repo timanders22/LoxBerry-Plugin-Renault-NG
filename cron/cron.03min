@@ -1,7 +1,7 @@
 #!/bin/bash
 # Renault - Datenabruf alle drei Minuten.
 #
-# REPLACELBPHTMLAUTHDIR und REPLACELBPLOGDIR ersetzt der LoxBerry-Installer.
+# Den htmlauth- und den Log-Pfad des Plugins setzt der LoxBerry-Installer ein.
 #
 # ZEILENENDEN: DIESE DATEI IST LF, NICHT CRLF.
 # Bis 2.0.6 war sie vollstaendig CRLF. Der Kernel sucht dann einen
@@ -14,7 +14,7 @@
 #
 # WARUM HIER EINE FEHLERMELDUNG STEHT
 # Bis 1.4 lautete die Zeile nur
-#     cd REPLACELBPHTMLAUTHDIR && php abruf.php cron
+#     cd <htmlauth-Ordner des Plugins> && php abruf.php cron
 # Das && faengt den Fehler zwar ab - aber lautlos. Bleibt der Platzhalter
 # einmal unersetzt oder fehlt der Ordner, laeuft der Cron monatelang ins
 # Leere, ohne dass jemand erfaehrt warum.
