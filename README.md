@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.11 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.12 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,18 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Version 2.1.12 — „nicht zu fragen“ heißt nicht „leer“
+
+Die Rückfrage beim Broker, ob früher zurückbehaltene Werte (`ok`, `BattSOC`,
+`Range` … und die Ladehistorie) noch dastehen, liest jetzt die Antwort auf das
+Abonnement (SUBACK). Lehnt der Broker das Lesen ab (Rückgabe 0x80, etwa durch eine
+Zugriffsregel) oder antwortet er nicht zu jedem Thema, gilt er als „nicht zu
+fragen“: kein Merker „vom Broker bestätigt“, die Altwerte werden weiter unmittelbar
+vor dem gültigen Wert gelöscht, das Protokoll sagt es, und die Deinstallation meldet
+nicht mehr „der Broker bestaetigt … nichts zu leeren“, sondern warnt, dass sie nicht
+nachlesen konnte. Bis 2.1.11 galt eine Ablehnung als „nichts belegt“ (gemessen in
+WSL, `Pruefung-Renault-NG-2.1.12`, Fälle S3, S4, S7, S9, S11).
 
 ## Version 2.1.11 — `ok` nicht mehr zurückbehalten, alte Werte abgeräumt, die Ladehistorie übersteht jedes Update
 

@@ -1586,6 +1586,20 @@ function rn_mqtt_sitzung($zugang, array $leeren, array $fragen)
                     if ($pk === null) { break; }       // Zeitablauf: nichts mehr gekommen
                     $art = $pk[0] >> 4;
                     if ($art === 9) {
+                        /* Je Filter ein Rueckgabebyte hinter der Paketkennung, in der
+                           Reihenfolge des SUBSCRIBE; ab 0x80 heisst abgelehnt (etwa
+                           durch eine ACL). Danach schickt der Broker nichts - ungeprueft
+                           hiesse das "nichts belegt", und der Merker laege auf einer
+                           Antwort, die keine war (in WSL gemessen, Pruefung-Renault-NG-2.1.12,
+                           Faelle S3, S4, S7, S9, S11). Bauart bw_mqtt_behalten_liste(),
+                           Beschattungswaechter 0.9.21. */
+                        $rc = (string) substr($pk[1], 2);
+                        if (strlen($rc) !== count($soll)) { break; }
+                        $abgelehnt = false;
+                        for ($i = 0; $i < strlen($rc); $i++) {
+                            if (ord($rc[$i]) >= 0x80) { $abgelehnt = true; }
+                        }
+                        if ($abgelehnt) { break; }
                         $bestaetigt = true;
                         // Zurueckbehaltenes kommt unmittelbar nach dem SUBACK.
                         $ende = min($ende, microtime(true) + 1.0);
@@ -1783,8 +1797,8 @@ function rn_mqtt_leeren($runden = 3)
     $wo = 'Renault/' . implode('/, Renault/', $namen) . '/';
     $f = rn_mqtt_sitzung($z, array(), $alle);
     if ($f['lage'] !== 'ok') {
-        echo "<WARNING> MQTT: der Broker war nicht zu erreichen oder hat die Anmeldung "
-           . "abgewiesen - zurueckbehaltene Themen unter " . $wo . " wurden nicht geleert. "
+        echo "<WARNING> MQTT: der Broker war nicht zu erreichen, hat die Anmeldung abgewiesen "
+           . "oder das Abonnement abgelehnt - zurueckbehaltene Themen unter " . $wo . " wurden nicht geleert. "
            . "Von Hand: LoxBerry -> System -> MQTT Gateway, oder mosquitto_pub -r -n -t <thema>.\n";
         return 1;
     }
