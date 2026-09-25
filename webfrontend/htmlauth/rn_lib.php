@@ -9,11 +9,18 @@
 /* Den LoxBerry-Wurzelordner ohne festen Systempfad bestimmen.
  *
  * Vom eigenen Ablageort aufwaerts, bis ein Verzeichnis gefunden ist, das
- * config/plugins UND webfrontend enthaelt. Das trifft die uebliche
- * Installation genauso wie eine an einem anderen Ort - und es trifft auch
- * den Fall, dass das Plugin noch als entpacktes Archiv daliegt (dann findet
- * es nichts und gibt einen Leerstring zurueck, was der Aufrufer ohnehin
- * abfangen muss).
+ * config/plugins, data/plugins UND config/system/general.json traegt. Das
+ * trifft die uebliche Installation genauso wie eine an einem anderen Ort;
+ * aus einem entpackten Archiv heraus findet es nichts und gibt einen
+ * Leerstring zurueck, den der Aufrufer abfangen muss.
+ *
+ * general.json ist die entscheidende Bedingung. Bis 2.1.10 genuegten
+ * config/plugins und webfrontend - genau diese Ordner hinterlaesst ein
+ * Pruefstand auf einem Arbeitsrechner, und am 05.09.2026 hat eine solche
+ * Suche dort die Laufwerkswurzel als "LoxBerry" erkannt und Daten geloescht
+ * (Regeln/06). In WSL gemessen (Pruefung-Renault-NG-2.1.11, Fall W1): in
+ * einem fremden Baum ohne general.json nahm abruf.php den Baum als Wurzel
+ * und legte dort Ordner und Protokoll an.
  *
  * Der Name traegt kein Plugin-Kuerzel und ist deshalb abgesichert: zwei
  * Bibliotheken landen nie im selben Prozess, aber die Pruefung kostet nichts.
@@ -23,7 +30,8 @@ if (!function_exists('lb_wurzel_ermitteln')) {
     {
         $d = __DIR__;
         for ($i = 0; $i < 8; $i++) {
-            if (is_dir($d . '/config/plugins') && is_dir($d . '/webfrontend')) {
+            if (is_dir($d . '/config/plugins') && is_dir($d . '/data/plugins')
+                && is_file($d . '/config/system/general.json')) {
                 return $d;
             }
             $eltern = dirname($d);
@@ -32,6 +40,22 @@ if (!function_exists('lb_wurzel_ermitteln')) {
         }
         return '';
     }
+}
+
+/* Die Wurzel in der Reihenfolge der Hausregel: erst die Umgebung, dann die
+ * Suche - und danach nichts mehr. Rueckgabe '' heisst "keine Wurzel".
+ *
+ * Ein gesetztes LBHOMEDIR gilt mit config/plugins UND data/plugins darunter;
+ * general.json wird hier nicht verlangt, damit die Attrappen der
+ * Pruefwerkzeuge (Werkzeuge/lb) weiter tragen. Bis 2.1.10 genuegte ein
+ * vorhandenes Verzeichnis. */
+function rn_lbhome()
+{
+    $h = rtrim((string) getenv('LBHOMEDIR'), '/');
+    if ($h !== '' && is_dir($h . '/config/plugins') && is_dir($h . '/data/plugins')) {
+        return $h;
+    }
+    return lb_wurzel_ermitteln();
 }
 
 /**
@@ -56,11 +80,7 @@ function rn_paths($anlegen = true)
     if ($p !== null && ($angelegt || !$anlegen)) {
         return $p;
     }
-    $home = getenv('LBHOMEDIR');
-    if (!$home || !is_dir($home)) {
-        $home = lb_wurzel_ermitteln();
-    }
-    $home = $home ? $home : lb_wurzel_ermitteln();
+    $home = rn_lbhome();
     $eigen = dirname(__FILE__);
 
     /* ==================================================================
@@ -87,12 +107,56 @@ function rn_paths($anlegen = true)
     // Der Ordnername wird ERMITTELT, nicht eingetragen: haengt LoxBerry bei
     // der Installation einen Zaehler an (renault_ng_01, weil der Name schon
     // belegt war), zeigten sonst alle Pfade auf die Erstinstallation.
-    $ordner = getenv('LBPPLUGINDIR');
-    if (!$ordner) { $ordner = basename(__DIR__); }
+    //
+    // LBPPLUGINDIR ist die Auskunft von LoxBerry selbst und hat Vorrang. Ob
+    // die Pfade der ANLAGE gelten, entscheidet seit 2.1.11 der Archivmodus
+    // unten: bis 2.1.10 wurde aus einem ausgepackten Archiv heraus der Name
+    // 'htmlauth' zum Ordnernamen, und abruf.php legte config/plugins/htmlauth,
+    // data/plugins/htmlauth und log/plugins/htmlauth in der Anlage an (in WSL
+    // gemessen, Pruefung-Renault-NG-2.1.11, Fall W2).
+    $lbp = (string) getenv('LBPPLUGINDIR');
+    $lbp_gilt = ($lbp !== '' && $lbp !== '.');
+    $ordner = $lbp_gilt ? $lbp : basename(__DIR__);
     if ($ordner === '' || $ordner === '.') { $ordner = 'renault_ng'; }
-    $konf   = $home . '/config/plugins/' . $ordner;
-    $daten  = $home . '/data/plugins/'   . $ordner;
-    $prot   = $home . '/log/plugins/'    . $ordner;
+
+    /* Archivmodus. Die Pfade DER ANLAGE gelten nur, wenn diese Bibliothek
+     * dort installiert liegt (<Wurzel>/webfrontend/htmlauth/plugins/<ordner>,
+     * physisch verglichen) oder der Aufrufer Wurzel UND Ordner ausdruecklich
+     * nennt ($LBHOMEDIR und $LBPPLUGINDIR - so arbeiten die Pruefwerkzeuge
+     * mit ihrer Attrappe, und so ruft uninstall/uninstall den Abraeumer).
+     * Sonst ist das ein ausgepacktes Archiv oder ein Pruefordner: alles
+     * bleibt in dessen eigenem Ordner, und abruf.php/history.php steigen aus
+     * (rn_ohne_anlage()).
+     *
+     * Bis 2.1.10 nahm ein Archiv unterhalb einer echten Wurzel diese Wurzel -
+     * mit $LBHOMEDIR allein, wie es am Geraet in /etc/environment steht, und
+     * ohne Umgebung ueber die Suche ebenso (Faelle W2, W3). Ohne jede Wurzel
+     * wurden die Pfade mit leerem home zusammengesetzt und lauteten
+     * /config/plugins/..., /data/plugins/..., /log/plugins/... - ab der
+     * Laufwerkswurzel, samt mkdir (Fall W8). Bauart wie tb_paths() der
+     * Linie Spotpreis-Tibber 0.9.19. */
+    $gefunden = $home;
+    if ($home !== '') {
+        $soll = @realpath($home . '/webfrontend/htmlauth/plugins/' . basename(__DIR__));
+        $ist  = @realpath(__DIR__);
+        $installiert   = ($soll !== false && $ist !== false && $soll === $ist);
+        $ausdruecklich = $lbp_gilt && $home === rtrim((string) getenv('LBHOMEDIR'), '/');
+        if (!$installiert && !$ausdruecklich) { $home = ''; }
+    }
+    if ($home === '') {
+        $basis   = dirname(dirname(__DIR__));
+        $konf    = $basis . '/config';
+        $daten   = $basis . '/data';
+        $prot    = $basis . '/log';
+        $sich    = $basis . '/config.backup.config.php';
+        $general = '';
+    } else {
+        $konf    = $home . '/config/plugins/' . $ordner;
+        $daten   = $home . '/data/plugins/'   . $ordner;
+        $prot    = $home . '/log/plugins/'    . $ordner;
+        $sich    = $home . '/config/plugins/' . $ordner . '.backup.config.php';
+        $general = $home . '/config/system/general.json';
+    }
     if ($anlegen) {
         foreach (array($konf, $daten, $prot) as $d) {
             if (!is_dir($d)) { @mkdir($d, 0775, true); }
@@ -117,7 +181,7 @@ function rn_paths($anlegen = true)
          * Inhalt ab; die Sicherung ging dabei mit und sah trotzdem aus wie
          * ein Schutz. uninstall/uninstall beschreibt die Lage seit jeher
          * richtig - der Kommentar in dieser Datei war der falsche. */
-        'sicherung' => $home . '/config/plugins/' . $ordner . '.backup.config.php',
+        'sicherung' => $sich,
         /* Die Anmeldung (Gigya-Token und Kamereon-Konto) gilt fuer das
          * KONTO, nicht fuer ein einzelnes Fahrzeug. Sie steht deshalb seit
          * 2.1.0 in einer eigenen Datei - sonst meldete sich jedes Fahrzeug
@@ -127,7 +191,10 @@ function rn_paths($anlegen = true)
         'session' => $daten . '/session',
         'log'     => $prot  . '/renault.log',
         'csv'     => $daten . '/database.csv',
-        'general' => $home . '/config/system/general.json',
+        'general' => $general,
+        // Die gefundene Wurzel, wenn diese Datei NICHT darin installiert
+        // liegt (Archivmodus) - fuer die Meldung in rn_ohne_anlage().
+        'archiv'  => ($home === '') ? $gefunden : '',
         // Die alten Orte - nur noch, um einmalig umzuziehen.
         'alt_config'  => $eigen . '/config.php',
         'alt_session' => $eigen . '/session',
@@ -135,6 +202,33 @@ function rn_paths($anlegen = true)
         'alt_csv'     => $eigen . '/database.csv',
     );
     return $p;
+}
+
+/**
+ * Fuer abruf.php und history.php: gibt es eine Anlage, in die sie schreiben
+ * duerfen? Rueckgabe '' = ja; sonst der Text der Meldung.
+ *
+ * Aufgerufen wird sie VOR logger.php - dessen erste Zeile legt ueber
+ * rn_paths() die Ordner an - und vor rn_umzug(). Ohne Anlage wird nichts
+ * geholt, nichts gesendet und nichts geschrieben.
+ */
+function rn_ohne_anlage()
+{
+    $p = rn_paths(false);
+    if ($p['home'] !== '') {
+        return '';
+    }
+    if ($p['archiv'] !== '') {
+        return 'Diese Datei liegt nicht in der Installation unter ' . $p['archiv']
+             . ' (ausgepacktes Archiv oder Pruefordner). Damit nichts in die Anlage kommt, '
+             . 'wurde nichts geholt, nichts gesendet und nichts geschrieben. Abhilfe: das '
+             . 'Programm aus der Installation aufrufen oder LBHOMEDIR und LBPPLUGINDIR '
+             . 'ausdruecklich setzen.';
+    }
+    return 'Es wurde kein LoxBerry-Wurzelverzeichnis gefunden: LBHOMEDIR ist nicht gesetzt, '
+         . 'und oberhalb von ' . __DIR__ . ' traegt kein Verzeichnis config/plugins, '
+         . 'data/plugins und config/system/general.json. Es wurde nichts geholt, nichts '
+         . 'gesendet und nichts geschrieben.';
 }
 
 /**
@@ -276,10 +370,14 @@ function rn_fassung()
     if ($f !== null) { return $f; }
     $f = '';
     $p = rn_paths(false);
-    $kandidaten = array(
-        $p['home'] . '/data/system/plugins/' . $p['plugin'] . '/plugin.cfg',
-        dirname(dirname(dirname(__FILE__))) . '/plugin.cfg',
-    );
+    /* Der Kandidat der Anlage nur MIT Anlage: bis 2.1.10 stand er auch ohne
+     * Wurzel in der Liste und lautete dann /data/system/plugins/<x>/plugin.cfg
+     * - ab der Laufwerkswurzel (Pruefung-Renault-NG-2.1.11, Fall W7). */
+    $kandidaten = array();
+    if ($p['home'] !== '') {
+        $kandidaten[] = $p['home'] . '/data/system/plugins/' . $p['plugin'] . '/plugin.cfg';
+    }
+    $kandidaten[] = dirname(dirname(dirname(__FILE__))) . '/plugin.cfg';
     foreach ($kandidaten as $datei) {
         $roh = @file_get_contents($datei);
         if ($roh === false) { continue; }
@@ -1255,12 +1353,21 @@ function rn_csv_spalte($roh)
  */
 function rn_thema_retained($thema)
 {
-    /* Zustaende: an/aus, Betriebsart, Fehlerflag, letzter Kilometerstand.
+    /* Zustaende DES FAHRZEUGS: an/aus, Betriebsart, letzter Kilometerstand.
      * Nach einem Neustart des Miniservers oder des Gateways soll der Stand
-     * sofort dastehen. */
+     * sofort dastehen.
+     *
+     * "ok" steht seit 2.1.11 NICHT mehr hier (Entscheidung des Hausherrn vom
+     * 18./19.09.2026, Regeln/07 Abschnitt 3): es sagt, ob der LETZTE ABRUF
+     * DIESES PLUGINS gelang - eine Aussage des Dienstes ueber sich selbst.
+     * Zurueckbehalten bliebe eine 1 stehen, wenn der Cron nicht mehr laeuft,
+     * und nach einem Neustart von Broker oder Gateway laese Loxone "in
+     * Ordnung" von einem toten Plugin. Bis 2.1.10 ging es retained hinaus,
+     * und bin/rn_selbsttest.php verlangte das sogar. Den Altwert raeumt
+     * rn_mqtt_altlast() einmal ab. */
     $zustaende = array(
         'ChargingStatus', 'CableStatus', 'ChargeMode', 'HvAcStatus',
-        'HvAcStatusBin', 'RenaultPHMode', 'Name', 'ok', 'Mileage',
+        'HvAcStatusBin', 'RenaultPHMode', 'Name', 'Mileage',
         'chargeEndStatus',
     );
     return in_array((string) $thema, $zustaende, true);
@@ -1284,6 +1391,431 @@ function rn_retain_merker($thema, $wert)
 {
     if ((string) $wert === '') { return 0; }
     return rn_thema_retained($thema) ? 1 : 0;
+}
+
+/**
+ * Themen, die frueher zurueckbehalten hinausgingen und es heute nicht mehr
+ * tun - je Sendeweg ('abruf' = abruf.php, 'history' = history.php).
+ *
+ * Bis 2.1.5 gingen ALLE Themen retained hinaus (publish(..., 0, 1) in beiden
+ * Dateien, gelesen in den Archiven 2.1.4 und 2.1.5); seit 2.1.6 sind die
+ * Messwerte und Zeitangaben fluechtig, "ok" seit 2.1.11. Ein spaeteres
+ * fluechtiges publish ersetzt einen zurueckbehaltenen Wert NICHT: auf einer
+ * Anlage, die von 2.1.5 oder frueher kommt, stehen die Altwerte bis heute
+ * im Broker, und nach jedem Neustart von Broker oder Gateway bekommt Loxone
+ * sie wieder als frisch. Bis 2.1.10 raeumte sie niemand ab (in WSL gemessen,
+ * Pruefung-Renault-NG-2.1.11, Fall R4).
+ *
+ * Keines davon darf heute retained sein; bin/rn_selbsttest.php prueft das.
+ */
+function rn_mqtt_frueher_behalten($gruppe)
+{
+    if ($gruppe === 'history') {
+        return array(
+            'chargeStartBatteryLevel(Prozent)', 'chargeEndBatteryLevel(Prozent)',
+            'chargeDuration(min)', 'chargePowerAverage(kW)',
+            'chargeEnergyRecovered(kWh)', 'chargeStartInstantaneousPower',
+        );
+    }
+    return array(
+        'ok', 'BattSOC', 'Range', 'ChargingTime', 'ChargingEffekt', 'InTemp',
+        'OutTemp', 'BatTemp', 'GPS-Latitude', 'GPS-Longitude', 'GPSTime',
+        'EnergieOnBoard', 'phpCall', 'LastDataRetrieval',
+    );
+}
+
+/**
+ * Die Zugangsdaten des Brokers: array(host, port, user, pass) oder null.
+ *
+ * Dieselben, mit denen abruf.php und history.php senden
+ * (mqtt_connectiondetails() aus loxberry_io.php); ohne diese Funktion aus
+ * der general.json der Anlage (Regeln/07, Abschnitt 2). Das Kennwort steht
+ * nur im CONNECT-Paket, nie in einem Protokoll.
+ */
+function rn_mqtt_zugang()
+{
+    if (function_exists('mqtt_connectiondetails')) {
+        $d = mqtt_connectiondetails();
+        if (is_array($d) && !empty($d['brokerhost'])) {
+            return array(
+                'host' => (string) $d['brokerhost'],
+                'port' => isset($d['brokerport']) ? (int) $d['brokerport'] : 1883,
+                'user' => isset($d['brokeruser']) ? (string) $d['brokeruser'] : '',
+                'pass' => isset($d['brokerpass']) ? (string) $d['brokerpass'] : '',
+            );
+        }
+    }
+    $datei = rn_paths(false)['general'];
+    if ($datei === '' || !is_readable($datei)) {
+        return null;
+    }
+    $alles = json_decode((string) @file_get_contents($datei), true);
+    $m = null;
+    if (is_array($alles) && isset($alles['Mqtt']) && is_array($alles['Mqtt'])) { $m = $alles['Mqtt']; }
+    elseif (is_array($alles) && isset($alles['mqtt']) && is_array($alles['mqtt'])) { $m = $alles['mqtt']; }
+    if (!$m) {
+        return null;
+    }
+    $hol = function ($gross, $klein) use ($m) {
+        if (isset($m[$gross])) { return (string) $m[$gross]; }
+        return isset($m[$klein]) ? (string) $m[$klein] : '';
+    };
+    $host = trim($hol('Brokerhost', 'brokerhost'));
+    if ($host === '') {
+        return null;
+    }
+    return array('host' => $host, 'port' => (int) $hol('Brokerport', 'brokerport'),
+                 'user' => $hol('Brokeruser', 'brokeruser'),
+                 'pass' => $hol('Brokerpass', 'brokerpass'));
+}
+
+/**
+ * Eine Sitzung beim Broker: erst $leeren mit leerer retain-Nutzlast
+ * loeschen, dann nachlesen, welche der Themen $fragen noch zurueckbehalten
+ * dastehen - in EINER Verbindung, ein SUBSCRIBE mit allen Filtern. Der Broker
+ * arbeitet die Pakete eines Teilnehmers der Reihe nach ab; was er nach dem
+ * Loeschen noch schickt, steht wirklich noch da.
+ *
+ * Rueckgabe array('lage' => 'ok'|'gesendet'|'unbekannt', 'belegt' => array(thema => true)).
+ * 'ok': der Broker hat das Abonnement bestaetigt (oder einen Wert geschickt);
+ * was dann nicht unter 'belegt' steht, ist leer. 'gesendet': nur geloescht,
+ * nicht gefragt. 'unbekannt': keine Verbindung, Anmeldung abgewiesen, keine
+ * Antwort.
+ *
+ * MQTT 3.1.1 von Hand (CONNECT, PUBLISH, SUBSCRIBE mit QoS 0, DISCONNECT),
+ * ohne fremde Bibliothek: phpMQTT kann nicht sagen, was zurueckbehalten ist.
+ * Bauart wie tb_mqtt_behalten_liste() der Linie Spotpreis-Tibber 0.9.19.
+ */
+function rn_mqtt_sitzung($zugang, array $leeren, array $fragen)
+{
+    $aus = array('lage' => 'unbekannt', 'belegt' => array());
+    if (!is_array($zugang)) {
+        return $aus;
+    }
+    $soll = array();
+    foreach ($fragen as $t) {
+        if ((string) $t !== '') { $soll[(string) $t] = true; }
+    }
+    $host = trim((string) $zugang['host']);
+    if ($host === '' || $host === 'localhost') { $host = '127.0.0.1'; }
+    $port = (int) $zugang['port'];
+    if ($port <= 0 || $port > 65535) { $port = 1883; }
+    $benutzer = (string) $zugang['user'];
+    $kennwort = (string) $zugang['pass'];
+
+    $s = @stream_socket_client('tcp://' . $host . ':' . $port, $errno, $errstr, 2);
+    if (!$s) {
+        return $aus;
+    }
+    stream_set_timeout($s, 1);
+
+    $zk = function ($t) { return pack('n', strlen($t)) . $t; };
+    $laenge = function ($n) {
+        $o = '';
+        do {
+            $b = $n % 128;
+            $n = intdiv($n, 128);
+            if ($n > 0) { $b |= 128; }
+            $o .= chr($b);
+        } while ($n > 0);
+        return $o;
+    };
+    /* Genau $n Bytes lesen oder null - bei Zeitablauf und Verbindungsende. */
+    $lies = function ($n) use ($s) {
+        $d = '';
+        while (strlen($d) < $n) {
+            $t = @fread($s, $n - strlen($d));
+            if ($t === false || $t === '') {
+                $meta = stream_get_meta_data($s);
+                if (!empty($meta['timed_out']) || !empty($meta['eof']) || feof($s)) { return null; }
+                continue;
+            }
+            $d .= $t;
+        }
+        return $d;
+    };
+    /* Ein Paket: array(kopfbyte, rumpf) oder null. */
+    $paket = function () use ($lies) {
+        $k = $lies(1);
+        if ($k === null) { return null; }
+        $n = 0; $mult = 1;
+        for ($i = 0; $i < 4; $i++) {
+            $b = $lies(1);
+            if ($b === null) { return null; }
+            $n += (ord($b) & 127) * $mult;
+            $mult *= 128;
+            if (!(ord($b) & 128)) { break; }
+        }
+        $r = ($n > 0) ? $lies($n) : '';
+        return ($r === null) ? null : array(ord($k), $r);
+    };
+
+    $flags = 0x02;                                  // saubere Sitzung
+    $nutz = $zk('rnrueck' . getmypid());
+    if ($benutzer !== '') {
+        $flags |= 0x80;
+        // Ein Kennwort ohne Benutzer laesst MQTT 3.1.1 nicht zu.
+        if ($kennwort !== '') { $flags |= 0x40; }
+    }
+    $kopf = $zk('MQTT') . chr(4) . chr($flags) . pack('n', 10);
+    if ($benutzer !== '') {
+        $nutz .= $zk($benutzer);
+        if ($kennwort !== '') { $nutz .= $zk($kennwort); }
+    }
+    if (@fwrite($s, chr(0x10) . $laenge(strlen($kopf . $nutz)) . $kopf . $nutz) !== false) {
+        $ack = $paket();
+        if ($ack !== null && ($ack[0] >> 4) === 2 && strlen($ack[1]) >= 2 && ord($ack[1][1]) === 0) {
+            $geschrieben = true;
+            foreach ($leeren as $t) {
+                // PUBLISH, QoS 0, retain gesetzt, ohne Nutzlast: die Loeschung.
+                $r = $zk((string) $t);
+                if (@fwrite($s, chr(0x31) . $laenge(strlen($r)) . $r) === false) {
+                    $geschrieben = false;
+                }
+            }
+            if (!$soll) {
+                $aus['lage'] = $geschrieben ? 'gesendet' : 'unbekannt';
+            } else {
+                $sub = pack('n', 1);
+                foreach (array_keys($soll) as $t) { $sub .= $zk($t) . chr(0); }
+                @fwrite($s, chr(0x82) . $laenge(strlen($sub)) . $sub);
+                $bestaetigt = false;
+                $ende = microtime(true) + 3.0;
+                while (microtime(true) < $ende) {
+                    $pk = $paket();
+                    if ($pk === null) { break; }       // Zeitablauf: nichts mehr gekommen
+                    $art = $pk[0] >> 4;
+                    if ($art === 9) {
+                        $bestaetigt = true;
+                        // Zurueckbehaltenes kommt unmittelbar nach dem SUBACK.
+                        $ende = min($ende, microtime(true) + 1.0);
+                    } elseif ($art === 3 && strlen($pk[1]) >= 2) {
+                        $tl = unpack('n', substr($pk[1], 0, 2));
+                        $t = substr($pk[1], 2, $tl[1]);
+                        $versatz = 2 + $tl[1] + ((($pk[0] >> 1) & 3) > 0 ? 2 : 0);
+                        $wert = (string) substr($pk[1], $versatz);
+                        if (isset($soll[$t]) && ($pk[0] & 1) && $wert !== '') {
+                            $aus['belegt'][$t] = true;
+                            if (count($aus['belegt']) === count($soll)) { break; }
+                        }
+                    }
+                }
+                if ($bestaetigt || $aus['belegt']) { $aus['lage'] = 'ok'; }
+            }
+        }
+        @fwrite($s, chr(0xE0) . chr(0));
+    }
+    fclose($s);
+    return $aus;
+}
+
+/**
+ * Welche Altwerte muessen fuer dieses Fahrzeug in diesem Lauf noch
+ * abgeraeumt werden? Rueckgabe array('lage' => 'erledigt'|'belegt'|
+ * 'unbekannt', 'themen' => array(<thema ohne Renault/<name>/>, ...)).
+ *
+ * Je Lauf, bis der Merker liegt:
+ *   1. den Broker nach allen Themen aus rn_mqtt_frueher_behalten() fragen;
+ *   2. keines belegt -> Merker schreiben, nichts abraeumen ('erledigt');
+ *      einige belegt -> genau diese abraeumen, KEIN Merker ('belegt'): die
+ *      leere retain-Nutzlast geht unmittelbar vor dem gueltigen Wert hinaus
+ *      (rn_mqtt_senden()), und bestaetigt wird erst im naechsten Lauf;
+ *      nicht zu fragen -> alle, unmittelbar vor jedem Wert, der ohnehin
+ *      hinausgeht ('unbekannt'), KEIN Merker.
+ * Der Merker entsteht also nur, wenn der BROKER sagt, dass nichts mehr
+ * dasteht - nie auf das blosse Senden hin (Regeln/07, "Ein Absender merkt
+ * nichts davon"). Er traegt die Kennung "leer-bestaetigt Renault/<name>
+ * <gruppe>: <Themenliste>"; ein anderer Inhalt - anderes Fahrzeug, andere
+ * Liste, ein Merker einer anderen Fassung - gilt nicht. purge_installation
+ * raeumt ihn bei jedem Upgrade mit ab; dann wird genau einmal nachgefragt.
+ */
+function rn_mqtt_altlast($gruppe, $name)
+{
+    $liste = rn_mqtt_frueher_behalten($gruppe);
+    $p = rn_paths();
+    $merker = $p['datadir'] . '/.mqtt_altlast_' . $gruppe . '_' . substr(md5((string) $name), 0, 12);
+    $kennung = 'leer-bestaetigt Renault/' . $name . ' ' . $gruppe . ': ' . implode(' ', $liste);
+    if (is_file($merker) && trim((string) @file_get_contents($merker)) === $kennung) {
+        return array('lage' => 'erledigt', 'themen' => array());
+    }
+    $praefix = 'Renault/' . $name . '/';
+    $voll = array();
+    foreach ($liste as $t) { $voll[] = $praefix . $t; }
+    $f = rn_mqtt_sitzung(rn_mqtt_zugang(), array(), $voll);
+    if ($f['lage'] === 'ok' && !$f['belegt']) {
+        if (@file_put_contents($merker, $kennung . "\n") === false) {
+            rn_melden('WARN', 'MQTT: der Merker ' . $merker . ' liess sich nicht schreiben - '
+                . 'der Broker wird im naechsten Lauf wieder gefragt.');
+        } else {
+            rn_melden('INFO', 'MQTT: unter ' . $praefix . ' steht keines der ' . count($liste)
+                . ' frueher zurueckbehaltenen Themen (' . $gruppe . ') mehr im Broker - vom '
+                . 'Broker bestaetigt.');
+        }
+        return array('lage' => 'erledigt', 'themen' => array());
+    }
+    if ($f['lage'] === 'ok') {
+        $t = array();
+        foreach (array_keys($f['belegt']) as $v) { $t[] = substr($v, strlen($praefix)); }
+        rn_melden('INFO', 'MQTT: unter ' . $praefix . ' stehen noch ' . count($t) . ' frueher '
+            . 'zurueckbehaltene Werte im Broker (' . implode(', ', $t) . ') - sie werden '
+            . 'unmittelbar vor dem naechsten gueltigen Wert geloescht.');
+        return array('lage' => 'belegt', 'themen' => $t);
+    }
+    rn_melden('WARN', 'MQTT: der Broker liess sich nicht befragen, ob unter ' . $praefix
+        . ' noch frueher zurueckbehaltene Werte stehen. Sie werden deshalb unmittelbar vor '
+        . 'jedem Senden geloescht, bis der Broker antwortet.');
+    return array('lage' => 'unbekannt', 'themen' => $liste);
+}
+
+/**
+ * Vormerken (drittes Argument ein Feld) oder abfragen, ob vor dem naechsten
+ * gueltigen Wert dieses Themas der Altwert zu loeschen ist. Die Abfrage
+ * verbraucht die Vormerkung - geloescht wird einmal je Lauf.
+ */
+function rn_altlast_faellig($name, $thema, $vormerken = null)
+{
+    static $offen = array();
+    if (is_array($vormerken)) {
+        foreach ($vormerken as $t) { $offen[$name . '/' . $t] = true; }
+        return false;
+    }
+    $k = $name . '/' . $thema;
+    if (isset($offen[$k])) {
+        unset($offen[$k]);
+        return true;
+    }
+    return false;
+}
+
+/**
+ * EIN Thema senden - die gemeinsame Sendestelle von abruf.php und
+ * history.php.
+ *
+ * Ist fuer das Thema ein Altwert vorgemerkt (rn_mqtt_altlast()), geht
+ * unmittelbar davor die leere retain-Nutzlast hinaus, die ihn loescht. Nur
+ * vor einem NICHTLEEREN Wert: sonst bekaeme Loxone die Loeschung ohne
+ * gueltigen Wert dahinter, und die Vormerkung bleibt fuer den naechsten Lauf.
+ */
+function rn_mqtt_senden($mqtt, $name, $thema, $wert)
+{
+    if ($mqtt === null) { return; }
+    $voll = 'Renault/' . $name . '/' . $thema;
+    if ((string) $wert !== '' && rn_altlast_faellig($name, $thema)) {
+        $mqtt->publish($voll, '', 0, 1);
+    }
+    $mqtt->publish($voll, (string) $wert, 0, rn_retain_merker($thema, $wert));
+}
+
+/**
+ * Alle Themen, die dieses Plugin je gesendet hat - fuer die Deinstallation.
+ * Beide Generationen, dazu die frueher zurueckbehaltenen; ein Thema, das
+ * heute fluechtig geht, wird dort nur geloescht, wenn der Broker es noch
+ * zurueckbehaelt.
+ */
+function rn_mqtt_alle_themen()
+{
+    $t = array();
+    foreach (array_merge(array_keys(rn_themen('1')), array_keys(rn_themen('2')),
+                         rn_mqtt_frueher_behalten('abruf'),
+                         rn_mqtt_frueher_behalten('history')) as $k) {
+        $t[$k] = true;
+    }
+    return array_keys($t);
+}
+
+/**
+ * Die Namen der eingerichteten Fahrzeuge - aus der Konfiguration, ersatzweise
+ * aus der Zweitschrift, OHNE Selbstheilung und ohne etwas zu schreiben (die
+ * Deinstallation darf nichts anlegen). Dieselbe Regel wie rn_fahrzeuge().
+ */
+function rn_mqtt_fahrzeugnamen()
+{
+    $cfg = rn_config_read(false);
+    if (!in_array(rn_konfig_lage(), array('ok', 'ohne Token'), true)) {
+        $w = rn_config_einlesen(rn_paths(false)['sicherung']);
+        if (is_array($w)) {
+            foreach ($cfg as $k => $v) {
+                if (array_key_exists($k, $w) && !is_array($w[$k])) { $cfg[$k] = (string) $w[$k]; }
+            }
+        }
+    }
+    $namen = array();
+    for ($i = 1; $i <= RN_MAX_FAHRZEUGE; $i++) {
+        $nr   = ($i === 1) ? '' : (string) $i;
+        $vin  = trim((string) $cfg['vin' . $nr]);
+        $name = trim((string) $cfg['zoename' . $nr]);
+        if ($i > 1 && $vin === '' && $name === '') { continue; }
+        if ($name === '') { $name = 'Renault' . $nr; }
+        $namen[$name] = true;
+    }
+    return array_keys($namen);
+}
+
+/**
+ * Aus der Deinstallation (abruf.php --mqtt-leeren, gerufen von
+ * uninstall/uninstall): die zurueckbehaltenen Themen der eingerichteten
+ * Fahrzeuge leeren und beim Broker nachlesen.
+ *
+ * VOR der ersten Runde und in jeder wird der Broker gefragt; geloescht wird
+ * nur, was dort noch steht, hoechstens $runden Runden. Bis 2.1.10 raeumte die
+ * Deinstallation nichts ab: die Zustaende blieben im Broker, und nach jedem
+ * Neustart von Broker oder Gateway bekam der Miniserver den Ladestand vom
+ * Tag der Deinstallation (in WSL gemessen, Pruefung-Renault-NG-2.1.11,
+ * Fall U1).
+ *
+ * Schreibt weder Protokoll noch Datei. Ausgabe im Format der Hakenskripte.
+ * Rueckgabe 0 geleert (vom Broker bestaetigt), 1 es steht noch etwas oder
+ * der Broker antwortete nicht, 2 nicht moeglich (kein Broker eingetragen).
+ */
+function rn_mqtt_leeren($runden = 3)
+{
+    $z = rn_mqtt_zugang();
+    if (!$z) {
+        echo "<INFO> MQTT: in der general.json steht kein Broker - zurueckbehaltene Themen "
+           . "unter Renault/ wurden nicht geleert.\n";
+        return 2;
+    }
+    $namen = rn_mqtt_fahrzeugnamen();
+    $alle = array();
+    foreach ($namen as $n) {
+        foreach (rn_mqtt_alle_themen() as $t) { $alle[] = 'Renault/' . $n . '/' . $t; }
+    }
+    $wo = 'Renault/' . implode('/, Renault/', $namen) . '/';
+    $f = rn_mqtt_sitzung($z, array(), $alle);
+    if ($f['lage'] !== 'ok') {
+        echo "<WARNING> MQTT: der Broker war nicht zu erreichen oder hat die Anmeldung "
+           . "abgewiesen - zurueckbehaltene Themen unter " . $wo . " wurden nicht geleert. "
+           . "Von Hand: LoxBerry -> System -> MQTT Gateway, oder mosquitto_pub -r -n -t <thema>.\n";
+        return 1;
+    }
+    $offen = array_keys($f['belegt']);
+    if (!$offen) {
+        echo "<OK> MQTT: der Broker bestaetigt: unter " . $wo . " steht keines der "
+           . count($alle) . " Themen zurueckbehalten - nichts zu leeren.\n";
+        return 0;
+    }
+    $zu = count($offen);
+    for ($r = 1; $r <= max(1, (int) $runden) && $offen; $r++) {
+        if ($r > 1) { usleep(500000); }
+        $f = rn_mqtt_sitzung($z, $offen, $offen);
+        if ($f['lage'] !== 'ok') { break; }
+        $offen = array_keys($f['belegt']);
+    }
+    echo "<INFO> MQTT: " . $zu . " Themen unter " . $wo . " standen zurueckbehalten im Broker "
+       . "und wurden mit leerer Nutzlast geloescht.\n";
+    if ($f['lage'] === 'ok' && !$offen) {
+        echo "<OK> MQTT: der Broker bestaetigt: keines davon steht mehr zurueckbehalten.\n";
+        return 0;
+    }
+    if ($f['lage'] === 'ok') {
+        echo "<WARNING> MQTT: " . count($offen) . " Themen stehen noch zurueckbehalten im Broker ("
+           . implode(', ', array_slice($offen, 0, 5)) . (count($offen) > 5 ? ', ...' : '')
+           . "). Von Hand: mosquitto_pub -r -n -t <thema>\n";
+        return 1;
+    }
+    echo "<WARNING> MQTT: nach dem Loeschen liess sich der Broker nicht mehr befragen - nicht "
+       . "nachgelesen.\n";
+    return 1;
 }
 
 /**
@@ -1348,15 +1880,15 @@ function rn_t($schluessel)
     static $texte = null;
     if ($texte === null) {
         // Installiert liegen die Dateien unter
-        // <home>/templates/plugins/<ordner>/lang/ - der Ordnername ergibt
-        // sich aus dem Ablageort dieser Datei.
-        $home = getenv('LBHOMEDIR');
-        if (!$home || !is_dir($home)) {
-            $home = lb_wurzel_ermitteln();
-        }
-        $ordner = basename(dirname(__FILE__));
-        $pfad = $home . '/templates/plugins/' . $ordner . '/lang';
-        if (!is_dir($pfad)) {
+        // <home>/templates/plugins/<ordner>/lang/. Wurzel und Ordner kommen
+        // aus rn_paths(): ohne Anlage (Archiv, Pruefordner) gibt es keinen
+        // Pfad der Anlage. Bis 2.1.10 wurde dann
+        // '/templates/plugins/htmlauth/lang' ab der Laufwerkswurzel
+        // abgefragt (Pruefung-Renault-NG-2.1.11, Fall W6).
+        $rn_p = rn_paths(false);
+        $pfad = ($rn_p['home'] !== '')
+            ? $rn_p['home'] . '/templates/plugins/' . $rn_p['plugin'] . '/lang' : '';
+        if ($pfad === '' || !is_dir($pfad)) {
             // Nicht installiert (Entwicklung): neben dem Plugin nachsehen.
             $pfad = dirname(dirname(dirname(__FILE__))) . '/templates/lang';
         }

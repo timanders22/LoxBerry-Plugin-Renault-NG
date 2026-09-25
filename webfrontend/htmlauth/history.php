@@ -44,6 +44,15 @@ require_once 'loxberry_io.php';
 require_once 'phpMQTT/phpMQTT.php';
 
 require_once __DIR__ . '/rn_lib.php';
+
+/* Ohne Anlage nichts holen, nichts senden, nichts schreiben - vor logger.php
+ * und rn_umzug(), wie in abruf.php (rn_ohne_anlage() in rn_lib.php). */
+$rn_ohne = rn_ohne_anlage();
+if ($rn_ohne !== '') {
+    fwrite(STDERR, 'history.php: ' . $rn_ohne . "\n");
+    exit(1);
+}
+
 require_once __DIR__ . '/logger.php';
 require 'api-keys.php';
 
@@ -92,12 +101,12 @@ if (is_array($rn_broker) && !empty($rn_broker['brokerhost'])) {
  * Zustand; die uebrigen sechs sind Messwerte eines abgeschlossenen
  * Ladevorgangs und gehen ohne Retain hinaus. Den Merker liefert
  * rn_retain_merker(): ein leerer Wert geht nie retained (seit 2.1.9).
+ * Gesendet wird ueber rn_mqtt_senden() (rn_lib.php), das vor einem gueltigen
+ * Wert den Altwert eines frueher zurueckbehaltenen Themas loescht.
  */
 function rn_h_sende($mqtt, $name, $thema, $wert)
 {
-    if ($mqtt === null) { return; }
-    $mqtt->publish('Renault/' . $name . '/' . $thema, (string) $wert,
-                   0, rn_retain_merker($thema, $wert));
+    rn_mqtt_senden($mqtt, $name, $thema, $wert);
 }
 
 /** Dauer eines Ladevorgangs in Minuten, aus Anfang und Ende. */
@@ -220,6 +229,12 @@ foreach (rn_fahrzeuge($rn_cfg) as $rn_f) {
     // Loxone und saehe richtig aus.
     $rn_schnitt = ($rn_energie !== null && $rn_dauer > 0) ? round($rn_energie * 60 / $rn_dauer, 2) : '';
 
+    /* Die sechs Messwerte gingen bis 2.1.5 retained hinaus; ihr Altwert wird
+     * einmal abgeraeumt, bestaetigt vom Broker (rn_mqtt_altlast()). */
+    if ($rn_mqtt !== null) {
+        $rn_alt = rn_mqtt_altlast('history', $rn_name);
+        rn_altlast_faellig($rn_name, '', $rn_alt['themen']);
+    }
     rn_h_sende($rn_mqtt, $rn_name, 'chargeStartBatteryLevel(Prozent)',
         isset($rn_neu['chargeStartBatteryLevel']) ? $rn_neu['chargeStartBatteryLevel'] : '');
     rn_h_sende($rn_mqtt, $rn_name, 'chargeEndBatteryLevel(Prozent)',

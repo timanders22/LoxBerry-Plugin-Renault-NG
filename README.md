@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.10 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.11 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,77 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Version 2.1.11 — `ok` nicht mehr zurückbehalten, alte Werte abgeräumt, die Ladehistorie übersteht jedes Update
+
+**Was Sie bemerken:**
+
+- **`Renault/<Fahrzeug>/ok` geht ohne Retain hinaus.** Es sagt, ob der letzte
+  Abruf *des Plugins* gelang — eine Aussage über das Plugin, nicht über das
+  Fahrzeug. Zurückbehalten blieb eine 1 im Broker stehen, auch wenn der Abruf
+  gar nicht mehr lief, und nach einem Neustart von Broker oder Gateway las
+  Loxone „in Ordnung" von einem angehaltenen Plugin. Nach einem Neustart fehlt
+  `ok` jetzt, bis der nächste Abruf es sendet. Die Zustände des Fahrzeugs
+  (Ladestatus, Kabel, Lademodus, Klimatisierung, Kilometerstand, Name, Ende
+  des letzten Ladevorgangs) bleiben zurückbehalten.
+- **Alte, zurückbehaltene Werte werden einmal abgeräumt.** Bis 2.1.5 gingen
+  alle Themen retained hinaus; seit 2.1.6 sind die Messwerte und Zeitangaben
+  flüchtig. Ein flüchtiges Senden ersetzt einen zurückbehaltenen Wert aber
+  nicht — auf einer Anlage, die von 2.1.5 oder früher kommt, standen die
+  alten Werte bis heute im Broker und kamen nach jedem Neustart als frisch
+  bei Loxone an. Das Plugin fragt den Broker jetzt, was noch dasteht, löscht
+  genau das unmittelbar vor dem gültigen Wert (leere Nachricht mit Retain)
+  und merkt es sich erst, wenn der Broker bestätigt, dass nichts mehr
+  dasteht. Dafür meldet es sich mit den Zugangsdaten des MQTT-Gateways am
+  Broker an; geht das nicht, löscht es bei jedem Abruf vor dem Wert und fragt
+  beim nächsten wieder.
+- **Die Deinstallation leert die zurückbehaltenen Themen** der eingerichteten
+  Fahrzeuge und liest beim Broker nach. Bis 2.1.10 blieben sie stehen, und
+  Loxone las den Ladestand vom Tag der Deinstallation nach jedem Neustart
+  wieder ein.
+
+**Gefunden bei der Nachlese am 25.09.2026** (in WSL gemessen, nicht am Gerät;
+Prüfstand `Pruefung-Renault-NG-2.1.11`, 51 Fälle, vorher 36 rot, nachher 0):
+
+- **Die Ladehistorie ging bei einem Update verloren, wenn der Abruf in die
+  Lücke fiel.** Zwischen dem Löschen des Datenordners und dem Zurückspielen
+  läuft `cron.03min` weiter; bei eingeschalteter Aufzeichnung legte der Abruf
+  eine neue `database.csv` mit einer Zeile an, und `postupgrade.sh` spielte
+  die gerettete Historie dann nicht mehr zurück („lagen schon da"). Jetzt
+  werden beide nach Inhalt zusammengeführt: die gerettete Datei, dahinter die
+  Zeilen aus der Lücke.
+- **Ein alter Rettungsordner wurde bei jedem Update wieder eingespielt.** Er
+  blieb nach jedem Update liegen, und eine Datei, die es seit Monaten nicht
+  mehr gab, kam beim nächsten Update zurück. Der Rettungsordner trägt jetzt
+  den Zeitpunkt seines Updates; zurückgespielt wird nur einer aus diesem
+  Update (höchstens eine Stunde alt, Zeitpunkt und Uhr als Zahl geprüft), und
+  er wird entfernt, sobald jede Datei nachweislich zurück ist. Ein alter
+  bleibt unberührt liegen, und das Installationsprotokoll nennt den Ort.
+- **Die Konfiguration wurde beim Update nach Größe statt nach Inhalt
+  behandelt.** `preupgrade.sh` kopierte auch eine abgeschnittene
+  `config.php` über die heile Zweitschrift; `postupgrade.sh` spielte nur
+  zurück, wenn `config.php` leer war, und meldete „wiederhergestellt" auch bei
+  einer leeren Zweitschrift. Jetzt zählt der Inhalt (vollständig geschrieben
+  und mit Aktionstoken oder Benutzername); eine verdrängte Datei bleibt als
+  `config.php.kaputt` daneben liegen.
+- **Ein ausgepacktes Archiv wirkte auf die Anlage.** Unter einem LoxBerry
+  entpackt, legte `abruf.php` dort Ordner namens `htmlauth` an; in einem
+  fremden Verzeichnis ohne `config/system/general.json` galt dieses als
+  LoxBerry; ohne jede Wurzel wurden Pfade ab `/` gebildet. Jetzt gilt die
+  Anlage nur, wenn das Plugin dort installiert ist oder `LBHOMEDIR` und
+  `LBPPLUGINDIR` sie ausdrücklich nennen; sonst holen, senden und schreiben
+  `abruf.php` und `history.php` nichts. Endpunkt und Selbsttest suchen ihre
+  Bibliothek nur noch am eigenen Ablageort. Die Hakenskripte tun nichts, wenn
+  der Installer sie nicht aufgerufen hat.
+- **Der Selbsttest verlangte `ok` retained** und verlangt jetzt flüchtig; er
+  prüft außerdem, dass keines der abzuräumenden Themen heute retained geht.
+
+**Grenzen:** nichts davon ist am Gerät gemessen. Der Broker ist im Prüfstand
+ein Nachbau, der das Retain-Kennzeichen jedes empfangenen Pakets aufschreibt;
+`phpMQTT` ist nachgebildet. Themen eines Fahrzeugs, das vorher aus den
+Einstellungen entfernt wurde, kennt die Deinstallation nicht.
+
+**Unverändert:** Themennamen, Befehle, Konfiguration, Sicherung.
 
 ## Version 2.1.9 — das Abo kommt mit, die Eingangsvorlage geht, ein leerer Wert löscht nichts mehr
 

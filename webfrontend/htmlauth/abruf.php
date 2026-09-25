@@ -57,6 +57,35 @@ require_once 'loxberry_io.php';
 require_once 'phpMQTT/phpMQTT.php';
 
 require_once __DIR__ . '/rn_lib.php';
+
+/* Ohne Anlage nichts holen, nichts senden, nichts schreiben - und das VOR
+ * logger.php, dessen erste Zeile ueber rn_paths() die Ordner anlegt, und vor
+ * rn_umzug(). Bis 2.1.10 lief diese Datei aus einem ausgepackten Archiv
+ * unter einer echten Wurzel gegen die Anlage (mit LBHOMEDIR ebenso wie
+ * ohne) und legte dort Ordner namens htmlauth an; in einem fremden Baum ohne
+ * general.json nahm sie den Baum als Wurzel (in WSL gemessen,
+ * Pruefung-Renault-NG-2.1.11, Faelle W1 bis W3). Ueber den Endpunkt
+ * antwortet sie mit 503. */
+$rn_ohne = rn_ohne_anlage();
+if ($rn_ohne !== '') {
+    if (!isset($rn_auftrag)) {
+        fwrite(STDERR, 'abruf.php: ' . $rn_ohne . "\n");
+        exit(1);
+    }
+    $rn_http_status = 503;
+    echo "NO LOXBERRY ROOT\n";
+    return;
+}
+
+/* Aus der Deinstallation (uninstall/uninstall): die zurueckbehaltenen Themen
+ * der eingerichteten Fahrzeuge leeren und beim Broker nachlesen - ohne
+ * Abruf, ohne Protokoll, ohne eine Datei zu schreiben (rn_mqtt_leeren() in
+ * rn_lib.php). Steht vor logger.php, damit auch kein Protokollordner
+ * entsteht. */
+if (!isset($rn_auftrag) && isset($argv[1]) && $argv[1] === '--mqtt-leeren') {
+    exit(rn_mqtt_leeren());
+}
+
 require_once __DIR__ . '/logger.php';
 require 'api-keys.php';
 
@@ -472,12 +501,15 @@ if (is_array($rn_broker) && !empty($rn_broker['brokerhost'])) {
  * Den Merker selbst liefert rn_retain_merker(): ein LEERER Wert geht nie
  * retained hinaus, denn eine leere Nutzlast mit Retain loescht das Thema im
  * Broker. Bis 2.1.8 fehlte diese Ausnahme.
+ *
+ * Gesendet wird seit 2.1.11 ueber rn_mqtt_senden() in rn_lib.php - dieselbe
+ * Stelle wie in history.php. Dort geht vor einem gueltigen Wert, wenn noetig,
+ * die leere retain-Nutzlast hinaus, die den Altwert eines frueher
+ * zurueckbehaltenen Themas loescht (rn_mqtt_altlast()).
  */
 function rn_sende($mqtt, $name, $thema, $wert)
 {
-    if ($mqtt === null) { return; }
-    $mqtt->publish('Renault/' . $name . '/' . $thema, (string) $wert,
-                   0, rn_retain_merker($thema, $wert));
+    rn_mqtt_senden($mqtt, $name, $thema, $wert);
 }
 
 /**
@@ -866,6 +898,16 @@ foreach ($rn_mit_vin as $rn_f) {
      * alle alten Werte samt frischem Zeitstempel erneut gesendet; das
      * sah in Loxone aus wie ein gesunder Abruf.
      * ============================================================== */
+    /* Altwerte frueher zurueckbehaltener Themen: "ok" bis 2.1.10, die
+     * Messwerte bis 2.1.5 (rn_mqtt_frueher_behalten()). Der Broker wird
+     * gefragt, was noch dasteht; genau das geht unmittelbar vor seinem
+     * gueltigen Wert als leere retain-Nutzlast hinaus. Der Merker entsteht
+     * erst, wenn der Broker bestaetigt, dass nichts mehr dasteht. */
+    if ($rn_mqtt !== null) {
+        $rn_alt = rn_mqtt_altlast('abruf', $rn_name);
+        rn_altlast_faellig($rn_name, '', $rn_alt['themen']);
+    }
+
     if ($rn_erfolg) {
         $rn_s[25] = $rn_jetzt;
         $rn_irgendwas_ok = true;

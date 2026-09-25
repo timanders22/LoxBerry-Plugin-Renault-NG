@@ -36,6 +36,12 @@ foreach ($argv as $i => $a) {
  * Installiert liegen bin/ und webfrontend/htmlauth/ in getrennten Baeumen,
  * im Archiv nebeneinander. Eine feste Zahl von ".." trifft immer nur eine
  * der beiden Lagen. */
+/* Seit 2.1.11 entscheidet der eigene Ablageort, welche der beiden Lagen gilt
+ * - nicht die Reihenfolge einer Liste. Bis 2.1.10 wurde der Kandidat "drei
+ * Ebenen hinauf" auch aus einem ausgepackten Archiv heraus VOR der eigenen
+ * Bibliothek geprueft; in WSL gemessen (Pruefung-Renault-NG-2.1.11, Fall
+ * W10) wurde ein Koeder dort geladen. Mit LBHOMEDIR wird wie bisher zuerst
+ * die Installation gefragt. */
 $rn_kandidaten = array();
 $rn_home = getenv('LBHOMEDIR');
 if ($rn_home) {
@@ -43,9 +49,12 @@ if ($rn_home) {
     if (!$rn_ordner) { $rn_ordner = basename(__DIR__); }
     $rn_kandidaten[] = $rn_home . '/webfrontend/htmlauth/plugins/' . $rn_ordner . '/rn_lib.php';
 }
-$rn_kandidaten[] = dirname(dirname(dirname(__DIR__)))
-                 . '/webfrontend/htmlauth/plugins/' . basename(__DIR__) . '/rn_lib.php';
-$rn_kandidaten[] = dirname(__DIR__) . '/webfrontend/htmlauth/rn_lib.php';
+if (basename(dirname(__DIR__)) === 'plugins') {
+    $rn_kandidaten[] = dirname(dirname(dirname(__DIR__)))
+                     . '/webfrontend/htmlauth/plugins/' . basename(__DIR__) . '/rn_lib.php';
+} else {
+    $rn_kandidaten[] = dirname(__DIR__) . '/webfrontend/htmlauth/rn_lib.php';
+}
 
 $rn_lib = '';
 foreach ($rn_kandidaten as $k) {
@@ -144,10 +153,12 @@ pruefe('Taugt: Nullbyte',              rn_wert_taugt("a\x00b"), false);
 
 /* 3. Retain je Thema.
  *
- * Zustaende retained, Messwerte mit Zeitbezug nicht, das Lebenszeichen
- * nie. Bis 2.1.5 ging alles retained hinaus. */
+ * Zustaende des Fahrzeugs retained, Messwerte mit Zeitbezug nicht, das
+ * Lebenszeichen nie - und eine Aussage des Plugins ueber sich selbst ("ok")
+ * nie (Regeln/07 Abschnitt 3, 18./19.09.2026). Bis 2.1.5 ging alles
+ * retained hinaus; bis 2.1.10 verlangte diese Zeile ok retained. */
 pruefe('Retain: ChargingStatus (Zustand)',   rn_thema_retained('ChargingStatus'), true);
-pruefe('Retain: ok (Zustand)',               rn_thema_retained('ok'), true);
+pruefe('Retain: ok (Aussage des Plugins)',   rn_thema_retained('ok'), false);
 pruefe('Retain: chargeEndStatus (Zustand)',  rn_thema_retained('chargeEndStatus'), true);
 pruefe('Retain: BattSOC (Messwert)',         rn_thema_retained('BattSOC'), false);
 pruefe('Retain: OutTemp (Messwert)',         rn_thema_retained('OutTemp'), false);
@@ -161,11 +172,28 @@ pruefe('Retain: status/zaehler',             rn_thema_retained('status/zaehler')
 pruefe('Merker: CableStatus mit Wert',       rn_retain_merker('CableStatus', '1'), 1);
 pruefe('Merker: CableStatus leer',           rn_retain_merker('CableStatus', ''), 0);
 pruefe('Merker: Mileage leer',               rn_retain_merker('Mileage', ''), 0);
-pruefe('Merker: ok mit 0 bleibt retained',   rn_retain_merker('ok', 0), 1);
-pruefe('Merker: ok mit "0" bleibt retained', rn_retain_merker('ok', '0'), 1);
+pruefe('Merker: ok mit 1 nicht retained',    rn_retain_merker('ok', 1), 0);
+pruefe('Merker: ok mit "0" nicht retained',  rn_retain_merker('ok', '0'), 0);
+pruefe('Merker: Kabel mit 0 bleibt retained', rn_retain_merker('CableStatus', 0), 1);
 pruefe('Merker: BattSOC mit Wert',           rn_retain_merker('BattSOC', '80'), 0);
 pruefe('Merker: status/ts mit Wert',         rn_retain_merker('status/ts', 1789600000), 0);
 pruefe('Merker: unbekanntes Thema',          rn_retain_merker('Erfunden', 'x'), 0);
+
+/* 3c. Die Themen, deren Altwert abgeraeumt wird (seit 2.1.11): ok und die
+ * Messwerte, die bis 2.1.5 retained hinausgingen. Keines davon darf heute
+ * retained sein - sonst raeumte der Abruf ab, was er gleich wieder
+ * zurueckbehielte. */
+$fa = rn_mqtt_frueher_behalten('abruf');
+$fh = rn_mqtt_frueher_behalten('history');
+pruefe('Altlast: ok gehoert dazu',           in_array('ok', $fa, true), true);
+pruefe('Altlast: BattSOC gehoert dazu',      in_array('BattSOC', $fa, true), true);
+pruefe('Altlast: chargeDuration(min) dazu',  in_array('chargeDuration(min)', $fh, true), true);
+pruefe('Altlast: kein Zustand gehoert dazu', in_array('Mileage', array_merge($fa, $fh), true), false);
+$zurueck = array();
+foreach (array_merge($fa, $fh) as $t) {
+    if (rn_thema_retained($t)) { $zurueck[] = $t; }
+}
+pruefe('Altlast: keines davon ist heute retained', implode(', ', $zurueck), '');
 
 /* 4. Befehle: veraendert er etwas am Fahrzeug? */
 pruefe('Befehl acnow schaltet',      rn_befehl_schaltet('acnow'), true);

@@ -48,11 +48,22 @@ header('Cache-Control: no-store');
  * beide Ablagen. Und der Selbsttest weiter unten haette es am ersten Tag
  * gezeigt.
  */
-$rn_kandidaten = array(
-    dirname(dirname(dirname(__DIR__))) . '/htmlauth/plugins/' . basename(__DIR__) . '/rn_lib.php',
-    dirname(dirname(__DIR__)) . '/htmlauth/plugins/' . basename(__DIR__) . '/rn_lib.php',
-    dirname(__DIR__) . '/htmlauth/rn_lib.php',
-);
+/* Welche Lage gilt, entscheidet seit 2.1.11 der eigene Ablageort, nicht die
+ * Reihenfolge einer Liste. Bis 2.1.10 stand hier eine Liste mit drei
+ * Kandidaten, und der erste - drei Ebenen hinauf, dann htmlauth/plugins/ -
+ * wurde auch aus einem ausgepackten Archiv heraus VOR der eigenen Bibliothek
+ * geprueft. Drei Ebenen ueber einem Archiv liegt ein beliebiger fremder
+ * Ordner, im Grenzfall die Laufwerkswurzel; in WSL gemessen
+ * (Pruefung-Renault-NG-2.1.11, Fall W9) wurde ein Koeder dort geladen.
+ * Installiert liegt diese Datei unter <home>/webfrontend/html/plugins/<ordner>,
+ * im Archiv unter <archiv>/webfrontend/html. */
+if (basename(dirname(__DIR__)) === 'plugins') {
+    $rn_kandidaten = array(
+        dirname(dirname(dirname(__DIR__))) . '/htmlauth/plugins/' . basename(__DIR__) . '/rn_lib.php',
+    );
+} else {
+    $rn_kandidaten = array(dirname(__DIR__) . '/htmlauth/rn_lib.php');
+}
 $rn_htmlauth = '';
 foreach ($rn_kandidaten as $rn_k) {
     if (is_file($rn_k)) {
