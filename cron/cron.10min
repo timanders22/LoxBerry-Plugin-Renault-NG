@@ -21,4 +21,6 @@ fi
 flock -n 9 || exit 0
 
 cd "$VERZ" || exit 1
-php history.php
+# 9<&-: die Sperre bleibt bei der Schale, php erbt sie nicht (Befund C4,
+# Begruendung in cron.03min).
+php history.php 9<&-

@@ -39,27 +39,49 @@ for rn_pfad in "$KONF" "$DATEN"; do
     esac
 done
 
+# ===================================================================
+# 0. DIE UPGRADE-MARKE (Entscheidung 1 des Hausherrn, 29.09.2026; I1/I2)
+# ===================================================================
+# preupgrade.sh legt data/plugins/<ordner>.upgrade_laeuft als Erstes an.
+# Zurueckgespielt wird nur, wenn sie VORHANDEN ist - kein Altersvergleich.
+# Entfernt wird sie hier, am Ende dieses Skripts (trap, auch bei einem
+# vorzeitigen exit): postinstall.sh laeuft VOR diesem Skript und braucht sie
+# ebenso wie die Rueckspielung weiter unten. Fehlt sie, laeuft dieses Skript
+# nicht im Zuge eines Updates, das preupgrade.sh begonnen hat - dann wird
+# nichts eingespielt, und Zweitschrift und Rettungsordner bleiben liegen.
+MARKE="${DATEN}.upgrade_laeuft"
+rn_marke_weg() { rm -f "$MARKE" 2>/dev/null; }
+trap rn_marke_weg EXIT
+if [ ! -f "$MARKE" ]; then
+    echo "<WARNING> Die Marke $MARKE fehlt - dieses Update wurde nicht von preupgrade.sh"
+    echo "<WARNING> begonnen. Es wird NICHTS zurueckgespielt; Zweitschrift und Rettungsordner"
+    echo "<WARNING> bleiben unberuehrt liegen."
+    exit 1
+fi
+
 # Hat eine Konfigurationsdatei INHALT? Rueckgabe 0 ja, 1 nein, 2 nicht pruefbar.
+# $1 ist die Datei, $2 (wahlweise) die Zweitschrift, gegen die "ohne Token"
+# gemessen wird.
 #
-# Inhalt heisst: die Datei ist vollstaendig geschrieben - sie endet mit dem
-# schliessenden PHP-Tag, wie jede, die das Plugin je geschrieben hat - UND sie
-# traegt ein Aktionstoken oder einen Benutzernamen des Renault-Kontos (eine
-# Konfiguration aus 1.4 kennt das Token noch nicht). Eine leere, abgeschnittene
-# oder fremde Datei hat keinen Inhalt. Bis 2.1.10 wurde hier gar nicht
-# geprueft und in postupgrade.sh nur nach der GROESSE (Klasse C,
-# Bestand-2026-09-18/klasse-C/Ergebnis.md). Dieselbe Funktion steht
-# wortgleich in preupgrade.sh - preupgrade.sh laeuft aus dem Auspackordner
-# und kann keine Datei des Plugins einbinden.
+# Das Urteil faellt die BIBLIOTHEK (rn_konfig_datei_urteil() in rn_lib.php),
+# dieselbe Frage, die rn_config_read() stellt (Befund I4); bis 2.1.12 stand
+# hier eine eigene Pruefung, die ein schliessendes ?> verlangte. Gefragt wird
+# die eben installierte Bibliothek; ersatzweise die im Auspackordner.
+RN_LIB_NEU="REPLACELBPHTMLAUTHDIR/rn_lib.php"
+case "$RN_LIB_NEU" in
+    /?*) [ -f "$RN_LIB_NEU" ] || RN_LIB_NEU="" ;;
+    *) RN_LIB_NEU="" ;;
+esac
+[ -n "$RN_LIB_NEU" ] || RN_LIB_NEU="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/webfrontend/htmlauth/rn_lib.php"
 RN_INHALT_PHP=$(cat <<'PHPEOF'
-$r = @file_get_contents($argv[1]);
-if (!is_string($r) || !preg_match('/\?>\s*\z/', $r)) { exit(1); }
-$wert = '\s*=\s*(\'(?:[^\'\\\\]|\\\\.)+\'|"(?:[^"\\\\]|\\\\.)+")\s*;';
-exit(preg_match('/^[ \t]*\$(aktionstoken|username)' . $wert . '/m', $r) ? 0 : 1);
+require $argv[1];
+exit(rn_konfig_datei_urteil($argv[2], isset($argv[3]) ? $argv[3] : '') === '' ? 0 : 1);
 PHPEOF
 )
 rn_hat_inhalt() {
     [ -f "$1" ] || return 1
-    php -r "$RN_INHALT_PHP" "$1" 2>/dev/null
+    [ -f "$RN_LIB_NEU" ] || return 2
+    php -r "$RN_INHALT_PHP" "$RN_LIB_NEU" "$1" "${2:-}" 2>/dev/null
     case "$?" in
         0) return 0 ;;
         1) return 1 ;;
@@ -81,10 +103,12 @@ mkdir -p "$KONF" 2>/dev/null
 # Zweitschrift blieb draussen; und eine leere Zweitschrift wurde kopiert und
 # als "wiederhergestellt" gemeldet (in WSL gemessen,
 # Pruefung-Renault-NG-2.1.11, Faelle K1 bis K3). Eine verdraengte Datei
-# bleibt als config.php.kaputt (0600) daneben liegen.
+# liegt seit 2.1.13 als <ordner>.config.php.kaputt.<zeit> (0600) NEBEN dem
+# Ordner (Befund I4); bis 2.1.12 lag sie darin und ging beim naechsten Update
+# mit dem Ordner.
 for SICH in "${KONF}.backup.config.php" "$KONF/config.php.backup"; do
     [ -f "$SICH" ] || continue
-    rn_hat_inhalt "$KONF/config.php"
+    rn_hat_inhalt "$KONF/config.php" "$SICH"
     rn_ist=$?
     [ "$rn_ist" = 0 ] && break
     rn_hat_inhalt "$SICH"
@@ -104,10 +128,11 @@ for SICH in "${KONF}.backup.config.php" "$KONF/config.php.backup"; do
         fi
     fi
     if [ -f "$KONF/config.php" ]; then
-        if mv -f "$KONF/config.php" "$KONF/config.php.kaputt"; then
-            chmod 600 "$KONF/config.php.kaputt" 2>/dev/null
-            echo "<WARNING> Die vorhandene Konfiguration hatte keinen Inhalt; sie liegt als"
-            echo "<WARNING> $KONF/config.php.kaputt daneben."
+        RN_KAPUTT="${KONF}.config.php.kaputt.$(date +%Y%m%d%H%M%S 2>/dev/null)"
+        if mv -f "$KONF/config.php" "$RN_KAPUTT"; then
+            chmod 600 "$RN_KAPUTT" 2>/dev/null
+            echo "<WARNING> Die vorhandene Konfiguration war unbrauchbar; sie liegt als"
+            echo "<WARNING> $RN_KAPUTT daneben."
         fi
     fi
     if cp -f "$SICH" "$KONF/config.php"; then
@@ -130,14 +155,12 @@ fi
 # ===================================================================
 # 2. AUFZEICHNUNG
 # ===================================================================
-# Zurueckgespielt wird nur ein Rettungsordner aus DIESEM Update: sein
-# Zeitpunkt (preupgrade.sh) muss eine Zahl sein und hoechstens 3600 s alt;
-# bis 300 s "aus der Zukunft" gilt er noch (die Uhr kann zwischen den beiden
-# Skripten ein Stueck zurueckspringen - Bauart Govee 0.9.20). Beide Zahlen
-# werden VOR der Rechnung als Zahl geprueft: bash wertet in $(( )) den
-# INHALT einer Variablen aus, und ein Zeitpunkt wie a[$(befehl)] fuehrte
-# den Befehl aus (Klasse M, Bestand-2026-09-18). Ohne lesbare Uhr faellt
-# die Pruefung geschlossen aus: nichts einspielen, sagen wo es liegt.
+# Zurueckgespielt wird, wenn die Marke vorhanden ist (oben geprueft) - kein
+# Altersvergleich mehr (Entscheidung 1, Befund I2). Bis 2.1.12 musste der
+# Zeitpunkt im Rettungsordner hoechstens 3600 s alt sein: ein Update mit mehr
+# als einer Stunde zwischen preupgrade.sh und diesem Skript galt als fremd.
+# Dass hier nie ein Bestand aus einem FRUEHEREN Vorgang liegt, stellt
+# preupgrade.sh sicher: es raeumt einen alten Rettungsordner vorher weg.
 #
 # Steht am Ziel schon eine Datei, hat ein Abruf in der Luecke zwischen dem
 # Loeschen des Datenordners und diesem Skript sie angelegt - cron.03min
@@ -154,27 +177,7 @@ fi
 # zurueck ist (die Datei am Ziel beginnt byteweise mit der geretteten);
 # sonst bleibt er liegen, und die Meldung nennt ihn.
 if [ -d "$RETTUNG" ]; then
-    rn_t0=$(cat "$RETTUNG/zeitpunkt" 2>/dev/null)
-    rn_jetzt=$(date +%s 2>/dev/null)
-    rn_gilt=0
-    rn_grund=""
-    case "$rn_t0" in
-        ''|*[!0-9]*)
-            rn_grund="er traegt keinen gueltigen Zeitpunkt (Rest einer Fassung bis 2.1.10 oder eines abgebrochenen Updates)" ;;
-        *)
-            case "$rn_jetzt" in
-                ''|*[!0-9]*)
-                    rn_grund="die Uhr ist nicht lesbar" ;;
-                *)
-                    rn_alter=$((rn_jetzt - rn_t0))
-                    if [ "$rn_alter" -ge -300 ] && [ "$rn_alter" -le 3600 ]; then
-                        rn_gilt=1
-                    else
-                        rn_grund="er stammt nicht aus diesem Update (angelegt vor $rn_alter s)"
-                    fi ;;
-            esac ;;
-    esac
-    if [ "$rn_gilt" = 1 ]; then
+    if [ -f "$MARKE" ]; then
         mkdir -p "$DATEN" 2>/dev/null
         zurueck=0
         zusammen=0
@@ -226,14 +229,10 @@ if [ -d "$RETTUNG" ]; then
             echo "<WARNING> Rettungsordner bleibt liegen: $RETTUNG"
             rc=1
         fi
-    else
-        echo "<WARNING> Der Rettungsordner $RETTUNG wird NICHT zurueckgespielt:"
-        echo "<WARNING> $rn_grund. Er bleibt unberuehrt liegen; wer die Ladehistorie daraus"
-        echo "<WARNING> braucht, kopiert sie von Hand nach $DATEN/."
-        rc=1
     fi
 else
-    echo "<INFO> Kein Rettungsordner vorhanden - vermutlich eine Erstinstallation."
+    # Befund I3: dieses Skript laeuft nur bei einem Update.
+    echo "<INFO> Kein Rettungsordner vorhanden - nichts zurueckzuholen."
 fi
 
 echo "<INFO> Konfiguration und Ladehistorie werden NEBEN ihren Ordnern gesichert,"

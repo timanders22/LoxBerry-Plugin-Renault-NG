@@ -98,6 +98,21 @@ if [ -f "$SICH" ]; then
 else
     echo "<INFO> Keine Zweitschrift der Konfiguration vorhanden."
 fi
+# Seit 2.1.13 dazu: die bei einer Neuinstallation beiseitegelegte Zweitschrift
+# (<ordner>.backup.config.php.alt, postinstall.sh, Entscheidung 1) und
+# Konfigurationen, die preupgrade.sh bzw. postupgrade.sh als unbrauchbar neben
+# den Ordner gelegt haben (<ordner>.config.php.kaputt.<zeit>, Befund I4) -
+# alle mit Zugangsdaten im Klartext, alle ebenso ueberschrieben und entfernt.
+for S in "$SICH.alt" "$BASE/config/plugins/$PDIR".config.php.kaputt.*; do
+    [ -f "$S" ] || continue
+    dd if=/dev/zero of="$S" bs=1024 count=8 conv=notrunc >/dev/null 2>&1
+    if rm -f "$S"; then
+        echo "<OK> Beiseitegelegte Konfiguration entfernt ($S)."
+    else
+        echo "<ERROR> $S liess sich nicht entfernen - bitte von Hand."
+        rc=1
+    fi
+done
 
 # ---- 2. Rettungsordner der Ladehistorie ---------------------------
 # Er entsteht in preupgrade.sh neben data/plugins/<ordner>/ und wird vom
@@ -115,10 +130,30 @@ for R in "$RETTUNG" "$RETTUNG.neu" "$RETTUNG.alt"; do
     fi
 done
 
+# ---- 2b. Upgrade-Marke ---------------------------------------------
+# data/plugins/<ordner>.upgrade_laeuft (seit 2.1.13, Entscheidung 1). Sie
+# bleibt nur liegen, wenn ein Update zwischen preupgrade.sh und postupgrade.sh
+# abbrach; ohne Abraeumen hielte eine spaetere Neuinstallation sich fuer ein
+# Update und spielte Liegengebliebenes ein.
+MARKE="$BASE/data/plugins/$PDIR.upgrade_laeuft"
+if [ -f "$MARKE" ]; then
+    if rm -f "$MARKE"; then
+        echo "<OK> Upgrade-Marke eines abgebrochenen Updates entfernt ($MARKE)."
+    else
+        echo "<ERROR> Upgrade-Marke $MARKE liess sich nicht entfernen."
+        rc=1
+    fi
+fi
+
 # ---- 3. Nachzaehlen -----------------------------------------------
 # Gemeldet wird, was gemessen ist - nicht, was beabsichtigt war.
 REST=0
 [ -f "$SICH" ] && REST=$((REST + 1))
+[ -f "$SICH.alt" ] && REST=$((REST + 1))
+for S in "$BASE/config/plugins/$PDIR".config.php.kaputt.*; do
+    [ -f "$S" ] && REST=$((REST + 1))
+done
+[ -f "$MARKE" ] && REST=$((REST + 1))
 for R in "$RETTUNG" "$RETTUNG.neu" "$RETTUNG.alt"; do
     [ -d "$R" ] && REST=$((REST + 1))
 done
@@ -138,7 +173,8 @@ echo ""
 echo "<INFO> Die zurueckbehaltenen MQTT-Themen der eingerichteten Fahrzeuge sind oben"
 echo "<INFO> geleert und beim Broker nachgelesen worden (Ergebnis in den Zeilen MQTT)."
 echo "<INFO> Themen eines Fahrzeugs, das schon vorher aus den Einstellungen entfernt"
-echo "<INFO> wurde, kennt das Plugin nicht mehr; sie lassen sich unter"
-echo "<INFO> LoxBerry -> System -> MQTT Gateway loeschen."
+echo "<INFO> oder umbenannt wurde, kennt die Deinstallation nicht mehr. Seit 2.1.13 raeumt"
+echo "<INFO> das Speichern der Einstellungen sie beim Umbenennen oder Entfernen ab; aeltere"
+echo "<INFO> Reste lassen sich unter LoxBerry -> System -> MQTT Gateway loeschen."
 
 exit $rc

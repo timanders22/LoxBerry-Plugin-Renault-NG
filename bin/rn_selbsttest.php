@@ -167,11 +167,14 @@ pruefe('Retain: status/ts (Lebenszeichen)',  rn_thema_retained('status/ts'), fal
 pruefe('Retain: status/zaehler',             rn_thema_retained('status/zaehler'), false);
 
 /* 3b. Der Merker einer einzelnen Sendung (seit 2.1.9). Eine leere Nutzlast
- * mit Retain loescht das Thema im Broker - ein leerer Zustand geht deshalb
- * ohne Retain hinaus. Die Null als Wert ist NICHT leer (ok=0, Kabel=0). */
+ * mit Retain loescht das Thema im Broker - leer geht deshalb nie etwas
+ * retained hinaus. Seit 2.1.13 (Befund M2) geht ein leerer Messwert gar
+ * nicht hinaus und ein leerer Zustand als "-" retained (rn_mqtt_nutzlast());
+ * die zwei Zeilen darunter pruefen das statt des frueheren Merkers fuer
+ * einen leeren Zustand. Die Null als Wert ist NICHT leer (ok=0, Kabel=0). */
 pruefe('Merker: CableStatus mit Wert',       rn_retain_merker('CableStatus', '1'), 1);
-pruefe('Merker: CableStatus leer',           rn_retain_merker('CableStatus', ''), 0);
-pruefe('Merker: Mileage leer',               rn_retain_merker('Mileage', ''), 0);
+pruefe('Nutzlast: CableStatus leer -> "-"',  rn_mqtt_nutzlast('CableStatus', ''), '-');
+pruefe('Nutzlast: BattSOC leer -> nichts',   rn_mqtt_nutzlast('BattSOC', ''), null);
 pruefe('Merker: ok mit 1 nicht retained',    rn_retain_merker('ok', 1), 0);
 pruefe('Merker: ok mit "0" nicht retained',  rn_retain_merker('ok', '0'), 0);
 pruefe('Merker: Kabel mit 0 bleibt retained', rn_retain_merker('CableStatus', 0), 1);

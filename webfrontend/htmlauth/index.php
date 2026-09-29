@@ -31,6 +31,9 @@ rn_umzug();
 $rn_p       = rn_paths();
 $rn_meldung = '';
 $rn_fehler  = array();
+/* Was versucht und NICHT gelungen ist (Regeln/04: "Der Vorgang ist nicht
+ * gelungen"), getrennt von "Nicht gespeichert" (Befund U9). */
+$rn_misslungen = array();
 
 /* ---------------------------------------------------------------- *
  * DIE REITERLISTE STEHT GENAU EINMAL
@@ -86,6 +89,21 @@ if ($rn_cfg['aktionstoken'] === '') {
     }
 }
 
+/* Die Einmalmeldung des vorigen POST (Befund U1, PRG): nur beim GET gelesen,
+ * dabei geloescht, aelter als 120 s verworfen (rn_einmal_lesen()). */
+$rn_test_titel = '';
+$rn_test_text  = '';
+if ((isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET') !== 'POST') {
+    $rn_einmal = rn_einmal_lesen();
+    if ($rn_einmal !== null) {
+        if ($rn_einmal['meldung'] !== '') { $rn_meldung = $rn_einmal['meldung']; }
+        $rn_fehler     = array_merge($rn_fehler, $rn_einmal['fehler']);
+        $rn_misslungen = array_merge($rn_misslungen, $rn_einmal['misslungen']);
+        $rn_test_titel = $rn_einmal['test_titel'];
+        $rn_test_text  = $rn_einmal['test_text'];
+    }
+}
+
 /* ---------------------------------------------------------------- *
  * DER WACHPOSTEN - vor jedem Handler, genau einmal
  *
@@ -101,7 +119,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !rn_formtoken_ok($rn_cfg)) {
     $_POST = ($rn_behalten !== '') ? array('activetab' => $rn_behalten) : array();
     $rn_fehler[] = rn_t('TEXT.F_FORMTOKEN');
 }
-$rn_ftoken = rn_formtoken($rn_cfg);
+/* Das Formularmerkmal entsteht erst NACH allen Handlern, unmittelbar vor
+ * lbheader() (Befund U2): bis 2.1.12 wurde es hier aus dem ALTEN Token
+ * gebildet, und nach "Neues Token" oder einem Zurueckspielen wies der
+ * Wachposten den naechsten Klick als fremdes Formular ab. */
 
 /* Die Reiterwahl steht ABSICHTLICH nach dem Wachposten: sonst uebernaehme sie
  * das activetab eines abgewiesenen POST, und ein fremdes Formular koennte
@@ -135,14 +156,17 @@ if (isset($_POST['token_neu'])) {
 
 if (isset($_POST['speichern'])) {
     $neu = $rn_cfg;
+    /* Die Fahrzeugnamen VOR dem Speichern - sie sind Teil der MQTT-Themen
+     * (Befund M3, unten nach dem Schreiben). */
+    $rn_namen_vorher = array();
+    foreach (rn_fahrzeuge($rn_cfg) as $rn_f0) { $rn_namen_vorher[] = $rn_f0['name']; }
 
     /* Einfache Textfelder. Leere Felder loeschen nichts, wo der Verlust
      * wehtut - das gilt hier fuer das Passwort. */
     foreach (array('username', 'country', 'save_in_db', 'steuerung_ein',
                    'cron_ncs', 'cron_acs', 'ac_temp', 'bl_schwelle',
                    'mail_bl', 'exec_bl', 'cmon_bl', 'mail_csf', 'exec_csf',
-                   'soc_min', 'soc_target',
-                   'weather_api_key', 'abrp_token', 'abrp_model') as $f) {
+                   'soc_min', 'soc_target', 'abrp_model') as $f) {
         if (isset($_POST[$f])) {
             // Nur Steuerzeichen und Anfuehrungszeichen entfernen - ein
             // preg_replace mit Positivliste zerstoert eingefuegte Werte.
@@ -157,8 +181,26 @@ if (isset($_POST['speichern'])) {
             }
         }
     }
-    if (isset($_POST['password']) && $_POST['password'] !== '') {
-        $neu['password'] = (string) $_POST['password'];
+    /* Kennwort und die beiden Schluessel: ein leeres Feld laesst den Wert
+     * stehen, geloescht wird ueber den Haken daneben (Regeln/04; Befunde U5
+     * und U6). Bis 2.1.12 liess sich das Kennwort gar nicht entfernen, und
+     * weather_api_key und abrp_token standen als Klartext im Formular. Die
+     * Schluessel werden wie bisher von Steuerzeichen und Anfuehrungszeichen
+     * befreit; das Kennwort bleibt unbeschnitten. */
+    foreach (array('password' => 'TEXT.L_PASSWORT', 'weather_api_key' => 'TEXT.L_WETTER',
+                   'abrp_token' => 'TEXT.L_ABRP_TOKEN') as $f => $rn_lbl) {
+        $rn_roh = (isset($_POST[$f]) && is_string($_POST[$f])) ? $_POST[$f] : '';
+        if ($f !== 'password') {
+            $rn_roh = trim(preg_replace('/[\x00-\x1F\x7F"\']/', '', $rn_roh));
+        }
+        $rn_weg = !empty($_POST[$f . '_loeschen']);
+        if ($rn_weg && $rn_roh !== '') {
+            $rn_fehler[] = sprintf(rn_t('TEXT.F_LOESCHEN_WIDERSPRUCH'), rn_e(rn_t($rn_lbl)));
+        } elseif ($rn_weg) {
+            $neu[$f] = '';
+        } elseif ($rn_roh !== '') {
+            $neu[$f] = $rn_roh;
+        }
     }
 
     /* ---- Pruefungen. Beanstandungen werden GESAMMELT, nicht
@@ -233,6 +275,27 @@ if (isset($_POST['speichern'])) {
     if ($neu['password'] !== '' && $neu['username'] === '') {
         $rn_fehler[] = rn_t('TEXT.F_BENUTZER_FEHLT');
     }
+    /* exec_bl und exec_csf wie beim Zurueckspielen und beim Aufruf pruefen
+     * (Befund U3, rn_wert_pruefen()). Bis 2.1.12 nahm das Formular "a&b" an;
+     * der Abruf fuehrte den Befehl nie aus, und die eigene Sicherung liess
+     * sich danach nicht mehr zurueckspielen. */
+    foreach (array('exec_bl' => 'TEXT.L_EXEC_BL', 'exec_csf' => 'TEXT.L_EXEC_CSF') as $f => $rn_lbl) {
+        if (!rn_wert_pruefen($f, $neu[$f])) {
+            $rn_fehler[] = sprintf(rn_t('TEXT.F_EXEC'), rn_e(rn_t($rn_lbl)));
+        }
+    }
+    /* Sicherheitsnetz: jeder in DIESEM Speichern geaenderte Wert muss die
+     * Pruefung bestehen, die beim Zurueckspielen gilt - sonst waere die
+     * eigene Sicherung nicht zurueckspielbar. Unveraenderte Altwerte
+     * blockieren das Speichern nicht. */
+    if (!$rn_fehler) {
+        foreach (rn_vorgaben() as $k => $rn_v0) {
+            if ((string) $neu[$k] === (string) $rn_cfg[$k]) { continue; }
+            if (!rn_wert_taugt($neu[$k]) || !rn_wert_pruefen($k, (string) $neu[$k])) {
+                $rn_fehler[] = sprintf(rn_t('TEXT.F_WERT_ALLG'), rn_e($k));
+            }
+        }
+    }
 
     if (!$rn_fehler) {
         if (rn_config_write($neu)) {
@@ -246,6 +309,33 @@ if (isset($_POST['speichern'])) {
             }
             $rn_cfg = rn_config_read();
             $rn_meldung = rn_t('TEXT.M_GESPEICHERT');
+            /* Umbenannt oder entfernt (Befund M3): der Fahrzeugname ist der
+             * Themenpraefix. Bis 2.1.12 blieben die Zustaende unter dem alten
+             * Namen fuer immer retained im Broker, und das Gateway lieferte sie
+             * nach jedem Neustart wieder an Loxone. Je weggefallenem Namen:
+             * leeren, beim Broker nachlesen, das Ergebnis in die Meldung. */
+            $rn_namen_nachher = array();
+            foreach (rn_fahrzeuge($rn_cfg) as $rn_f0) { $rn_namen_nachher[] = $rn_f0['name']; }
+            foreach (array_values(array_diff($rn_namen_vorher, $rn_namen_nachher)) as $rn_altname) {
+                $rn_wo = 'Renault/' . $rn_altname . '/';
+                $rn_l = rn_mqtt_name_leeren($rn_altname);
+                if ($rn_l['lage'] === 'ok') {
+                    $rn_meldung .= '<br>' . ($rn_l['geloescht'] > 0
+                        ? sprintf(rn_t('TEXT.M_MQTT_ALTNAME_GELOESCHT'), $rn_l['geloescht'], rn_e($rn_wo))
+                        : sprintf(rn_t('TEXT.M_MQTT_ALTNAME_LEER'), rn_e($rn_wo)));
+                    renault_log('INFO', 'MQTT: Fahrzeug umbenannt oder entfernt - unter ' . $rn_wo
+                        . ' ' . $rn_l['geloescht'] . ' zurueckbehaltene Themen geloescht, vom Broker bestaetigt.');
+                } elseif ($rn_l['lage'] === 'offen') {
+                    $rn_misslungen[] = sprintf(rn_t('TEXT.F_MQTT_ALTNAME_OFFEN'), rn_e($rn_wo),
+                        count($rn_l['offen']), rn_e(implode(', ', array_slice($rn_l['offen'], 0, 5))));
+                    renault_log('WARN', 'MQTT: unter ' . $rn_wo . ' stehen nach dem Loeschen noch '
+                        . count($rn_l['offen']) . ' zurueckbehaltene Themen.');
+                } else {
+                    $rn_misslungen[] = sprintf(rn_t('TEXT.F_MQTT_ALTNAME_BROKER'), rn_e($rn_wo));
+                    renault_log('WARN', 'MQTT: Fahrzeug umbenannt oder entfernt - der Broker war nicht '
+                        . 'zu befragen, die Themen unter ' . $rn_wo . ' sind NICHT geloescht.');
+                }
+            }
         } else {
             $rn_fehler[] = rn_t('TEXT.F_SCHREIBEN');
         }
@@ -253,25 +343,36 @@ if (isset($_POST['speichern'])) {
     $rn_tab = 'tab-settings';
 }
 
+/* Log leeren und Zwischenspeicher verwerfen: die Rueckgabe von unlink()
+ * zaehlt (Befund U9). Bis 2.1.12 kam die Erfolgsmeldung bedingungslos, auch
+ * wenn eine Datei stehen blieb (etwa eine, die root gehoert). */
 if (isset($_POST['log_leeren'])) {
+    $rn_rest = array();
     foreach (array($rn_p['log'], $rn_p['log'] . '.1', $rn_p['log'] . '.wdh') as $rn_d) {
-        if (is_file($rn_d)) { @unlink($rn_d); }
+        if (is_file($rn_d) && !@unlink($rn_d)) { $rn_rest[] = basename($rn_d); }
     }
-    $rn_meldung = rn_t('TEXT.M_LOG_LEER');
+    if ($rn_rest) {
+        $rn_misslungen[] = sprintf(rn_t('TEXT.F_LOG_LEEREN'), rn_e(implode(', ', $rn_rest)));
+    } else {
+        $rn_meldung = rn_t('TEXT.M_LOG_LEER');
+    }
     $rn_tab = 'tab-log';
 }
 
 if (isset($_POST['cache_leeren'])) {
+    $rn_rest = array();
     foreach (rn_fahrzeuge($rn_cfg) as $rn_f) {
-        if (is_file($rn_f['session'])) { @unlink($rn_f['session']); }
+        if (is_file($rn_f['session']) && !@unlink($rn_f['session'])) { $rn_rest[] = basename($rn_f['session']); }
     }
-    if (is_file($rn_p['anmeldung'])) { @unlink($rn_p['anmeldung']); }
-    $rn_meldung = rn_t('TEXT.M_CACHE_LEER');
+    if (is_file($rn_p['anmeldung']) && !@unlink($rn_p['anmeldung'])) { $rn_rest[] = basename($rn_p['anmeldung']); }
+    if ($rn_rest) {
+        $rn_misslungen[] = sprintf(rn_t('TEXT.F_CACHE_LEEREN'), rn_e(implode(', ', $rn_rest)));
+    } else {
+        $rn_meldung = rn_t('TEXT.M_CACHE_LEER');
+    }
     $rn_tab = 'tab-test';
 }
 
-$rn_test_titel = '';
-$rn_test_text  = '';
 if (isset($_POST['test'])) {
     require_once __DIR__ . '/rn_test.php';
     list($rn_test_titel, $rn_test_text) = rn_test_ausfuehren((string) $_POST['test'], $rn_cfg);
@@ -359,13 +460,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rn_sichern'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rn_zurueck'])) {
     if (!isset($_FILES['rn_sicherung']) || !is_array($_FILES['rn_sicherung'])
         || !isset($_FILES['rn_sicherung']['tmp_name'])
+        /* is_string() zuerst (Befund U8): ein Feld rn_sicherung[] liefert hier
+         * ein Feld, und is_uploaded_file() warf darauf unter PHP 8 einen
+         * TypeError - HTTP 500 mit leerer Seite. */
+        || !is_string($_FILES['rn_sicherung']['tmp_name'])
         || !@is_uploaded_file($_FILES['rn_sicherung']['tmp_name'])) {
         $rn_fehler[] = rn_t('TEXT.SICH_KEINE_DATEI');
     // 64 kB wie im Hausmuster; die echte Datei ist rund ein Kilobyte gross.
     } elseif ((int) $_FILES['rn_sicherung']['size'] > 65536) {
         $rn_fehler[] = rn_t('TEXT.SICH_ZU_GROSS');
     } else {
-        list($rn_neu, $rn_mangel, $rn_n) = rn_sicherung_lesen(
+        list($rn_neu, $rn_mangel, $rn_n, $rn_hinweise) = rn_sicherung_lesen(
             (string) @file_get_contents($_FILES['rn_sicherung']['tmp_name']));
         if ($rn_neu === null) {
             /* ALLE Beanstandungen, nicht nur die erste - und geaendert
@@ -384,13 +489,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rn_zurueck'])) {
                 if (is_file($rn_f2['session'])) { @unlink($rn_f2['session']); }
             }
             if (is_file($rn_p['anmeldung'])) { @unlink($rn_p['anmeldung']); }
-            $rn_meldung = sprintf(rn_t('TEXT.SICH_UEBERNOMMEN'), $rn_n) . ' '
-                        . sprintf(rn_t('TEXT.SICH_DIENST'),
-                                  max(1, (int) $rn_neu['cron_ncs']));
-            renault_log('INFO', 'Sicherung zurueckgespielt: ' . $rn_n . ' Werte. '
-                . 'Zwischenspeicher und Anmeldung verworfen; der naechste Cron-Lauf '
-                . 'meldet sich mit den neuen Zugangsdaten an.');
             $rn_cfg = rn_config_read();
+            /* Erfolg erst nach dem Zuruecklesen (Befund U4). Bis 2.1.12 hiess
+             * es "zurueckgespielt", waehrend rn_config_read() im selben Aufruf
+             * eine Sicherung ohne Token aus der Zweitschrift "heilte" - der alte
+             * Stand stand wieder da, die zurueckgespielten Werte lagen als
+             * .kaputt daneben. */
+            $rn_anders = array();
+            foreach (rn_vorgaben() as $k => $rn_v0) {
+                if ((string) $rn_cfg[$k] !== (string) $rn_neu[$k]) { $rn_anders[] = $k; }
+            }
+            if ($rn_anders) {
+                $rn_misslungen[] = sprintf(rn_t('TEXT.SICH_NICHT_WIRKSAM'),
+                    rn_e(implode(', ', array_slice($rn_anders, 0, 8))));
+                renault_log('ERROR', 'Die zurueckgespielte Sicherung steht beim Zuruecklesen '
+                    . 'nicht da (abweichend: ' . implode(', ', $rn_anders) . ').');
+            } else {
+                $rn_meldung = sprintf(rn_t('TEXT.SICH_UEBERNOMMEN'), $rn_n) . ' '
+                            . ($rn_hinweise ? implode(' ', $rn_hinweise) . ' ' : '')
+                            . sprintf(rn_t('TEXT.SICH_DIENST'),
+                                      max(1, (int) $rn_neu['cron_ncs']));
+                renault_log('INFO', 'Sicherung zurueckgespielt: ' . $rn_n . ' Werte. '
+                    . 'Zwischenspeicher und Anmeldung verworfen; der naechste Cron-Lauf '
+                    . 'meldet sich mit den neuen Zugangsdaten an.');
+            }
         } else {
             $rn_fehler[] = rn_t('TEXT.SICH_SCHREIBFEHLER');
             renault_log('ERROR', 'Die zurueckgespielte Sicherung liess sich nicht '
@@ -399,6 +521,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rn_zurueck'])) {
     }
 }
 
+/* ==================================================================
+ * PRG: JEDER POST ENDET MIT EINER UMLEITUNG (Befund U1, Regeln/04)
+ * ==================================================================
+ * Bis 2.1.12 antwortete jeder POST mit HTTP 200 und der fertigen Seite; F5
+ * wiederholte Speichern, Zurueckspielen und die Pruefknoepfe (mit php -S
+ * gemessen: sechs Handler, keine Location). Das Ergebnis reist jetzt als
+ * Einmalmeldung (rn_einmal_schreiben(), 0600, 120 s) zum folgenden GET -
+ * auch das eines POST, den der Wachposten abgewiesen hat. Die Downloads
+ * (Vorlage, Sicherung) sind oben schon mit exit hinaus. Laesst sich die
+ * Einmalmeldung nicht ablegen, wird wie bisher ohne Umleitung gezeigt: eine
+ * Meldung darf nicht verlorengehen. */
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (rn_einmal_schreiben($rn_meldung, $rn_fehler, $rn_misslungen,
+                            $rn_test_titel, $rn_test_text, $rn_cfg)) {
+        header('Location: index.php?form=' . rawurlencode(substr($rn_tab, 4)), true, 303);
+        exit;
+    }
+    renault_log('WARN', 'Die Einmalmeldung liess sich nicht ablegen - die Seite wird '
+        . 'ohne Umleitung gezeigt.');
+}
+
+/* Erst hier, nach ALLEN Handlern (Befund U2). */
+$rn_ftoken = rn_formtoken($rn_cfg);
 
 LBWeb::lbheader($template_title, $helplink, $helptemplate);
 
@@ -519,6 +664,11 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 <?php } elseif ($rn_meldung !== '') { ?>
 <div class="sm-hinweis"><?php echo $rn_meldung; ?></div>
 <?php } ?>
+<?php if ($rn_misslungen) { ?>
+<div class="sm-warnung"><b><?php echo rn_e(rn_t('TEXT.NICHT_GELUNGEN')); ?></b><ul>
+<?php foreach ($rn_misslungen as $f) { echo '<li>' . $f . '</li>'; } ?>
+</ul></div>
+<?php } ?>
 
 <!-- Reiterleiste: echte Verweise, sm-active vom SERVER, ausgeschrieben.
      Bis 1.4 standen hier <div> ohne Verweis, und sm-active vergab allein das
@@ -553,6 +703,7 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
   <label for="password"><?php echo rn_e(rn_t('TEXT.L_PASSWORT')); ?></label>
   <input data-role="none" type="password" id="password" name="password" value=""
          placeholder="<?php echo rn_e($rn_cfg['password'] !== '' ? rn_t('TEXT.P_GESPEICHERT') : rn_t('TEXT.P_NICHT_GESETZT')); ?>">
+  <p class="sm-hilfe"><label><input data-role="none" type="checkbox" name="password_loeschen" value="1" style="width:auto;margin:0 6px 0 0;vertical-align:middle"><?php echo rn_e(rn_t('TEXT.L_PASSWORT_LOESCHEN')); ?></label></p>
   <p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.H_PASSWORT')); ?></p>
 </div>
 <div class="sm-feld">
@@ -675,12 +826,21 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 <h2><?php echo rn_e(rn_t('TEXT.H_FREMDDIENSTE')); ?></h2>
 <div class="sm-feld">
   <label for="weather_api_key"><?php echo rn_e(rn_t('TEXT.L_WETTER')); ?></label>
-  <input data-role="none" type="text" id="weather_api_key" name="weather_api_key" value="<?php echo rn_e($rn_cfg['weather_api_key']); ?>">
-  <p class="sm-hilfe"><?php echo rn_t('TEXT.H_WETTER'); ?></p>
+  <?php /* Wie das Kennwort (Befund U6): nie mit Wert in der Seite, nur
+           "gespeichert / noch nicht gesetzt"; leer heisst unveraendert,
+           geloescht wird ueber den Haken. Bis 2.1.12 standen beide Schluessel
+           als Klartext im Formular. */ ?>
+  <input data-role="none" type="password" id="weather_api_key" name="weather_api_key" value="" autocomplete="new-password"
+         placeholder="<?php echo rn_e($rn_cfg['weather_api_key'] !== '' ? rn_t('TEXT.P_GESPEICHERT') : rn_t('TEXT.P_NICHT_GESETZT')); ?>">
+  <p class="sm-hilfe"><label><input data-role="none" type="checkbox" name="weather_api_key_loeschen" value="1" style="width:auto;margin:0 6px 0 0;vertical-align:middle"><?php echo rn_e(rn_t('TEXT.L_SCHLUESSEL_LOESCHEN')); ?></label></p>
+  <p class="sm-hilfe"><?php echo rn_t('TEXT.H_WETTER'); ?> <?php echo rn_e(rn_t('TEXT.H_GEHEIM')); ?></p>
 </div>
 <div class="sm-feld">
   <label for="abrp_token"><?php echo rn_e(rn_t('TEXT.L_ABRP_TOKEN')); ?></label>
-  <input data-role="none" type="text" id="abrp_token" name="abrp_token" value="<?php echo rn_e($rn_cfg['abrp_token']); ?>">
+  <input data-role="none" type="password" id="abrp_token" name="abrp_token" value="" autocomplete="new-password"
+         placeholder="<?php echo rn_e($rn_cfg['abrp_token'] !== '' ? rn_t('TEXT.P_GESPEICHERT') : rn_t('TEXT.P_NICHT_GESETZT')); ?>">
+  <p class="sm-hilfe"><label><input data-role="none" type="checkbox" name="abrp_token_loeschen" value="1" style="width:auto;margin:0 6px 0 0;vertical-align:middle"><?php echo rn_e(rn_t('TEXT.L_SCHLUESSEL_LOESCHEN')); ?></label></p>
+  <p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.H_GEHEIM')); ?></p>
 </div>
 <div class="sm-feld">
   <label for="abrp_model"><?php echo rn_e(rn_t('TEXT.L_ABRP_MODEL')); ?></label>
@@ -820,7 +980,11 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 <?php if ($rn_cfg['steuerung_ein'] !== 'Y') { ?>
 <div class="sm-warnung"><?php echo rn_t('TEXT.H_STEUERUNG_AUS'); ?></div>
 <?php } ?>
-<p class="sm-hilfe"><?php echo rn_t('TEXT.SCHRITT4_TEXT'); ?></p>
+<?php /* Der Rechnername aus HTTP_HOST als Vorschlag, mit Pruefhinweis (Befund
+       U10); bis 2.1.12 stand hier nur der Platzhalter http://<LoxBerry>. */
+      $rn_host = rn_rechnername(); ?>
+<p class="sm-hilfe"><?php echo sprintf(rn_t('TEXT.SCHRITT4_TEXT'), rn_e('http://' . $rn_host)); ?></p>
+<p class="sm-hilfe"><?php echo sprintf(rn_t('TEXT.H_ADRESSE_PRUEFEN'), rn_e($rn_host)); ?></p>
 <table class="sm-tbl">
 <tr><th style="width:30%"><?php echo rn_e(rn_t('TEXT.S_ZWECK')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_BEFEHL_EIN')); ?></th></tr>
 <?php foreach ($rn_autos as $rn_f) { foreach (rn_befehle() as $rn_a => $rn_ang) { ?>
@@ -828,7 +992,7 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
     <td class="sm-mono"><?php echo rn_e(rn_aktionsadresse($rn_cfg, $rn_a, $rn_f['nr'])); ?></td></tr>
 <?php } } ?>
 <tr><td><?php echo rn_e(rn_t('TEXT.S_SELBSTTEST')); ?></td>
-    <td class="sm-mono"><?php echo rn_e(rn_selbsttestadresse($rn_cfg)); ?></td></tr>
+    <td class="sm-mono"><?php echo rn_e('http://' . $rn_host . rn_selbsttestadresse($rn_cfg)); ?></td></tr>
 </table>
 <p class="sm-hilfe"><?php echo rn_t('TEXT.SCHRITT4_ENDPUNKT'); ?></p>
 <div class="sm-legende">
@@ -906,10 +1070,12 @@ require_once __DIR__ . '/rn_test.php';
  *
  *   true   Haken
  *   false  Kreuz
- *   null   Punkt - nicht feststellbar */
+ *   null   Punkt - nicht feststellbar
+ *   'info' Auskunft - hier wird nichts geprueft (seit 2.1.13, Befund U11) */
 $rn_striche = 0;
 foreach (rn_test_selbstpruefung($rn_cfg, $rn_broker, $rn_tab === 'tab-test') as $rn_z) {
-    if ($rn_z[1] === null) { $rn_zeichen = '&#9679; '; $rn_striche++; }
+    if ($rn_z[1] === 'info') { $rn_zeichen = '&#8505; '; }
+    elseif ($rn_z[1] === null) { $rn_zeichen = '&#9679; '; $rn_striche++; }
     elseif ($rn_z[1])      { $rn_zeichen = '&#10004; '; }
     else                   { $rn_zeichen = '&#10008; '; }
     echo '<tr><td>' . rn_e($rn_z[0]) . '</td><td>'

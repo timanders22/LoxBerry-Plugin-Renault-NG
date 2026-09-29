@@ -327,7 +327,20 @@ try {
  * Handlung. Loxone wertet nur den Code aus. */
 $rn_code = (isset($rn_http_status) && (int) $rn_http_status >= 100
             && (int) $rn_http_status < 600) ? (int) $rn_http_status : 200;
+/* Die Protokollzeile sagt, was mit dem BEFEHL geschah, nicht mit dem Abruf
+ * danach (Befund C2). Bis 2.1.12 hing "ausgefuehrt" am Statuscode, und der
+ * hing am Abruf: ein gescheiterter Befehl stand als "ausgefuehrt" im
+ * Protokoll, ein angenommener als "NICHT ausgefuehrt". Ohne Befehl
+ * (aktion=abruf) bleibt es wie bisher. */
+$rn_befehl = isset($rn_befehl_ok) ? $rn_befehl_ok : null;
+$rn_abruf_fehl = !empty($rn_abruf_gescheitert);
+if ($rn_befehl === true) {
+    $rn_was = $rn_abruf_fehl ? ': Befehl ausgefuehrt, Abruf danach gescheitert' : ' ausgefuehrt';
+} elseif ($rn_befehl === false) {
+    $rn_was = ' NICHT ausgefuehrt';
+} else {
+    $rn_was = ($rn_code === 200) ? ' ausgefuehrt' : ' NICHT ausgefuehrt';
+}
 rn_ende($rn_code, $ausgabe !== '' ? $ausgabe : 'OK',
-        $rn_code === 200 ? 'INFO' : 'ERROR',
-        'Aktion ' . $aktion . ' fuer Fahrzeug ' . $fahrzeug
-        . ($rn_code === 200 ? ' ausgefuehrt' : ' NICHT ausgefuehrt'));
+        $rn_code !== 200 ? 'ERROR' : ($rn_abruf_fehl ? 'WARN' : 'INFO'),
+        'Aktion ' . $aktion . ' fuer Fahrzeug ' . $fahrzeug . $rn_was);

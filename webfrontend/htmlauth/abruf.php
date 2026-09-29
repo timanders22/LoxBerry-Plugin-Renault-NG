@@ -359,6 +359,7 @@ $rn_land  = $rn_cfg['country'];
  * ================================================================== */
 $rn_ausgabe = array();
 $rn_befehl_ok = null;
+$rn_abruf_gescheitert = false;   // fuer die Protokollzeile des Endpunkts (Befund C2)
 
 if ($rn_aktion !== '' && $rn_aktion !== 'abruf') {
     $rn_ziel = rn_fahrzeug($rn_fahrzeugnr, $rn_cfg);
@@ -468,6 +469,13 @@ if ($rn_aktion !== '' && $rn_aktion !== 'abruf') {
         'Befehl ' . $rn_aktion . ' an ' . $rn_ziel['name'] . ': HTTP ' . $rn_code
         . ($rn_befehl_ok ? '' : ' - der Befehl wurde NICHT ausgefuehrt.'));
     $rn_ausgabe[] = strtoupper($rn_aktion) . ';OK=' . ($rn_befehl_ok ? '1' : '0') . ';HTTP=' . $rn_code;
+    /* Bei einem Befehl entscheidet das Ergebnis des BEFEHLS ueber den
+     * HTTP-Code (Befund C2). Bis 2.1.12 setzte ihn allein der Abruf danach:
+     * ein gescheiterter Befehl kam als 200 bei Loxone an, wenn der Abruf
+     * gelang oder die Minutenbremse ihn uebersprang - und ein angenommener
+     * als 502, wenn nur der Abruf danach scheiterte (in WSL gemessen, Faelle
+     * S1 bis S5). */
+    if (!$rn_befehl_ok) { $rn_http_status = 502; }
 }
 
 /* ==================================================================
@@ -546,6 +554,12 @@ foreach ($rn_mit_vin as $rn_f) {
     $rn_vin  = $rn_f['vin'];
     $rn_ph   = (string) $rn_f['zoeph'];
     $rn_name = $rn_f['name'];
+    /* EINE Meldung fuer jeden Fehlschlag beim Schreiben des Zwischenspeichers,
+     * damit rn_melden_stuendlich() sie als dieselbe erkennt (Befund C3). */
+    $rn_sess_fehl = 'Der Zwischenspeicher ' . $rn_f['session'] . ' laesst sich nicht '
+        . 'schreiben (Rechte, freier Platz). Solange das so ist, werden die Meldungen '
+        . '(Mail, exec_bl, exec_csf, Ladeplan) NICHT ausgeloest - sonst gingen sie bei '
+        . 'jedem Abruf erneut hinaus -, und die Abrufbremse greift nicht.';
 
     /* Zwischenspeicher lesen. Feldbelegung:
      *  0-2 frei (bis 2.0.6 Anmeldung, jetzt in der Datei "anmeldung")
@@ -598,6 +612,16 @@ foreach ($rn_mit_vin as $rn_f) {
 
     $rn_s[4] = $rn_jetzt;
     $rn_erfolg = false;
+    $rn_cm_senden = true;        // ChargeMode in diesem Lauf senden? (Befund M4)
+    /* Innen- und Aussentemperatur nur aus der Antwort DIESES Laufs (Befund
+     * M5). Bis 2.1.12 blieben sie aus dem Zwischenspeicher stehen, wenn
+     * hvac-status scheiterte oder das Feld fehlte, und gingen bei jedem
+     * Abruf als frischer Messwert hinaus (in WSL gemessen, Fall H, Lauf 2:
+     * InTemp=21, OutTemp=12 aus dem Vorlauf). Fehlt der Wert, wird nicht
+     * gesendet (rn_mqtt_nutzlast()). */
+    $rn_s[27] = '';
+    $rn_s[28] = '';
+    $rn_wetter_temp = '';        // Aussentemperatur des Wetterdienstes aus DIESEM Lauf
 
     /* ---- Batterie- und Ladestatus ---- */
     list($rn_code, $rn_d, $rn_rohantwort) = rn_get(
@@ -676,8 +700,19 @@ foreach ($rn_mit_vin as $rn_f) {
 
             list($rn_c, $rn_dd) = rn_get(rn_kca($rn_konto, $rn_vin, 'charge-mode', $rn_land),
                 $kamereon_api, $rn_jwt);
-            $rn_s[24] = isset($rn_dd['data']['attributes']['chargeMode'])
-                ? $rn_dd['data']['attributes']['chargeMode'] : 'n/a';
+            /* Scheitert der Nebenabruf, bleibt der letzte Stand stehen, und
+             * ChargeMode geht in diesem Lauf nicht hinaus (Befund M4). Bis
+             * 2.1.12 wurde daraus "n/a", retained - ein einzelner Fehler
+             * ueberschrieb den gemessenen Zustand im Broker (in WSL gemessen,
+             * Fall C). "n/a" nur, wenn das Fahrzeug den Endpunkt nachweislich
+             * nicht kennt. */
+            if (isset($rn_dd['data']['attributes']['chargeMode'])) {
+                $rn_s[24] = $rn_dd['data']['attributes']['chargeMode'];
+            } elseif (rn_endpunkt_unbekannt($rn_c)) {
+                $rn_s[24] = 'n/a';
+            } else {
+                $rn_cm_senden = false;
+            }
 
             if ($rn_ph !== '1') {
                 list($rn_c, $rn_dd) = rn_get(rn_kca($rn_konto, $rn_vin, 'location', $rn_land),
@@ -747,7 +782,10 @@ foreach ($rn_mit_vin as $rn_f) {
                         . 'ohnehin die Fahrzeug-Schnittstelle selbst (Thema OutTemp).');
                 } else {
                     $rn_wd = json_decode($rn_wr, TRUE);
-                    if (isset($rn_wd['current']['temp'])) { $rn_s[22] = $rn_wd['current']['temp']; }
+                    if (isset($rn_wd['current']['temp'])) {
+                        $rn_s[22] = $rn_wd['current']['temp'];
+                        $rn_wetter_temp = $rn_s[22];
+                    }
                     if (isset($rn_wd['current']['weather'][0]['description'])) {
                         $rn_s[23] = $rn_wd['current']['weather'][0]['description'];
                     }
@@ -764,7 +802,14 @@ foreach ($rn_mit_vin as $rn_f) {
      * erste Wert gelesen und die Aussentemperatur stattdessen bei einem
      * Wetterdienst geholt - ein zweiter Dienst mit eigenem Schluessel fuer
      * einen Wert, den das Fahrzeug selbst kennt. */
-    $rn_hvac = 'n/a';
+    /* null = in diesem Lauf nicht senden; der retained Stand im Broker bleibt
+     * der zuletzt gemessene (Befund M4). Bis 2.1.12 war 'n/a' die Vorgabe:
+     * ein einzelner misslungener hvac-status-Abruf ueberschrieb den Zustand
+     * im Broker, und HvAcStatus ("n/a") und HvAcStatusBin (1) widersprachen
+     * sich (in WSL gemessen, Fall H). "n/a" gibt es nur noch, wenn das
+     * Fahrzeug den Endpunkt nachweislich nicht kennt - dann fuer Text UND
+     * Zahl. */
+    $rn_hvac = null;
     if ($rn_erfolg) {
         list($rn_c, $rn_dd) = rn_get(rn_kca($rn_konto, $rn_vin, 'hvac-status', $rn_land),
             $kamereon_api, $rn_jwt);
@@ -773,6 +818,8 @@ foreach ($rn_mit_vin as $rn_f) {
             if (isset($rn_ha['hvacStatus'])) { $rn_hvac = $rn_ha['hvacStatus']; }
             if (isset($rn_ha['internalTemperature'])) { $rn_s[27] = $rn_ha['internalTemperature']; }
             if (isset($rn_ha['externalTemperature'])) { $rn_s[28] = $rn_ha['externalTemperature']; }
+        } elseif (rn_endpunkt_unbekannt($rn_c)) {
+            $rn_hvac = 'n/a';
         }
     }
 
@@ -819,19 +866,28 @@ foreach ($rn_mit_vin as $rn_f) {
                      . rn_t('MELDUNG.RESTLADEZEIT') . ': ' . $rn_rest . ' ' . rn_t('MELDUNG.MINUTEN') . "\n"
                      . rn_t('MELDUNG.REICHWEITE') . ': ' . $rn_s[14] . ' km' . "\n"
                      . rn_t('MELDUNG.STATUSUPDATE') . ': ' . $rn_s[8] . ' ' . $rn_s[9];
-            if ($rn_cfg['mail_bl'] === 'Y') { @mail($rn_cfg['username'], $rn_name, $rn_text); }
-            if ($rn_cfg['cmon_bl'] === 'Y') {
-                list($rn_c) = rn_post(rn_kca($rn_konto, $rn_vin, 'actions/charge-mode', $rn_land),
-                    $kamereon_api, $rn_jwt,
-                    '{"data":{"type":"ChargeMode","attributes":{"action":"schedule_mode"}}}',
-                    'Ladeplan bei erreichtem Akkustand (charge-mode)');
-            }
-            /* Gepruefter Aufruf, siehe rn_hook_ausfuehren(): der Befehl ist
-             * eine bewusste Eingabe des Betreibers - das heisst aber nicht,
-             * dass ein Semikolon darin harmlos waere. */
-            rn_hook_ausfuehren($rn_cfg['exec_bl'], $rn_text, 'exec_bl');
+            /* Erst den Merker "gesendet" festhalten, dann ausloesen (Befund C3).
+             * Laesst er sich nicht schreiben, wird in diesem Lauf NICHTS
+             * ausgeloest: der naechste Lauf wuesste nicht, dass schon gemeldet
+             * wurde, und jeder weitere loeste erneut aus. */
             $rn_s[5] = 'Y';
-            renault_log('INFO', 'Akkustand ' . $rn_schwelle . ' % erreicht (' . $rn_name . ') - Meldung ausgeloest.');
+            if (!rn_session_schreiben($rn_f['session'], $rn_s)) {
+                $rn_s[5] = 'N';
+                rn_melden_stuendlich('ERROR', $rn_sess_fehl);
+            } else {
+                if ($rn_cfg['mail_bl'] === 'Y') { @mail($rn_cfg['username'], $rn_name, $rn_text); }
+                if ($rn_cfg['cmon_bl'] === 'Y') {
+                    list($rn_c) = rn_post(rn_kca($rn_konto, $rn_vin, 'actions/charge-mode', $rn_land),
+                        $kamereon_api, $rn_jwt,
+                        '{"data":{"type":"ChargeMode","attributes":{"action":"schedule_mode"}}}',
+                        'Ladeplan bei erreichtem Akkustand (charge-mode)');
+                }
+                /* Gepruefter Aufruf, siehe rn_hook_ausfuehren(): der Befehl ist
+                 * eine bewusste Eingabe des Betreibers - das heisst aber nicht,
+                 * dass ein Semikolon darin harmlos waere. */
+                rn_hook_ausfuehren($rn_cfg['exec_bl'], $rn_text, 'exec_bl');
+                renault_log('INFO', 'Akkustand ' . $rn_schwelle . ' % erreicht (' . $rn_name . ') - Meldung ausgeloest.');
+            }
         } elseif ($rn_s[5] === 'Y' && $rn_s[10] != 1) {
             $rn_s[5] = 'N';
         }
@@ -842,10 +898,17 @@ foreach ($rn_mit_vin as $rn_f) {
                      . rn_t('MELDUNG.AKKUSTAND') . ': ' . $rn_s[12] . ' %' . "\n"
                      . rn_t('MELDUNG.REICHWEITE') . ': ' . $rn_s[14] . ' km' . "\n"
                      . rn_t('MELDUNG.STATUSUPDATE') . ': ' . $rn_s[8] . ' ' . $rn_s[9];
-            if ($rn_cfg['mail_csf'] === 'Y') { @mail($rn_cfg['username'], $rn_name, $rn_text); }
-            // Bis 1.4 stand hier $exec_bl, obwohl die Bedingung $exec_csf prueft.
-            rn_hook_ausfuehren($rn_cfg['exec_csf'], $rn_text, 'exec_csf');
-            renault_log('INFO', 'Ladung beendet (' . $rn_name . ') - Meldung ausgeloest.');
+            /* Wie oben: erst den Merker (Feld 6 auf N) festhalten (Befund C3). */
+            $rn_s[6] = 'N';
+            if (!rn_session_schreiben($rn_f['session'], $rn_s)) {
+                $rn_s[6] = 'Y';
+                rn_melden_stuendlich('ERROR', $rn_sess_fehl);
+            } else {
+                if ($rn_cfg['mail_csf'] === 'Y') { @mail($rn_cfg['username'], $rn_name, $rn_text); }
+                // Bis 1.4 stand hier $exec_bl, obwohl die Bedingung $exec_csf prueft.
+                rn_hook_ausfuehren($rn_cfg['exec_csf'], $rn_text, 'exec_csf');
+                renault_log('INFO', 'Ladung beendet (' . $rn_name . ') - Meldung ausgeloest.');
+            }
         }
         $rn_s[6] = ($rn_s[10] == 1) ? 'Y' : 'N';
     }
@@ -918,17 +981,24 @@ foreach ($rn_mit_vin as $rn_f) {
         rn_sende($rn_mqtt, $rn_name, 'CableStatus',    $rn_s[11]);
         rn_sende($rn_mqtt, $rn_name, 'ChargingTime',   $rn_s[15]);
         rn_sende($rn_mqtt, $rn_name, 'ChargingEffekt', $rn_s[16]);
-        rn_sende($rn_mqtt, $rn_name, 'ChargeMode',     $rn_s[24]);
+        if ($rn_cm_senden) {
+            rn_sende($rn_mqtt, $rn_name, 'ChargeMode',     $rn_s[24]);
+        }
         rn_sende($rn_mqtt, $rn_name, 'Mileage',        $rn_s[7]);
         rn_sende($rn_mqtt, $rn_name, 'Name',           $rn_name);
-        rn_sende($rn_mqtt, $rn_name, 'HvAcStatus',     $rn_hvac);
-        if ($rn_hvac === 'on' || $rn_hvac === 'off') {
-            rn_sende($rn_mqtt, $rn_name, 'HvAcStatusBin', $rn_hvac === 'on' ? 1 : 0);
+        if ($rn_hvac !== null) {
+            rn_sende($rn_mqtt, $rn_name, 'HvAcStatus',     $rn_hvac);
+            if ($rn_hvac === 'on' || $rn_hvac === 'off') {
+                rn_sende($rn_mqtt, $rn_name, 'HvAcStatusBin', $rn_hvac === 'on' ? 1 : 0);
+            } elseif ($rn_hvac === 'n/a') {
+                // Text und Zahl gemeinsam: unbekannt heisst "-", nicht der alte Stand.
+                rn_sende($rn_mqtt, $rn_name, 'HvAcStatusBin', '-');
+            }
         }
         rn_sende($rn_mqtt, $rn_name, 'InTemp',  $rn_s[27]);
         // Aussentemperatur: die des Fahrzeugs hat Vorrang vor der des
-        // Wetterdienstes.
-        rn_sende($rn_mqtt, $rn_name, 'OutTemp', $rn_s[28] !== '' ? $rn_s[28] : $rn_s[22]);
+        // Wetterdienstes - beide nur aus diesem Lauf (Befund M5).
+        rn_sende($rn_mqtt, $rn_name, 'OutTemp', $rn_s[28] !== '' ? $rn_s[28] : $rn_wetter_temp);
 
         if ($rn_ph === '1') {
             rn_sende($rn_mqtt, $rn_name, 'BatTemp',       $rn_s[13]);
@@ -952,6 +1022,9 @@ foreach ($rn_mit_vin as $rn_f) {
         rn_sende($rn_mqtt, $rn_name, 'phpCall',           $rn_hhmm);
         rn_sende($rn_mqtt, $rn_name, 'LastDataRetrieval', $rn_hhmm);
         rn_sende($rn_mqtt, $rn_name, 'ok', 1);
+        /* Altwerte, die in diesem Lauf keinen gueltigen Wert bekamen: jetzt
+         * direkt loeschen und nachlesen (Befund M1). Nur im vollen Lauf. */
+        if ($rn_mqtt !== null) { rn_mqtt_altlast_abschluss('abruf', $rn_name, $rn_alt); }
         rn_lebenszeichen($rn_mqtt, $rn_name, dirname($rn_f['session']));
         $rn_ausgabe[] = $rn_name . ';OK=1;SOC=' . $rn_s[12] . ';RANGE=' . $rn_s[14];
     } else {
@@ -961,12 +1034,20 @@ foreach ($rn_mit_vin as $rn_f) {
          * Cron von einem gestoerten Abruf nicht zu unterscheiden. */
         rn_sende($rn_mqtt, $rn_name, 'ok', 0);
         rn_lebenszeichen($rn_mqtt, $rn_name, dirname($rn_f['session']));
-        $rn_http_status = 502;
+        /* 502 nur ohne Befehl. Nach einem Befehl gilt dessen Ergebnis (oben);
+         * dass der Abruf danach scheiterte, sagen die eigene Zeile OK=0 und
+         * die Protokollzeile des Endpunkts (Befund C2). */
+        if ($rn_befehl_ok === null) { $rn_http_status = 502; }
+        $rn_abruf_gescheitert = true;
         $rn_ausgabe[] = $rn_name . ';OK=0';
     }
 
-    /* ---- Zwischenspeicher schreiben ---- */
-    @file_put_contents($rn_f['session'], implode('|', $rn_s));
+    /* ---- Zwischenspeicher schreiben ----
+     * Unteilbar und geprueft; bis 2.1.12 ein @file_put_contents() ohne
+     * Rueckgabepruefung (Befund C3). Hoechstens eine Zeile je Stunde. */
+    if (!rn_session_schreiben($rn_f['session'], $rn_s)) {
+        rn_melden_stuendlich('ERROR', $rn_sess_fehl);
+    }
 }
 
 if ($rn_mqtt !== null) { $rn_mqtt->close(); }

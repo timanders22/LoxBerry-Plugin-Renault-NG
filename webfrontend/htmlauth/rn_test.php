@@ -149,8 +149,10 @@ function rn_test_selbstpruefung($cfg, $broker, $voll = true)
     }
 
     // Steuerung: keine Beanstandung, nur eine Auskunft - "aus" ist die
-    // Vorgabe und damit richtig, nicht falsch.
-    $z[] = array(rn_t('PRUEF.STEUERUNG'), true,
+    // Vorgabe und damit richtig, nicht falsch. Bis 2.1.12 stand hier ein
+    // festes true, also ein Haken fuer etwas nicht Gepruefte (Befund U11);
+    // 'info' zeigt die Oberflaeche als Auskunft.
+    $z[] = array(rn_t('PRUEF.STEUERUNG'), 'info',
         $cfg['steuerung_ein'] === 'Y' ? rn_t('PRUEF.STEUERUNG_EIN') : rn_t('PRUEF.STEUERUNG_AUS'));
 
     $z[] = array(rn_t('PRUEF.TOKEN'), strlen($cfg['aktionstoken']) >= 16,
@@ -245,7 +247,10 @@ function rn_test_selbstpruefung($cfg, $broker, $voll = true)
     $formulare = 0; $mit_merkmal = 0;
     foreach (rn_test_oberflaechendateien() as $datei) {
         $t = (string) @file_get_contents($datei);
-        $formulare  += preg_match_all('/<form\b/i', $t);
+        /* Nur vollstaendige Tags "<form" mit Leerraum oder ">" dahinter
+         * (Befund U7): bis 2.1.12 zaehlte das Suchmuster dieser Zeile sich
+         * selbst mit, und die Zeile stand auf jeder Anlage rot (8 von 9). */
+        $formulare  += preg_match_all('/<form[\s>]/i', $t);
         $mit_merkmal += preg_match_all('/name="formtoken"\s+value="[^"]+"/', $t);
     }
     $z[] = array(rn_t('PRUEF.FORMULARE'),
@@ -386,13 +391,12 @@ function rn_test_endpunkt($cfg)
         $ctx = stream_context_create(array('http' => array(
             'timeout' => 3, 'ignore_errors' => true,
             'follow_location' => 0, 'max_redirects' => 1)));
+        /* Den Code liefert rn_http_abruf() aus stream_get_meta_data() - bis
+         * 2.1.12 stand hier die alte Kopfzeilen-Variable von PHP, die 8.5
+         * beim Uebersetzen als ueberholt meldet (Befund C7). */
         $vorher = set_error_handler(function () { return true; });
-        $rumpf = file_get_contents($url, false, $ctx);
+        list($rumpf, $code) = rn_http_abruf($url, $ctx);
         set_error_handler($vorher);
-        if (isset($http_response_header[0])
-            && preg_match('#^HTTP/\S+\s+([0-9]{3})#', $http_response_header[0], $m)) {
-            $code = (int) $m[1];
-        }
     } else {
         return array(null, rn_t('PRUEF.EP_NICHT_MESSBAR'));
     }

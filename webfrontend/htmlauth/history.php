@@ -246,6 +246,9 @@ foreach (rn_fahrzeuge($rn_cfg) as $rn_f) {
         isset($rn_neu['chargeEndStatus']) ? $rn_neu['chargeEndStatus'] : '');
     rn_h_sende($rn_mqtt, $rn_name, 'chargeStartInstantaneousPower',
         isset($rn_neu['chargeStartInstantaneousPower']) ? $rn_neu['chargeStartInstantaneousPower'] : '');
+    /* Altwerte ohne gueltigen Wert in diesem Lauf: direkt loeschen und
+     * nachlesen (Befund M1, wie in abruf.php). */
+    if ($rn_mqtt !== null) { rn_mqtt_altlast_abschluss('history', $rn_name, $rn_alt); }
 
     renault_log('INFO', 'Ladehistorie ' . $rn_name . ': ' . $rn_gezaehlt . ' Ladevorgaenge, '
         . 'juengster ueber ' . $rn_dauer . ' min'

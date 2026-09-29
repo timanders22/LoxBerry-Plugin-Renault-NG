@@ -56,27 +56,58 @@ for rn_pfad in "$KONF" "$DATEN" "$PROT" "$ALT"; do
     esac
 done
 
-# Hat eine Konfigurationsdatei INHALT? Rueckgabe 0 ja, 1 nein, 2 nicht pruefbar.
+# ===================================================================
+# 0. DIE UPGRADE-MARKE (Entscheidung 1 des Hausherrn, 29.09.2026; Befund I1)
+# ===================================================================
+# data/plugins/<ordner>.upgrade_laeuft sagt postinstall.sh und postupgrade.sh,
+# dass dies eine AKTUALISIERUNG ist: nur dann wird aus Zweitschrift und
+# Rettungsordner zurueckgespielt; ohne Marke legt postinstall.sh beides als
+# <name>.alt beiseite (Neuinstallation). Entschieden wird allein am
+# Vorhandensein, nicht am Alter. Sie liegt NEBEN dem Datenordner -
+# purge_installation loescht nur den Ordner selbst -, und postupgrade.sh
+# entfernt sie an seinem Ende (trap). Bis 2.1.12 gab es sie nicht: eine
+# Neuinstallation spielte eine liegengebliebene Zweitschrift samt Kennwort und
+# altem Token ein (in WSL gemessen, Faelle N2 und N3), und postupgrade.sh
+# entschied am Alter des Rettungsordners (Fall U5).
 #
-# Inhalt heisst: die Datei ist vollstaendig geschrieben - sie endet mit dem
-# schliessenden PHP-Tag, wie jede, die das Plugin je geschrieben hat - UND sie
-# traegt ein Aktionstoken oder einen Benutzernamen des Renault-Kontos (eine
-# Konfiguration aus 1.4 kennt das Token noch nicht). Eine leere, abgeschnittene
-# oder fremde Datei hat keinen Inhalt. Bis 2.1.10 wurde hier gar nicht
-# geprueft und in postupgrade.sh nur nach der GROESSE (Klasse C,
-# Bestand-2026-09-18/klasse-C/Ergebnis.md). Dieselbe Funktion steht
-# wortgleich in postupgrade.sh - preupgrade.sh laeuft aus dem Auspackordner
-# und kann keine Datei des Plugins einbinden.
+# Lag die Marke schon VOR diesem Lauf, ist ein frueherer Versuch DIESES
+# Updates nach preupgrade.sh abgebrochen (Abschnitt 2). Laesst sie sich nicht
+# anlegen, bricht das Update hier ab, vor dem Sichern und vor
+# purge_installation: ohne Marke hielte postinstall.sh es fuer eine
+# Neuinstallation und legte die Einstellungen beiseite.
+MARKE="${DATEN}.upgrade_laeuft"
+RN_MARKE_VORHER=0
+[ -f "$MARKE" ] && RN_MARKE_VORHER=1
+if { date +%s > "$MARKE"; } 2>/dev/null && [ -s "$MARKE" ]; then
+    echo "<OK> Marke fuer die laufende Aktualisierung angelegt ($MARKE)."
+else
+    echo "<FAIL> Die Marke $MARKE liess sich nicht anlegen. Ohne sie hielte postinstall.sh"
+    echo "<FAIL> dieses Update fuer eine Neuinstallation und legte die Einstellungen beiseite."
+    echo "<FAIL> Die Aktualisierung wird abgebrochen; die bisherige Fassung bleibt installiert."
+    exit 2
+fi
+
+# Hat eine Konfigurationsdatei INHALT? Rueckgabe 0 ja, 1 nein, 2 nicht pruefbar.
+# $1 ist die Datei, $2 (wahlweise) die Zweitschrift, gegen die "ohne Token"
+# gemessen wird.
+#
+# Das Urteil faellt die BIBLIOTHEK (rn_konfig_datei_urteil() in rn_lib.php) -
+# dieselbe Frage, die rn_config_read() stellt (Befund I4). Bis 2.1.12 stand
+# hier eine eigene Pruefung, die ein schliessendes ?> verlangte: eine von der
+# Bibliothek als heil gelesene Konfiguration ohne ?> galt als leer, und die
+# aeltere Zweitschrift kam zurueck (in WSL gemessen, Fall U3). Dieses Skript
+# laeuft aus dem Auspackordner des NEUEN Archivs; die Bibliothek daneben ist
+# die, die nach dem Update gilt. Fehlt sie, heisst das "nicht pruefbar".
+RN_LIB_NEU="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/webfrontend/htmlauth/rn_lib.php"
 RN_INHALT_PHP=$(cat <<'PHPEOF'
-$r = @file_get_contents($argv[1]);
-if (!is_string($r) || !preg_match('/\?>\s*\z/', $r)) { exit(1); }
-$wert = '\s*=\s*(\'(?:[^\'\\\\]|\\\\.)+\'|"(?:[^"\\\\]|\\\\.)+")\s*;';
-exit(preg_match('/^[ \t]*\$(aktionstoken|username)' . $wert . '/m', $r) ? 0 : 1);
+require $argv[1];
+exit(rn_konfig_datei_urteil($argv[2], isset($argv[3]) ? $argv[3] : '') === '' ? 0 : 1);
 PHPEOF
 )
 rn_hat_inhalt() {
     [ -f "$1" ] || return 1
-    php -r "$RN_INHALT_PHP" "$1" 2>/dev/null
+    [ -f "$RN_LIB_NEU" ] || return 2
+    php -r "$RN_INHALT_PHP" "$RN_LIB_NEU" "$1" "${2:-}" 2>/dev/null
     case "$?" in
         0) return 0 ;;
         1) return 1 ;;
@@ -103,16 +134,29 @@ if [ -f "$KONF/config.php" ]; then
     # abgeschnittene Datei ersetzte damit die heile Zweitschrift, und der
     # einzige Rueckweg war fort (in WSL gemessen, Pruefung-Renault-NG-2.1.11,
     # Fall K5).
-    rn_hat_inhalt "$KONF/config.php"
+    rn_hat_inhalt "$KONF/config.php" "$SICH"
     rn_k=$?
     if [ "$rn_k" = 1 ]; then
+        # Nie ersatzlos verwerfen (Befund I4): die Datei kommt als
+        # <ordner>.config.php.kaputt.<zeit> NEBEN den Ordner - purge_installation
+        # loescht den Ordner gleich. Bis 2.1.12 ging eine teilweise lesbare
+        # Konfiguration beim Update spurlos verloren (in WSL gemessen, Fall U6).
+        # Angelegt mit umask 077, also nie lesbar fuer andere; uninstall raeumt
+        # sie mit ab.
         if rn_hat_inhalt "$SICH"; then
-            echo "<WARNING> Die Konfiguration $KONF/config.php hat keinen Inhalt (leer, abgeschnitten"
-            echo "<WARNING> oder ohne Token und Benutzer). Die vorhandene Zweitschrift $SICH"
-            echo "<WARNING> bleibt unberuehrt und wird nach dem Update zurueckgespielt."
+            echo "<WARNING> Die Konfiguration $KONF/config.php ist unbrauchbar (leer, abgeschnitten"
+            echo "<WARNING> oder ohne Token, waehrend die Zweitschrift eines traegt). Die vorhandene"
+            echo "<WARNING> Zweitschrift $SICH bleibt unberuehrt und wird nach dem Update zurueckgespielt."
         else
             echo "<WARNING> Weder die Konfiguration noch die Zweitschrift hat Inhalt - nach dem"
             echo "<WARNING> Update bitte die Einstellungen neu eintragen."
+        fi
+        RN_KAPUTT="${KONF}.config.php.kaputt.$(date +%Y%m%d%H%M%S 2>/dev/null)"
+        if ( umask 077 && cp "$KONF/config.php" "$RN_KAPUTT" ) 2>/dev/null; then
+            echo "<WARNING> Die unbrauchbare Konfiguration liegt als $RN_KAPUTT daneben."
+        else
+            echo "<WARNING> Die unbrauchbare Konfiguration liess sich nicht beiseitelegen und geht"
+            echo "<WARNING> mit dem Update verloren."
         fi
         rc=1
     else
@@ -148,7 +192,9 @@ elif [ -f "$KONF/config.php.backup" ]; then
         rc=1
     fi
 else
-    echo "<INFO> Keine Konfiguration gefunden - vermutlich eine Erstinstallation."
+    # Dieses Skript laeuft nur bei einem Update - "Erstinstallation" war hier
+    # nie die richtige Erklaerung (Befund I3).
+    echo "<INFO> Keine Konfiguration vorhanden - das Plugin wurde noch nicht eingerichtet."
 fi
 
 # ===================================================================
@@ -160,14 +206,22 @@ fi
 # Ladehistorie waechst ueber Monate und ist danach fort.
 #
 # Der Rettungsordner wird NEBEN seinem Platz gebaut (<rettung>.neu), jede
-# Datei byteweise verglichen, und erst dann an seine Stelle gesetzt; ein
-# vorhandener faellt zuletzt (Regeln/06, "Eine Sicherung wird neben ihrem
-# Platz gebaut"). Er traegt den Zeitpunkt dieses Vorgangs (Datei
-# "zeitpunkt", Unixzeit): postupgrade.sh spielt nur einen Rettungsordner aus
-# DIESEM Update zurueck. Bis 2.1.10 blieb er nach jedem Update liegen und
-# wurde bei jedem spaeteren wieder eingespielt, auch eine Datei aus einem
-# Update vor Monaten (in WSL gemessen, Pruefung-Renault-NG-2.1.11, Faelle L2
-# und L6).
+# Datei byteweise verglichen, und erst dann an seine Stelle gesetzt (Regeln/06,
+# "Eine Sicherung wird neben ihrem Platz gebaut"). Bis 2.1.10 blieb er nach
+# jedem Update liegen und wurde bei jedem spaeteren wieder eingespielt, auch
+# eine Datei aus einem Update vor Monaten (in WSL gemessen,
+# Pruefung-Renault-NG-2.1.11, Faelle L2 und L6).
+#
+# Seit 2.1.13 (Entscheidung 1, Befund I2) gibt es keine Datei "zeitpunkt" und
+# keinen Altersvergleich mehr: postupgrade.sh spielt zurueck, wenn die Marke
+# vorhanden ist. Damit dabei nie ein Bestand aus einem FRUEHEREN Vorgang
+# eingespielt wird, raeumt dieses Skript einen vorhandenen Rettungsordner
+# vorher weg - immer, nicht nur wenn ein neuer entsteht. Bis 2.1.12 blieb er
+# ohne neue Ladehistorie liegen, und jedes weitere Update endete mit
+# <WARNING> und Rueckgabewert 1 (in WSL gemessen, Fall U5). Einzige Ausnahme:
+# lag die Marke schon vor diesem Lauf und gibt es nichts Neues zu retten, ist
+# ein Versuch DIESES Updates nach dem Loeschen des Datenordners abgebrochen,
+# und der Rettungsordner ist die einzige Abschrift der Ladehistorie.
 #
 # Dazu die Sitzung und die Ladehistorie einer Fassung 1.4 oder aelter: sie
 # lagen im Programmordner, den der Installer gleich ebenfalls loescht. Sie
@@ -179,6 +233,18 @@ ls "$DATEN"/database*.csv >/dev/null 2>&1 && zu_retten=1
 for f in session database.csv; do
     [ -f "$ALT/$f" ] && zu_retten=1
 done
+if [ -d "$RETTUNG" ]; then
+    if [ "$RN_MARKE_VORHER" = 1 ] && [ "$zu_retten" = 0 ]; then
+        echo "<INFO> Der Rettungsordner $RETTUNG stammt aus einem abgebrochenen Versuch dieses"
+        echo "<INFO> Updates und bleibt fuer postupgrade.sh liegen."
+    elif rm -rf "$RETTUNG"; then
+        echo "<INFO> Ein Rettungsordner aus einem frueheren Vorgang lag noch da; er ist entfernt,"
+        echo "<INFO> damit er nie in dieses Update eingespielt wird."
+    else
+        echo "<ERROR> Der alte Rettungsordner $RETTUNG liess sich nicht entfernen."
+        rc=1
+    fi
+fi
 if [ "$zu_retten" = 1 ]; then
     rm -rf "$NEU"
     if mkdir -p "$NEU" 2>/dev/null; then
@@ -205,21 +271,14 @@ if [ "$zu_retten" = 1 ]; then
                 fehler=1
             fi
         done
-        JETZT=$(date +%s 2>/dev/null)
-        case "$JETZT" in
-            ''|*[!0-9]*)
-                echo "<WARNING> Die Uhr ist nicht lesbar - der Rettungsordner bekommt keinen Zeitpunkt,"
-                echo "<WARNING> und postupgrade.sh spielt ihn deshalb nicht zurueck. Er liegt unter $RETTUNG." ;;
-            *) echo "$JETZT" > "$NEU/zeitpunkt" ;;
-        esac
         if [ "$fehler" = 0 ]; then
-            rm -rf "${RETTUNG}.alt"
-            [ -d "$RETTUNG" ] && mv "$RETTUNG" "${RETTUNG}.alt"
+            # Ein alter Rettungsordner ist oben schon weggeraeumt. Die
+            # Baustelle heisst nicht mehr "${RETTUNG}.alt": .alt ist seit 2.1.13
+            # der Name des bei einer Neuinstallation beiseitegelegten Bestands
+            # (postinstall.sh), und der darf hier nicht verschwinden.
             if mv "$NEU" "$RETTUNG"; then
-                rm -rf "${RETTUNG}.alt"
                 echo "<OK> $gerettet Datei(en) der Ladehistorie gesichert nach $RETTUNG."
             else
-                [ -d "${RETTUNG}.alt" ] && mv "${RETTUNG}.alt" "$RETTUNG"
                 echo "<ERROR> Der Rettungsordner liess sich nicht an seinen Platz setzen - die"
                 echo "<ERROR> Kopie liegt unter $NEU."
                 rc=1

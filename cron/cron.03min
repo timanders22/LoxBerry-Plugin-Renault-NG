@@ -62,4 +62,9 @@ fi
 flock -n 9 || exit 0
 
 cd "$VERZ" || exit 1
-php abruf.php cron
+# 9<&- (Befund C4): php und alles, was es startet (exec_bl, exec_csf),
+# bekommt den Griff der Sperre NICHT vererbt; die Schale haelt ihn, bis php
+# zurueckkehrt. Bis 2.1.12 erbte ein langlebiges Kind des Hakens fd 9, und
+# jeder weitere Lauf endete still an "flock -n 9 || exit 0" (in WSL gemessen,
+# zweiter Lauf ohne Ausgabe mit rc 0). Gilt ebenso fuer cron.10min.
+php abruf.php cron 9<&-

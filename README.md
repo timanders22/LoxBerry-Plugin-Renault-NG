@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.12 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.13 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,72 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Version 2.1.13 — der Endpunkt antwortet für den Befehl, nicht für den Abruf
+
+Durchsicht vom 29.09.2026 mit vier Prüfern (Code, Oberfläche, Installer, MQTT).
+Jeder Punkt ist gemessen und hat eine Gegenprobe, die an 2.1.12 rot und an
+2.1.13 grün ist. Gemessen wurde in WSL mit einer Attrappe der Renault-Cloud und
+des Brokers. Im Haus gibt es kein Renault-Konto.
+
+**Steuerbefehle aus Loxone.** Der HTTP-Code richtet sich jetzt nach dem Befehl.
+
+* Ein gescheiterter Befehl antwortet mit 502 und „NICHT ausgeführt“. Das gilt
+  auch dann, wenn der Abruf danach gelang; bisher kam in diesem Fall 200.
+* Ein gelungener Befehl antwortet mit 200. Scheitert danach nur der Abruf,
+  nennt die Antwort das in einer eigenen Zeile; bisher kam in diesem Fall 502.
+
+**Volle Speicherkarte.** Bisher verloren Konfiguration und Zweitschrift das
+Aktionstoken, und jede Loxone-Adresse antwortete danach mit 403. Jetzt gilt
+nur als geschrieben, was ganz geschrieben und zurückgelesen ist. Ist der
+Zwischenspeicher nicht schreibbar, lösen Haken, Mail und Lademodus-Befehl
+nicht bei jedem Abruf erneut aus.
+
+**MQTT**
+
+* Alte zurückbehaltene Werte, etwa `BatTemp` bei Phase 2 oder
+  `ChargingTime` außerhalb des Ladens, räumt der erste volle Lauf ab. Der
+  Broker bestätigt das Abräumen; danach öffnet kein Lauf mehr eine eigene
+  Broker-Verbindung dafür.
+* Leere Messwerte gehen nicht mehr hinaus; ein leerer Zustand geht als `-`.
+* Wird ein Fahrzeug umbenannt oder entfernt, räumt „Speichern“ seine Themen
+  unter dem alten Namen ab.
+* Scheitert die Abfrage von Klimatisierung oder Lademodus, bleibt der
+  zurückbehaltene Stand stehen. Bisher wurde er mit `n/a` überschrieben;
+  `n/a` kommt jetzt nur noch, wenn der Endpunkt das Fahrzeug nicht kennt.
+* `InTemp` und `OutTemp` stammen nur noch aus dem aktuellen Abruf.
+
+**Oberfläche**
+
+* Nach jedem Absenden wird umgeleitet; F5 wiederholt nichts mehr. Nach „Neues
+  Token“ wird der nächste Klick nicht mehr abgewiesen.
+* Wetterschlüssel und ABRP-Token stehen nicht mehr im Klartext in der Seite.
+  Kennwort und beide Schlüssel lassen sich mit einem Haken löschen; ein leeres
+  Feld lässt den Wert unverändert.
+* Ein Befehl mit `&` wird schon beim Speichern beanstandet. Bisher wurde er
+  gespeichert, aber nie ausgeführt, und die eigene Sicherung ließ sich danach
+  nicht zurückspielen.
+* Eine Sicherung ohne Token behält das geltende Token und sagt es.
+* Die Prüfzeile „Tragen alle Formulare das Merkmal?“ stand auf jeder Anlage
+  rot; sie hatte ihr eigenes Suchmuster mitgezählt.
+* Die Adressen im Reiter „Einbindung in Loxone“ tragen den Rechnernamen.
+* PHP 8.5 meldet keine Verfallswarnung mehr.
+
+**Installation**
+
+* Eine Neuinstallation spielt keine Zugangsdaten einer früheren Installation
+  mehr ein. Zweitschrift und Rettungsordner werden als `.alt` beiseitegelegt
+  und einmal genannt; die Deinstallation räumt sie ab.
+* Ein Update erkennt sich an einer Marke statt am Alter. Bisher meldete jedes
+  Update ohne Ladehistorie eine Warnung, und ein Rettungsordner blieb liegen.
+* Eine Konfiguration, die das Update verwirft, bleibt als `.kaputt.<Zeit>`
+  liegen.
+
+**Bekannte Grenze.** Läuft ein Cron-Takt genau zwischen dem Kopieren der
+Dateien und `postinstall.sh` einer Neuinstallation, kann die Bibliothek eine
+liegengebliebene Zweitschrift noch einspielen. Das ist abgeleitet, nicht
+gemessen. Es bleibt so, weil sich die Konfiguration nach einem versehentlichen
+Löschen weiter selbst heilen soll.
 
 ## Version 2.1.12 — „nicht zu fragen“ heißt nicht „leer“
 

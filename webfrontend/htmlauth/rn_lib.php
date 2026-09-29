@@ -309,16 +309,71 @@ function rn_datei_uebernehmen($quelle, $ziel)
 {
     $roh = @file_get_contents($quelle);
     if ($roh === false) { return false; }
+    return rn_datei_schreiben($ziel, $roh, 0600);
+}
+
+/**
+ * Eine Datei unteilbar schreiben: Nebendatei mit Prozessnummer, Rechte vor
+ * dem Inhalt, Inhalt ganz geschrieben und zurueckgelesen, dann rename().
+ *
+ * Geschrieben ist erst, was GANZ geschrieben ist. Bis 2.1.12 galt in
+ * rn_config_write() "fwrite() !== false" als Erfolg (Befund C1). Bei voller
+ * Karte liefert fwrite() aber eine kleinere Zahl, nicht false: in WSL
+ * gemessen (ulimit -f 1) kam true zurueck, und config.php UND Zweitschrift
+ * endeten nach 1024 Byte ohne Aktionstoken. Jetzt muessen volle Laenge,
+ * fflush() und fclose() gelingen, und die Nebendatei muss beim Zuruecklesen
+ * byteweise dem Inhalt gleichen. Bauform eb_json_schreiben() der Linie
+ * Einspeisebremse 0.9.28.
+ *
+ * $rechte null laesst die Rechte der umask. $pruefen (optional) bekommt den
+ * Pfad der Nebendatei und kann das Umbenennen mit false verhindern.
+ */
+function rn_datei_schreiben($ziel, $inhalt, $rechte = 0600, $pruefen = null)
+{
+    $inhalt = (string) $inhalt;
     $tmp = $ziel . '.tmp.' . getmypid();
     $fh = @fopen($tmp, 'c');
     if ($fh === false) { return false; }
-    @chmod($tmp, 0600);
-    $ok = ftruncate($fh, 0) && fwrite($fh, $roh) === strlen($roh);
-    fflush($fh);
-    fclose($fh);
-    if (!$ok) { @unlink($tmp); return false; }
-    if (!@rename($tmp, $ziel)) { @unlink($tmp); return false; }
+    if ($rechte !== null) { @chmod($tmp, $rechte); }          // erst schuetzen,
+    $n = @ftruncate($fh, 0) ? @fwrite($fh, $inhalt) : false;  // dann fuellen
+    $ok = ($n === strlen($inhalt)) && @fflush($fh);
+    $ok = @fclose($fh) && $ok;
+    if ($ok) {
+        clearstatcache(true, $tmp);
+        $ok = (@file_get_contents($tmp) === $inhalt);
+    }
+    if ($ok && $pruefen !== null) {
+        $ok = (bool) call_user_func($pruefen, $tmp);
+    }
+    if (!$ok || !@rename($tmp, $ziel)) { @unlink($tmp); return false; }
     return true;
+}
+
+/**
+ * Eine Adresse ueber die Stromfunktionen abrufen und den HTTP-Code aus den
+ * Kopfzeilen lesen. Rueckgabe: array(Inhalt oder false, Code; 0 = kein Code).
+ *
+ * Bauform eb_http_abruf() (Einspeisebremse 0.9.28): fopen() und
+ * stream_get_meta_data('wrapper_data') statt der alten Kopfzeilen-Variable
+ * von PHP. PHP 8.5 meldet jene schon beim Uebersetzen als ueberholt
+ * (Befund C7, rn_test.php bis 2.1.12), und PHP 9 soll sie abschaffen - dann
+ * hiesse jeder Code 0. Zeitschranke und ignore_errors wirken ueber denselben
+ * Kontext wie bei file_get_contents().
+ */
+function rn_http_abruf($url, $ctx)
+{
+    $fp = @fopen($url, 'r', false, $ctx);
+    if ($fp === false) { return array(false, 0); }
+    $meta = @stream_get_meta_data($fp);
+    $t = @stream_get_contents($fp);
+    @fclose($fp);
+    $code = 0;
+    $kopf = (is_array($meta) && isset($meta['wrapper_data']) && is_array($meta['wrapper_data']))
+        ? $meta['wrapper_data'] : array();
+    foreach ($kopf as $z) {
+        if (is_string($z) && preg_match('#^HTTP/\S+\s+([0-9]{3})#', $z, $m)) { $code = (int) $m[1]; }
+    }
+    return array($t, $code);
 }
 
 function rn_e($s)
@@ -619,6 +674,78 @@ function rn_aktionsadresse($cfg, $aktion, $fahrzeug = 1)
     return $a;
 }
 
+/**
+ * Der Rechnername fuer die Adressen in Loxone: aus HTTP_HOST, also der
+ * Adresse, unter der die Seite geoeffnet wurde - sonst der Rechnername.
+ * Dieselbe Stelle fuer die Vorlage und den Reiter "Einbindung in Loxone"
+ * (Befund U10). Ein Vorschlag, den der Anwender prueft.
+ */
+function rn_rechnername()
+{
+    return isset($_SERVER['HTTP_HOST']) && is_string($_SERVER['HTTP_HOST'])
+            && $_SERVER['HTTP_HOST'] !== ''
+        ? preg_replace('/[^A-Za-z0-9\.\-:]/', '', (string) $_SERVER['HTTP_HOST'])
+        : (gethostname() ?: 'loxberry');
+}
+
+/**
+ * Einmalmeldung nach dem POST (Befund U1, Regeln/04 "Jeder POST-Handler
+ * endet mit einer Umleitung"): eine Datei im Datenordner, 0600, beim
+ * folgenden GET gelesen UND geloescht; aelter als 120 s wird verworfen.
+ * Bauform eb_einmal_schreiben()/eb_einmal_lesen() (Einspeisebremse 0.9.28).
+ *
+ * Sie traegt nur Meldungstexte. Kennwort, Aktionstoken und die beiden
+ * Schluessel werden trotzdem vor dem Ablegen durch *** ersetzt, falls ein
+ * Text sie doch enthielte (Regeln/04, Nachtrag Raumklima 17.09.).
+ */
+function rn_einmal_schreiben($meldung, array $fehler, array $misslungen, $test_titel,
+                             $test_text, $cfg)
+{
+    $weg = array();
+    foreach (array('password', 'aktionstoken', 'weather_api_key', 'abrp_token') as $k) {
+        $g = (is_array($cfg) && isset($cfg[$k])) ? (string) $cfg[$k] : '';
+        if (strlen($g) >= 6) { $weg[$g] = '***'; }
+    }
+    $rein = function ($t) use ($weg) { return $weg ? strtr((string) $t, $weg) : (string) $t; };
+    $d = array(
+        'zeit'       => time(),
+        'meldung'    => $rein($meldung),
+        'fehler'     => array_values(array_map($rein, $fehler)),
+        'misslungen' => array_values(array_map($rein, $misslungen)),
+        'test_titel' => $rein($test_titel),
+        'test_text'  => $rein($test_text),
+    );
+    $json = json_encode($d, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+                            | JSON_INVALID_UTF8_SUBSTITUTE);
+    if ($json === false) { return false; }
+    return rn_datei_schreiben(rn_paths()['datadir'] . '/einmalmeldung.json', $json, 0600);
+}
+
+/** Die Einmalmeldung lesen und loeschen; null, wenn keine (gueltige) da ist. */
+function rn_einmal_lesen()
+{
+    $f = rn_paths()['datadir'] . '/einmalmeldung.json';
+    if (!is_file($f)) { return null; }
+    $d = json_decode((string) @file_get_contents($f), true);
+    @unlink($f);
+    if (!is_array($d) || !isset($d['zeit']) || abs(time() - (int) $d['zeit']) > 120) {
+        return null;
+    }
+    $text = function ($k) use ($d) {
+        return (isset($d[$k]) && is_string($d[$k])) ? $d[$k] : '';
+    };
+    $liste = function ($k) use ($d) {
+        $aus = array();
+        if (isset($d[$k]) && is_array($d[$k])) {
+            foreach ($d[$k] as $v) { if (is_string($v)) { $aus[] = $v; } }
+        }
+        return $aus;
+    };
+    return array('meldung' => $text('meldung'), 'fehler' => $liste('fehler'),
+                 'misslungen' => $liste('misslungen'), 'test_titel' => $text('test_titel'),
+                 'test_text' => $text('test_text'));
+}
+
 /** Die Adresse des Selbsttests - prueft das Token, ohne etwas zu schalten. */
 function rn_selbsttestadresse($cfg)
 {
@@ -822,10 +949,7 @@ function rn_config_read($erzeugen = true)
      * kennt den Schluessel gar nicht, und die ist in Ordnung. Deshalb die
      * zweite Bedingung - die Zweitschrift hat eines, die Konfiguration
      * nicht, also ist es dort verlorengegangen. */
-    $schaden = '';
-    if ($bekannt === 0)                                    { $schaden = 'kaputt'; }
-    elseif (!$heil)                                        { $schaden = 'abgeschnitten'; }
-    elseif (!$hat_merkwort && rn_zweitschrift_hat_token()) { $schaden = 'ohne Token'; }
+    $schaden = rn_konfig_urteil($werte, $heil, 'rn_zweitschrift_hat_token');
 
     if ($schaden !== '') {
         rn_lage_merken($schaden);
@@ -865,6 +989,53 @@ function rn_zweitschrift_hat_token()
         }
     }
     return false;
+}
+
+/**
+ * Das Urteil ueber einen zerlegten Konfigurationstext - an EINER Stelle fuer
+ * die Bibliothek (rn_config_read()) und die Hakenskripte (preupgrade.sh,
+ * postupgrade.sh ueber rn_konfig_datei_urteil(); Befund I4). Bis 2.1.12
+ * urteilten die Haken selbst und verlangten ein schliessendes ?>: eine von
+ * der Bibliothek als heil gelesene Konfiguration wurde beim Update durch
+ * eine aeltere Zweitschrift ersetzt (in WSL gemessen, Fall U3).
+ *
+ * Rueckgabe '' = in Ordnung, sonst der Schaden: 'kaputt' (keine bekannte
+ * Einstellung), 'abgeschnitten' (eine Zeichenkette ohne Ende), 'ohne Token'
+ * (kein Aktionstoken, die Zweitschrift traegt aber eines). $zweit_hat_token
+ * ist aufrufbar und wird nur gefragt, wenn es darauf ankommt.
+ */
+function rn_konfig_urteil($werte, $heil, $zweit_hat_token)
+{
+    if (!is_array($werte)) { return 'kaputt'; }
+    $bekannt = 0;
+    foreach (array_keys(rn_vorgaben()) as $k) {
+        if (array_key_exists($k, $werte)) { $bekannt++; }
+    }
+    if ($bekannt === 0) { return 'kaputt'; }
+    if (!$heil) { return 'abgeschnitten'; }
+    $hat = array_key_exists('aktionstoken', $werte) && (string) $werte['aktionstoken'] !== '';
+    if (!$hat && call_user_func($zweit_hat_token)) { return 'ohne Token'; }
+    return '';
+}
+
+/**
+ * Dasselbe Urteil fuer eine DATEI - der Weg der Hakenskripte. $zweit ist der
+ * Pfad der Zweitschrift, gegen die "ohne Token" gemessen wird ('' = keine).
+ * Rueckgabe wie rn_konfig_urteil(), dazu 'fehlt'. Schreibt nichts und legt
+ * nichts an.
+ */
+function rn_konfig_datei_urteil($datei, $zweit = '')
+{
+    $roh = @file_get_contents($datei);
+    if (!is_string($roh)) { return 'fehlt'; }
+    $heil = false;
+    $werte = rn_config_zerlegen($roh, $heil);
+    return rn_konfig_urteil($werte, $heil, function () use ($zweit) {
+        if ($zweit === '' || !is_readable($zweit)) { return false; }
+        $w = rn_config_einlesen($zweit);
+        return is_array($w) && array_key_exists('aktionstoken', $w)
+            && (string) $w['aktionstoken'] !== '';
+    });
 }
 
 /**
@@ -913,14 +1084,23 @@ function rn_konfig_heilen()
             || (string) $w['aktionstoken'] === '') {
             continue;
         }
+        /* Bis 2.1.12 hiess es hier rename() nach .kaputt, dann @copy() und
+         * erst danach chmod (Befund C6): copy() schreibt vorwaerts mit den
+         * Rechten der umask - die Datei mit dem Klartext-Kennwort stand kurz
+         * lesbar da -, und bei voller Karte blieb eine halbe config.php,
+         * waehrend die beschaedigte schon beiseite lag. Jetzt wird die
+         * beschaedigte als Abschrift (0600) beiseitegelegt, und sie bleibt an
+         * ihrem Platz, bis die Zweitschrift vollstaendig, zurueckgelesen und
+         * unteilbar dort steht (rn_datei_uebernehmen()). */
         $kaputt = $p['config'] . '.kaputt';
-        if (is_file($p['config'])) { @rename($p['config'], $kaputt); }
-        if (@copy($sich, $p['config'])) {
-            @chmod($p['config'], 0600);
+        $war_da = is_file($p['config']);
+        $beiseite = $war_da && rn_datei_uebernehmen($p['config'], $kaputt);
+        if (rn_datei_uebernehmen($sich, $p['config'])) {
             rn_lage_merken('aus der Zweitschrift');
             rn_melden('WARN', 'Die Konfiguration war unlesbar und wurde aus der '
-                . 'Zweitschrift wiederhergestellt (' . basename($sich) . '). Die '
-                . 'beschaedigte Datei liegt als ' . basename($kaputt) . ' daneben. '
+                . 'Zweitschrift wiederhergestellt (' . basename($sich) . '). '
+                . ($beiseite ? 'Die beschaedigte Datei liegt als ' . basename($kaputt) . ' daneben. '
+                   : ($war_da ? 'Die beschaedigte Datei liess sich nicht beiseitelegen. ' : ''))
                 . 'Bitte die Einstellungen nachsehen - die Zweitschrift kann aelter '
                 . 'sein als das, was verlorenging.');
             return true;
@@ -959,6 +1139,44 @@ function rn_melden($stufe, $text)
 }
 
 /**
+ * Eine Zeile hoechstens einmal je Stunde - auch wenn andere dazwischen stehen.
+ *
+ * Die Bremse in renault_log() fasst nur UNMITTELBAR aufeinanderfolgende
+ * gleiche Meldungen zusammen. Ein Abruf schreibt aber je Lauf mehrere
+ * INFO-Zeilen; eine Fehlerzeile am Ende jedes Laufs ginge so alle drei
+ * Minuten hinaus. Gesucht wird in den letzten 400 Zeilen des Protokolls
+ * (Ramdisk - auch bei voller Karte beschreibbar). Rueckgabe: true, wenn die
+ * Zeile geschrieben wurde.
+ */
+function rn_melden_stuendlich($stufe, $text)
+{
+    $marke = '[' . $stufe . '] ' . $text;
+    foreach (rn_log_tail(400) as $zeile) {
+        if (substr($zeile, 20) !== $marke) { continue; }
+        $t = date_create_from_format('d.m.Y H:i:s', substr($zeile, 0, 19));
+        if ($t !== false && time() - date_timestamp_get($t) < 3600) { return false; }
+        break;
+    }
+    rn_melden($stufe, $text);
+    return true;
+}
+
+/**
+ * Den Zwischenspeicher eines Fahrzeugs schreiben - unteilbar und geprueft.
+ *
+ * Bis 2.1.12 stand am Ende von abruf.php ein @file_put_contents() ohne
+ * Rueckgabepruefung (Befund C3). Liess sich die Datei nicht schreiben, blieb
+ * der Merker "Meldung gesendet" (Feld 5) auf N, und die Meldung bei
+ * erreichtem Akkustand ging bei JEDEM Abruf erneut hinaus - Mail, exec_bl
+ * und bei cmon_bl ein Befehl ans Fahrzeug (in WSL gemessen: 1, 2, 3 Haken in
+ * drei Laeufen). Rechte wie bisher 0644; die Datei traegt kein Geheimnis.
+ */
+function rn_session_schreiben($datei, array $felder)
+{
+    return rn_datei_schreiben($datei, implode('|', $felder), 0644);
+}
+
+/**
  * config.php schreiben - atomar, und die Rechte VOR dem Inhalt.
  *
  * "Schreiben, dann chmod" laesst die Datei fuer die Dauer des Schreibens
@@ -984,16 +1202,6 @@ function rn_config_write($cfg)
     $z .= "?>\n";
 
     $datei = rn_paths()['config'];
-    $tmp   = $datei . '.tmp.' . getmypid();
-    $fh = @fopen($tmp, 'c');
-    if ($fh === false) {
-        return false;
-    }
-    @chmod($tmp, 0600);                       // erst schuetzen,
-    $ok = ftruncate($fh, 0) && fwrite($fh, $z) !== false;   // dann fuellen
-    fflush($fh);
-    fclose($fh);
-    if (!$ok) { @unlink($tmp); return false; }
 
     /* Erst pruefen, ob die neue Datei ueberhaupt gueltiges PHP ist - sonst
      * waere die Oberflaeche nach dem Speichern nicht mehr aufrufbar.
@@ -1005,23 +1213,35 @@ function rn_config_write($cfg)
      * die Oberflaeche schickte den Benutzer mit "Rechte im Plugin-Ordner
      * pruefen" in die falsche Richtung. Jetzt wird nur noch abgewiesen,
      * wenn die Ausgabe auch wirklich nach einem Syntaxfehler aussieht. */
-    if (function_exists('exec')) {
+    $php_l = function ($tmp) {
+        if (!function_exists('exec')) { return true; }
         $aus = array(); $code = 0;
         @exec('php -l ' . escapeshellarg($tmp) . ' 2>&1', $aus, $code);
         $text = implode(' ', $aus);
-        if ($code !== 0 && stripos($text, 'error') !== false
-            && stripos($text, 'not found') === false
-            && stripos($text, 'nicht gefunden') === false) {
-            @unlink($tmp);
-            return false;
-        }
-    }
+        return !($code !== 0 && stripos($text, 'error') !== false
+                 && stripos($text, 'not found') === false
+                 && stripos($text, 'nicht gefunden') === false);
+    };
 
-    if (!@rename($tmp, $datei)) {
-        @unlink($tmp);
+    /* Atomar, Rechte VOR dem Inhalt, und geschrieben ist erst, was GANZ
+     * geschrieben und zurueckgelesen ist (rn_datei_schreiben(), Befund C1).
+     * Bis 2.1.12 galt fwrite() !== false als Erfolg. */
+    if (!rn_datei_schreiben($datei, $z, 0600, $php_l)) {
         return false;
     }
     @chmod($datei, 0600);
+
+    /* Die Zweitschrift entsteht aus der ZURUECKGELESENEN Datei, nicht aus
+     * $z: sie soll abbilden, was wirklich dasteht. Weicht das Gelesene ab,
+     * steht die Konfiguration nicht vollstaendig - dann false, und die
+     * Zweitschrift bleibt, wie sie ist. */
+    clearstatcache(true, $datei);
+    $zurueck = @file_get_contents($datei);
+    if ($zurueck !== $z) {
+        rn_melden('ERROR', 'Die Konfiguration liess sich nach dem Schreiben nicht '
+            . 'unveraendert zuruecklesen - die Zweitschrift bleibt unberuehrt.');
+        return false;
+    }
 
     /* Zweitschrift NEBEN dem Konfigordner - sie uebersteht damit auch eine
      * Deinstallation, die den Ordner selbst abraeumt. Mit denselben Rechten
@@ -1039,17 +1259,18 @@ function rn_config_write($cfg)
             . '"Einbindung in Loxone" ein Token erzeugen.');
         return true;
     }
+    /* Auf demselben Weg wie die Konfiguration. Bis 2.1.12 wurden ftruncate()
+     * und fwrite() der Zweitschrift gar nicht geprueft; eine gekuerzte ersetzte
+     * per rename() die heile. Scheitert es jetzt, bleibt die bisherige
+     * Zweitschrift unberuehrt, und das Protokoll sagt es. */
     $sich = rn_paths()['sicherung'];
-    $stmp = $sich . '.tmp.' . getmypid();
-    $sh = @fopen($stmp, 'c');
-    if ($sh !== false) {
-        @chmod($stmp, 0600);
-        ftruncate($sh, 0);
-        fwrite($sh, $z);
-        fclose($sh);
-        if (!@rename($stmp, $sich)) { @unlink($stmp); }
-        else { @chmod($sich, 0600); }
+    if (!rn_datei_schreiben($sich, $zurueck, 0600)) {
+        rn_melden('WARN', 'Die Konfiguration ist geschrieben, die Zweitschrift ' . $sich
+            . ' liess sich aber nicht erneuern - die bisherige bleibt unberuehrt. '
+            . 'Freien Platz und Rechte im Konfigordner pruefen.');
+        return true;
     }
+    @chmod($sich, 0600);
     return true;
 }
 
@@ -1631,24 +1852,30 @@ function rn_mqtt_sitzung($zugang, array $leeren, array $fragen)
  * Je Lauf, bis der Merker liegt:
  *   1. den Broker nach allen Themen aus rn_mqtt_frueher_behalten() fragen;
  *   2. keines belegt -> Merker schreiben, nichts abraeumen ('erledigt');
- *      einige belegt -> genau diese abraeumen, KEIN Merker ('belegt'): die
- *      leere retain-Nutzlast geht unmittelbar vor dem gueltigen Wert hinaus
- *      (rn_mqtt_senden()), und bestaetigt wird erst im naechsten Lauf;
- *      nicht zu fragen -> alle, unmittelbar vor jedem Wert, der ohnehin
- *      hinausgeht ('unbekannt'), KEIN Merker.
- * Der Merker entsteht also nur, wenn der BROKER sagt, dass nichts mehr
- * dasteht - nie auf das blosse Senden hin (Regeln/07, "Ein Absender merkt
- * nichts davon"). Er traegt die Kennung "leer-bestaetigt Renault/<name>
- * <gruppe>: <Themenliste>"; ein anderer Inhalt - anderes Fahrzeug, andere
- * Liste, ein Merker einer anderen Fassung - gilt nicht. purge_installation
- * raeumt ihn bei jedem Upgrade mit ab; dann wird genau einmal nachgefragt.
+ *      einige belegt -> genau diese vormerken ('belegt'); nicht zu fragen ->
+ *      alle vormerken ('unbekannt');
+ *   3. im vollen Lauf geht vor jedem gueltigen Wert eines vorgemerkten
+ *      Themas die leere retain-Nutzlast hinaus (rn_mqtt_senden()). Was
+ *      danach noch vorgemerkt ist - das Thema bekam in diesem Lauf keinen
+ *      oder einen leeren Wert -, loescht rn_mqtt_altlast_abschluss() am Ende
+ *      des Laufs direkt und liest beim Broker nach.
+ * Bis 2.1.12 wurde nur vor einem nichtleeren Wert geloescht (Befund M1):
+ * BatTemp sendet ein Fahrzeug der Phase 2 nie, ChargingTime kommt nur beim
+ * Laden - diese Altwerte blieben unbegrenzt retained, und JEDER Lauf oeffnete
+ * eine zweite Broker-Sitzung und schrieb "stehen noch" ins Protokoll (in WSL
+ * gemessen, Fall G: nach drei Laeufen BatTemp=18 und ChargingTime=45).
+ *
+ * Der Merker entsteht nur, wenn der BROKER sagt, dass nichts mehr dasteht -
+ * nie auf das blosse Senden hin (Regeln/07, "Ein Absender merkt nichts
+ * davon"). Er traegt die Kennung "leer-bestaetigt Renault/<name> <gruppe>:
+ * <Themenliste>"; ein anderer Inhalt - anderes Fahrzeug, andere Liste, ein
+ * Merker einer anderen Fassung - gilt nicht. purge_installation raeumt ihn
+ * bei jedem Upgrade mit ab; dann wird genau einmal nachgefragt.
  */
 function rn_mqtt_altlast($gruppe, $name)
 {
     $liste = rn_mqtt_frueher_behalten($gruppe);
-    $p = rn_paths();
-    $merker = $p['datadir'] . '/.mqtt_altlast_' . $gruppe . '_' . substr(md5((string) $name), 0, 12);
-    $kennung = 'leer-bestaetigt Renault/' . $name . ' ' . $gruppe . ': ' . implode(' ', $liste);
+    list($merker, $kennung) = rn_mqtt_altlast_merker($gruppe, $name);
     if (is_file($merker) && trim((string) @file_get_contents($merker)) === $kennung) {
         return array('lage' => 'erledigt', 'themen' => array());
     }
@@ -1657,38 +1884,105 @@ function rn_mqtt_altlast($gruppe, $name)
     foreach ($liste as $t) { $voll[] = $praefix . $t; }
     $f = rn_mqtt_sitzung(rn_mqtt_zugang(), array(), $voll);
     if ($f['lage'] === 'ok' && !$f['belegt']) {
-        if (@file_put_contents($merker, $kennung . "\n") === false) {
-            rn_melden('WARN', 'MQTT: der Merker ' . $merker . ' liess sich nicht schreiben - '
-                . 'der Broker wird im naechsten Lauf wieder gefragt.');
-        } else {
-            rn_melden('INFO', 'MQTT: unter ' . $praefix . ' steht keines der ' . count($liste)
-                . ' frueher zurueckbehaltenen Themen (' . $gruppe . ') mehr im Broker - vom '
-                . 'Broker bestaetigt.');
-        }
+        rn_mqtt_altlast_bestaetigt($gruppe, $name);
         return array('lage' => 'erledigt', 'themen' => array());
     }
     if ($f['lage'] === 'ok') {
         $t = array();
         foreach (array_keys($f['belegt']) as $v) { $t[] = substr($v, strlen($praefix)); }
         rn_melden('INFO', 'MQTT: unter ' . $praefix . ' stehen noch ' . count($t) . ' frueher '
-            . 'zurueckbehaltene Werte im Broker (' . implode(', ', $t) . ') - sie werden '
-            . 'unmittelbar vor dem naechsten gueltigen Wert geloescht.');
+            . 'zurueckbehaltene Werte im Broker (' . implode(', ', $t) . ') - sie werden in diesem '
+            . 'Lauf geloescht (vor einem gueltigen Wert, sonst am Ende des Laufs) und beim Broker '
+            . 'nachgelesen.');
         return array('lage' => 'belegt', 'themen' => $t);
     }
-    rn_melden('WARN', 'MQTT: der Broker liess sich nicht befragen, ob unter ' . $praefix
-        . ' noch frueher zurueckbehaltene Werte stehen. Sie werden deshalb unmittelbar vor '
-        . 'jedem Senden geloescht, bis der Broker antwortet.');
+    rn_melden_stuendlich('WARN', 'MQTT: der Broker liess sich nicht befragen, ob unter ' . $praefix
+        . ' noch frueher zurueckbehaltene Werte stehen. Sie werden deshalb in jedem vollen Lauf '
+        . 'geloescht, bis der Broker antwortet.');
     return array('lage' => 'unbekannt', 'themen' => $liste);
+}
+
+/** Pfad und Kennung des Merkers eines Fahrzeugs: array(pfad, kennung). */
+function rn_mqtt_altlast_merker($gruppe, $name)
+{
+    $p = rn_paths();
+    return array(
+        $p['datadir'] . '/.mqtt_altlast_' . $gruppe . '_' . substr(md5((string) $name), 0, 12),
+        'leer-bestaetigt Renault/' . $name . ' ' . $gruppe . ': '
+            . implode(' ', rn_mqtt_frueher_behalten($gruppe)),
+    );
+}
+
+/** Den Merker schreiben - nur aufzurufen, wenn der Broker bestaetigt hat. */
+function rn_mqtt_altlast_bestaetigt($gruppe, $name)
+{
+    list($merker, $kennung) = rn_mqtt_altlast_merker($gruppe, $name);
+    $praefix = 'Renault/' . $name . '/';
+    if (!rn_datei_schreiben($merker, $kennung . "\n", 0644)) {
+        rn_melden('WARN', 'MQTT: der Merker ' . $merker . ' liess sich nicht schreiben - '
+            . 'der Broker wird im naechsten Lauf wieder gefragt.');
+        return false;
+    }
+    rn_melden('INFO', 'MQTT: unter ' . $praefix . ' steht keines der '
+        . count(rn_mqtt_frueher_behalten($gruppe)) . ' frueher zurueckbehaltenen Themen ('
+        . $gruppe . ') mehr im Broker - vom Broker bestaetigt.');
+    return true;
+}
+
+/**
+ * Am Ende eines VOLLEN Laufs (Befund M1): was noch vorgemerkt ist - das
+ * Thema bekam keinen oder einen leeren Wert -, direkt loeschen und beim
+ * Broker nachlesen, in EINER Sitzung. Bestaetigt der Broker, dass keines der
+ * frueher zurueckbehaltenen Themen mehr dasteht, entsteht der Merker, und
+ * kein weiterer Lauf oeffnet dafuer eine Sitzung. $alt ist die Rueckgabe von
+ * rn_mqtt_altlast() aus diesem Lauf.
+ */
+function rn_mqtt_altlast_abschluss($gruppe, $name, $alt)
+{
+    $rest = rn_altlast_faellig($name, '', 'rest');
+    if (!is_array($alt) || !isset($alt['lage']) || $alt['lage'] === 'erledigt') { return; }
+    $praefix = 'Renault/' . $name . '/';
+    $leeren = array();
+    foreach ($rest as $t) { $leeren[] = $praefix . $t; }
+    $fragen = array();
+    foreach (rn_mqtt_frueher_behalten($gruppe) as $t) { $fragen[] = $praefix . $t; }
+    $f = rn_mqtt_sitzung(rn_mqtt_zugang(), $leeren, $fragen);
+    if ($f['lage'] === 'ok' && !$f['belegt']) {
+        rn_mqtt_altlast_bestaetigt($gruppe, $name);
+        return;
+    }
+    if ($f['lage'] === 'ok') {
+        $t = array();
+        foreach (array_keys($f['belegt']) as $v) { $t[] = substr($v, strlen($praefix)); }
+        rn_melden_stuendlich('WARN', 'MQTT: unter ' . $praefix . ' stehen nach dem Loeschen noch '
+            . count($t) . ' frueher zurueckbehaltene Werte im Broker (' . implode(', ', $t)
+            . ') - der naechste volle Lauf versucht es erneut.');
+        return;
+    }
+    rn_melden_stuendlich('WARN', 'MQTT: nach dem Loeschen der Altwerte unter ' . $praefix
+        . ' liess sich der Broker nicht befragen - der naechste volle Lauf versucht es erneut.');
 }
 
 /**
  * Vormerken (drittes Argument ein Feld) oder abfragen, ob vor dem naechsten
  * gueltigen Wert dieses Themas der Altwert zu loeschen ist. Die Abfrage
- * verbraucht die Vormerkung - geloescht wird einmal je Lauf.
+ * verbraucht die Vormerkung - geloescht wird einmal je Lauf. Mit 'rest' als
+ * drittem Argument: alle noch offenen Vormerkungen dieses Fahrzeugs (Themen
+ * ohne Praefix) - und sie sind damit verbraucht.
  */
 function rn_altlast_faellig($name, $thema, $vormerken = null)
 {
     static $offen = array();
+    if ($vormerken === 'rest') {
+        $rest = array();
+        foreach (array_keys($offen) as $k) {
+            if (strpos($k, $name . '/') === 0) {
+                $rest[] = substr($k, strlen($name) + 1);
+                unset($offen[$k]);
+            }
+        }
+        return $rest;
+    }
     if (is_array($vormerken)) {
         foreach ($vormerken as $t) { $offen[$name . '/' . $t] = true; }
         return false;
@@ -1702,22 +1996,53 @@ function rn_altlast_faellig($name, $thema, $vormerken = null)
 }
 
 /**
+ * Was fuer einen Wert hinausgeht: die Nutzlast, oder null = nicht senden.
+ *
+ * Regeln/07 Z. 766 (Befund M2): ein LEERER Messwert wird nicht gesendet -
+ * das Gateway reicht eine leere Nachricht an den Miniserver weiter, und ein
+ * Analogeingang liest daraus 0 (bis 2.1.12 in WSL gemessen: ChargingTime,
+ * ChargingEffekt, InTemp, OutTemp und EnergieOnBoard gingen in einem Lauf
+ * leer hinaus). Ein leerer ZUSTAND geht als "-" retained: fluechtig und
+ * leer bekam Loxone 0, waehrend der Broker den alten Stand behielt - zwei
+ * Wahrheiten. Was ein Zustand ist, sagt rn_thema_retained().
+ */
+function rn_mqtt_nutzlast($thema, $wert)
+{
+    $w = (string) $wert;
+    if ($w !== '') { return $w; }
+    return rn_thema_retained($thema) ? '-' : null;
+}
+
+/**
+ * Kennt das Fahrzeug einen Nebenendpunkt NACHWEISLICH nicht? Nur dann darf
+ * ein Zustand "n/a" heissen (Befund M4); jeder andere Fehlschlag laesst den
+ * letzten gemessenen Stand im Broker stehen.
+ */
+function rn_endpunkt_unbekannt($code)
+{
+    return in_array((int) $code, array(404, 405, 501), true);
+}
+
+/**
  * EIN Thema senden - die gemeinsame Sendestelle von abruf.php und
  * history.php.
  *
- * Ist fuer das Thema ein Altwert vorgemerkt (rn_mqtt_altlast()), geht
- * unmittelbar davor die leere retain-Nutzlast hinaus, die ihn loescht. Nur
- * vor einem NICHTLEEREN Wert: sonst bekaeme Loxone die Loeschung ohne
- * gueltigen Wert dahinter, und die Vormerkung bleibt fuer den naechsten Lauf.
+ * Die Nutzlast kommt aus rn_mqtt_nutzlast(): ein leerer Messwert geht gar
+ * nicht hinaus, ein leerer Zustand als "-" (Befund M2). Ist fuer das Thema
+ * ein Altwert vorgemerkt (rn_mqtt_altlast()), geht unmittelbar davor die
+ * leere retain-Nutzlast hinaus, die ihn loescht; was ohne Wert bleibt,
+ * loescht rn_mqtt_altlast_abschluss() am Ende des Laufs.
  */
 function rn_mqtt_senden($mqtt, $name, $thema, $wert)
 {
     if ($mqtt === null) { return; }
+    $nutz = rn_mqtt_nutzlast($thema, $wert);
+    if ($nutz === null) { return; }
     $voll = 'Renault/' . $name . '/' . $thema;
-    if ((string) $wert !== '' && rn_altlast_faellig($name, $thema)) {
+    if (rn_altlast_faellig($name, $thema)) {
         $mqtt->publish($voll, '', 0, 1);
     }
-    $mqtt->publish($voll, (string) $wert, 0, rn_retain_merker($thema, $wert));
+    $mqtt->publish($voll, $nutz, 0, rn_retain_merker($thema, $nutz));
 }
 
 /**
@@ -1830,6 +2155,43 @@ function rn_mqtt_leeren($runden = 3)
     echo "<WARNING> MQTT: nach dem Loeschen liess sich der Broker nicht mehr befragen - nicht "
        . "nachgelesen.\n";
     return 1;
+}
+
+/**
+ * Die zurueckbehaltenen Themen EINES Fahrzeugnamens leeren und beim Broker
+ * nachlesen - fuer die Oberflaeche, wenn ein Fahrzeug umbenannt oder
+ * entfernt wurde (Befund M3). Bis 2.1.12 blieben dessen Zustaende fuer immer
+ * im Broker - das Gateway (Abo Renault/#) lieferte sie nach jedem Neustart
+ * wieder an Loxone -, und die Deinstallation kannte den alten Namen nicht
+ * mehr (in WSL gemessen, Fall U: Zoe -> Zoe2, danach 8 Themen unter
+ * Renault/Zoe/).
+ *
+ * Ablauf wie rn_mqtt_leeren(): erst fragen, dann nur Belegtes loeschen und
+ * nachlesen, hoechstens $runden Runden. Schreibt nichts und gibt nichts aus.
+ * Rueckgabe array('lage' => 'ok'|'offen'|'unbekannt'|'kein_broker',
+ * 'geloescht' => Zahl der belegten Themen, 'offen' => array(Themen)).
+ */
+function rn_mqtt_name_leeren($name, $runden = 3)
+{
+    $aus = array('lage' => 'kein_broker', 'geloescht' => 0, 'offen' => array());
+    $z = rn_mqtt_zugang();
+    if (!$z) { return $aus; }
+    $alle = array();
+    foreach (rn_mqtt_alle_themen() as $t) { $alle[] = 'Renault/' . $name . '/' . $t; }
+    $f = rn_mqtt_sitzung($z, array(), $alle);
+    if ($f['lage'] !== 'ok') { $aus['lage'] = 'unbekannt'; return $aus; }
+    $offen = array_keys($f['belegt']);
+    $aus['geloescht'] = count($offen);
+    for ($r = 1; $r <= max(1, (int) $runden) && $offen; $r++) {
+        if ($r > 1) { usleep(500000); }
+        $f = rn_mqtt_sitzung($z, $offen, $offen);
+        if ($f['lage'] !== 'ok') { break; }
+        $offen = array_keys($f['belegt']);
+    }
+    $aus['offen'] = $offen;
+    if ($f['lage'] !== 'ok') { $aus['lage'] = 'unbekannt'; return $aus; }
+    $aus['lage'] = $offen ? 'offen' : 'ok';
+    return $aus;
 }
 
 /**
@@ -1978,9 +2340,7 @@ function rn_vorlage_felder($zoeph)
  *  je Fahrzeug einmal. */
 function rn_vorlage_vo()
 {
-    $host = isset($_SERVER['HTTP_HOST']) && $_SERVER['HTTP_HOST'] !== ''
-        ? preg_replace('/[^A-Za-z0-9\.\-:]/', '', (string) $_SERVER['HTTP_HOST'])
-        : (gethostname() ?: 'loxberry');
+    $host  = rn_rechnername();
     $cfg   = rn_config_read();
     $autos = rn_fahrzeuge($cfg);
     $mehr  = count($autos) > 1;
@@ -2116,7 +2476,8 @@ function rn_abo_datei()
  * Unbekannte Schluessel sind eine Beanstandung, kein stiller Verlust: sie
  * stammen aus einer anderen Fassung oder einem anderen Plugin.
  *
- * Rueckgabe: array(Konfiguration|null, Beanstandungen[], uebernommene Werte).
+ * Rueckgabe: array(Konfiguration|null, Beanstandungen[], uebernommene Werte,
+ * Hinweise[] - seit 2.1.13, etwa "das geltende Token bleibt").
  */
 function rn_sicherung_lesen($roh)
 {
@@ -2138,6 +2499,7 @@ function rn_sicherung_lesen($roh)
     $bekannt = array_keys(rn_vorgaben());
     $anzahl = 0;
     $gesehen = array();
+    $hinweise = array();
 
     foreach ($daten as $k => $w) {
         $k = (string) $k;
@@ -2165,6 +2527,19 @@ function rn_sicherung_lesen($roh)
             continue;
         }
         $w = (string) $w;
+        /* Ein leeres Aktionstoken heisst "kein Token gesichert" (Befund U4,
+         * Regeln/05): das geltende Token bleibt, und die Meldung sagt es. Bis
+         * 2.1.12 wurde es als leer geschrieben, und rn_config_read() "heilte"
+         * die Datei im selben Aufruf aus der Zweitschrift - die Oberflaeche
+         * meldete Erfolg fuer einen Stand, der schon wieder fort war.
+         * Gewaehlt ist Behalten statt Abweisen: eine sonst gueltige Sicherung
+         * (etwa aus einer Fassung, die das Token nicht sicherte) bleibt so
+         * zurueckspielbar, und die Adressen in Loxone gelten weiter. */
+        if ($k === 'aktionstoken' && $w === '') {
+            $gesehen[$k] = true;
+            $hinweise[] = rn_t('TEXT.SICH_TOKEN_BEHALTEN');
+            continue;
+        }
         if (!rn_wert_pruefen($k, $w)) {
             $mangel[] = sprintf(rn_t('TEXT.SICH_WERT'),
                                  htmlspecialchars($k, ENT_QUOTES, 'UTF-8'));
@@ -2175,7 +2550,16 @@ function rn_sicherung_lesen($roh)
         $anzahl++;
     }
 
-    $fehlend = array_values(array_diff($bekannt, array_keys($gesehen)));
+    /* "Fehlt" heisst: der Schluessel steht NICHT in der Datei (Befund U3).
+     * Bis 2.1.12 zaehlte auch ein vorhandener, aber abgewiesener Schluessel
+     * als fehlend, und die Meldung schob die Schuld auf die Datei; der
+     * abgewiesene Wert steht schon als eigene Beanstandung da. */
+    $in_datei = array();
+    foreach (array_keys($daten) as $k) { $in_datei[(string) $k] = true; }
+    $fehlend = array();
+    foreach ($bekannt as $k) {
+        if (!isset($in_datei[$k])) { $fehlend[] = $k; }
+    }
     if ($fehlend) {
         $mangel[] = sprintf(rn_t('TEXT.SICH_FEHLT'), count($fehlend), count($bekannt),
             htmlspecialchars(implode(', ', array_slice($fehlend, 0, 8))
@@ -2186,7 +2570,7 @@ function rn_sicherung_lesen($roh)
     }
     /* Alle Beanstandungen werden gesammelt; eine halb gueltige Datei aendert
      * GAR NICHTS. */
-    return array($mangel ? null : $neu, $mangel, $anzahl);
+    return array($mangel ? null : $neu, $mangel, $anzahl, $hinweise);
 }
 
 /**
