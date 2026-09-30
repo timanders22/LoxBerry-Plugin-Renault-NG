@@ -187,7 +187,7 @@ function rn_get($url, $kamereon_api, $jwt, $name = '')
     $antwort = curl_exec($ch);
     if ($name !== '') { renault_log_api($name, $ch, $antwort); }
     $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    if (PHP_VERSION_ID < 80000) { curl_close($ch); }
     if ($antwort === FALSE) { return array(0, null, ''); }
     return array($code, json_decode($antwort, TRUE), $antwort);
 }
@@ -209,7 +209,7 @@ function rn_post($url, $kamereon_api, $jwt, $json, $name = '')
     $antwort = curl_exec($ch);
     if ($name !== '') { renault_log_api($name, $ch, $antwort); }
     $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    if (PHP_VERSION_ID < 80000) { curl_close($ch); }
     if ($antwort === FALSE) { return array(0, null, ''); }
     return array($code, json_decode($antwort, TRUE), $antwort);
 }
@@ -252,7 +252,7 @@ if ($rn_anm[1] === '' || $rn_anm[0] !== $rn_heute) {
     ));
     $rn_r = curl_exec($rn_ch);
     renault_log_api('Gigya Login (accounts.login)', $rn_ch, $rn_r);
-    curl_close($rn_ch);
+    if (PHP_VERSION_ID < 80000) { curl_close($rn_ch); }
     if ($rn_r === FALSE) {
         renault_log('ERROR', 'Gigya Login: keine Antwort (Zeitueberschreitung oder Netzfehler).');
         $rn_http_status = 502;    // die Gegenstelle hat abgewiesen
@@ -287,7 +287,7 @@ if ($rn_anm[1] === '' || $rn_anm[0] !== $rn_heute) {
     ));
     $rn_r = curl_exec($rn_ch);
     renault_log_api('Gigya JWT (accounts.getJWT)', $rn_ch, $rn_r);
-    curl_close($rn_ch);
+    if (PHP_VERSION_ID < 80000) { curl_close($rn_ch); }
     $rn_d = ($rn_r === FALSE) ? null : json_decode($rn_r, TRUE);
     if (empty($rn_d['id_token'])) {
         // Einen fehlgeschlagenen Login NICHT bis Mitternacht zwischenspeichern.
@@ -774,7 +774,7 @@ foreach ($rn_mit_vin as $rn_f) {
                 curl_setopt($rn_ch, CURLOPT_TIMEOUT, 30);
                 $rn_wr = curl_exec($rn_ch);
                 $rn_wc = (int) curl_getinfo($rn_ch, CURLINFO_HTTP_CODE);
-                curl_close($rn_ch);
+                if (PHP_VERSION_ID < 80000) { curl_close($rn_ch); }
                 if ($rn_wr === FALSE || $rn_wc >= 400) {
                     renault_log('WARN', 'Wetterdienst antwortete mit HTTP ' . $rn_wc
                         . '. Hinweis: die hier benutzte Fassung 2.5 von OpenWeatherMap ist '
@@ -945,7 +945,7 @@ foreach ($rn_mit_vin as $rn_f) {
         curl_setopt($rn_ch, CURLOPT_TIMEOUT, 30);
         $rn_ar = curl_exec($rn_ch);
         $rn_ac = (int) curl_getinfo($rn_ch, CURLINFO_HTTP_CODE);
-        curl_close($rn_ch);
+        if (PHP_VERSION_ID < 80000) { curl_close($rn_ch); }
         if ($rn_ar === FALSE || $rn_ac >= 400) {
             renault_log('WARN', 'ABRP antwortete mit HTTP ' . $rn_ac . ' - Telemetrie nicht uebernommen.');
         }

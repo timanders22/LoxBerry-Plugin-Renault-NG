@@ -144,7 +144,7 @@ foreach (rn_fahrzeuge($rn_cfg) as $rn_f) {
     $rn_r = curl_exec($rn_ch);
     renault_log_api('Ladehistorie ' . $rn_name . ' (charges)', $rn_ch, $rn_r);
     $rn_code = (int) curl_getinfo($rn_ch, CURLINFO_HTTP_CODE);
-    curl_close($rn_ch);
+    if (PHP_VERSION_ID < 80000) { curl_close($rn_ch); }
 
     if ($rn_r === FALSE) {
         renault_log('ERROR', 'Ladehistorie ' . $rn_name . ': keine Antwort (Zeitueberschreitung oder Netzfehler).');

@@ -386,7 +386,7 @@ function rn_test_endpunkt($cfg)
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
         $rumpf = curl_exec($ch);
         $code  = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
+        if (PHP_VERSION_ID < 80000) { curl_close($ch); }
     } elseif (ini_get('allow_url_fopen')) {
         $ctx = stream_context_create(array('http' => array(
             'timeout' => 3, 'ignore_errors' => true,
