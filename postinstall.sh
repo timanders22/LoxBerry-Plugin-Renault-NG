@@ -68,6 +68,13 @@ echo "<INFO> Plugin BIN folder is: $PBIN"
 # 2.1.12 holte der erste Cron-Lauf oder Seitenaufruf die Zweitschrift ueber
 # rn_umzug() zurueck (in WSL gemessen, Faelle N2 und N3: tokALT999 und das
 # alte Kennwort). Die Bibliothek liest .alt nie; uninstall raeumt sie ab.
+#
+# ZWEITES NETZ (X-1): dasselbe tut seit dem Welle-4-Bau schon preinstall.sh,
+# VOR dem Kopieren der Cron-Datei - bis 2.1.14 konnte ein Takt zwischen dem
+# Kopieren und diesem Skript die Zweitschrift noch einspielen ("Bekannte
+# Grenze" der README). Hier wird deshalb normalerweise nichts mehr gefunden;
+# der Block bleibt fuer einen Rest, den preinstall.sh nicht verschieben
+# konnte.
 PDIR="${PDIR:-renault_ng}"
 BASE="${5:-$LBHOMEDIR}"
 if [ -z "$BASE" ] || [ ! -d "$BASE/config/plugins" ] || [ ! -d "$BASE/data/plugins" ]; then

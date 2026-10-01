@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.14 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.15 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,28 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Version 2.1.15
+
+Welle 4 der Verbesserungsliste (`Pruefung-Durchgang-2026-09-29/VERBESSERUNGEN_OFFEN.md`, Entscheidungen 16, 19 und 21).
+Gemessen mit einer Renault-Attrappe unter PHP 7.4, 8.3 und 8.5; nicht an einem Fahrzeug.
+
+* **Ohne Zugangsdaten** schreibt der Takt nur noch eine INFO-Zeile am Tag statt
+  rund 48 ERROR-Zeilen.
+* **Befehlsbremse:** Derselbe Schaltbefehl (Klima an/aus samt Zieltemperatur,
+  Laden an/aus, Ladeplan an/aus) innerhalb von 60 s geht nur einmal hinaus
+  (`UNVERAENDERT=1`); der Abruf ist ausgenommen.
+* Eine **zurückgespielte Sicherung** räumt die MQTT-Themen alter Fahrzeugnamen ab,
+  wie das Speichern.
+* **Halb lesbare Konfiguration:** Der Reiter Einstellungen bietet die noch
+  lesbaren Felder einer beiseitegelegten Datei zum Übernehmen an (Passwort nur
+  per Haken, nie im HTML; Löschen nur mit Bestätigung).
+* **Neuinstallation:** `preinstall.sh` legt Altlasten vor dem Kopieren der
+  Cron-Datei beiseite; ein Takt in der Installationslücke holt kein altes Token
+  mehr zurück.
+* **Nach einer Beanstandung wird nichts gespeichert,** Zeichen werden nicht mehr
+  still entfernt, die Eingaben kommen markiert zurück; der Ländercode wird
+  großgeschrieben. „Einstellungen sichern“ warnt bei auffälligen Werten.
 
 ## Version 2.1.14 — Sammelnachzug curl_close
 

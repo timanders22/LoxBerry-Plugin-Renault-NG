@@ -699,7 +699,7 @@ function rn_rechnername()
  * Text sie doch enthielte (Regeln/04, Nachtrag Raumklima 17.09.).
  */
 function rn_einmal_schreiben($meldung, array $fehler, array $misslungen, $test_titel,
-                             $test_text, $cfg)
+                             $test_text, $cfg, $eingaben = null)
 {
     $weg = array();
     foreach (array('password', 'aktionstoken', 'weather_api_key', 'abrp_token') as $k) {
@@ -715,6 +715,16 @@ function rn_einmal_schreiben($meldung, array $fehler, array $misslungen, $test_t
         'test_titel' => $rein($test_titel),
         'test_text'  => $rein($test_text),
     );
+    /* X-2 (Welle-4-Bau): die Eingaben des beanstandeten Formulars. Geheimnisse
+     * stehen nie darin (index.php, rn_eingabe_felder()); gespeicherte
+     * Geheimnisse werden trotzdem ersetzt, falls jemand eines in ein
+     * Textfeld getippt hat. */
+    if (is_array($eingaben) && isset($eingaben['werte']) && is_array($eingaben['werte'])) {
+        foreach ($eingaben['werte'] as $k => $w) {
+            $eingaben['werte'][$k] = $rein($w);
+        }
+        $d['eingaben'] = $eingaben;
+    }
     $json = json_encode($d, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
                             | JSON_INVALID_UTF8_SUBSTITUTE);
     if ($json === false) { return false; }
@@ -743,7 +753,9 @@ function rn_einmal_lesen()
     };
     return array('meldung' => $text('meldung'), 'fehler' => $liste('fehler'),
                  'misslungen' => $liste('misslungen'), 'test_titel' => $text('test_titel'),
-                 'test_text' => $text('test_text'));
+                 'test_text' => $text('test_text'),
+                 // X-2: geprueft wird beim Setzen (index.php, rn_eingaben()).
+                 'eingaben' => (isset($d['eingaben']) && is_array($d['eingaben'])) ? $d['eingaben'] : null);
 }
 
 /** Die Adresse des Selbsttests - prueft das Token, ohne etwas zu schalten. */
@@ -2195,6 +2207,46 @@ function rn_mqtt_name_leeren($name, $runden = 3)
 }
 
 /**
+ * Die zurueckbehaltenen Themen weggefallener Fahrzeugnamen abraeumen (Befund
+ * M3) - fuer "Speichern" UND fuer das Zurueckspielen einer Sicherung
+ * (Renault-a2). Bis 2.1.14 stand dieser Block nur im Speichern-Handler: eine
+ * zurueckgespielte Sicherung mit anderen Fahrzeugnamen liess die Themen unter
+ * dem alten Namen fuer immer im Broker, und das Gateway (Abo Renault/#)
+ * lieferte sie nach jedem Neustart wieder an Loxone.
+ *
+ * $vorher, $nachher: die Fahrzeugnamen (rn_fahrzeuge()[..]['name']) vor und
+ * nach dem Schreiben. Je weggefallenem Namen: leeren, beim Broker nachlesen.
+ * Rueckgabe array('meldung' => Text zum Anhaengen an die Erfolgsmeldung
+ * (beginnt mit <br>, schon maskiert), 'misslungen' => Zeilen fuer "Der
+ * Vorgang ist nicht gelungen"). Protokollzeilen wie bisher.
+ */
+function rn_mqtt_altnamen_abraeumen(array $vorher, array $nachher)
+{
+    $aus = array('meldung' => '', 'misslungen' => array());
+    foreach (array_values(array_diff($vorher, $nachher)) as $altname) {
+        $wo = 'Renault/' . $altname . '/';
+        $l = rn_mqtt_name_leeren($altname);
+        if ($l['lage'] === 'ok') {
+            $aus['meldung'] .= '<br>' . ($l['geloescht'] > 0
+                ? sprintf(rn_t('TEXT.M_MQTT_ALTNAME_GELOESCHT'), $l['geloescht'], rn_e($wo))
+                : sprintf(rn_t('TEXT.M_MQTT_ALTNAME_LEER'), rn_e($wo)));
+            rn_melden('INFO', 'MQTT: Fahrzeug umbenannt oder entfernt - unter ' . $wo
+                . ' ' . $l['geloescht'] . ' zurueckbehaltene Themen geloescht, vom Broker bestaetigt.');
+        } elseif ($l['lage'] === 'offen') {
+            $aus['misslungen'][] = sprintf(rn_t('TEXT.F_MQTT_ALTNAME_OFFEN'), rn_e($wo),
+                count($l['offen']), rn_e(implode(', ', array_slice($l['offen'], 0, 5))));
+            rn_melden('WARN', 'MQTT: unter ' . $wo . ' stehen nach dem Loeschen noch '
+                . count($l['offen']) . ' zurueckbehaltene Themen.');
+        } else {
+            $aus['misslungen'][] = sprintf(rn_t('TEXT.F_MQTT_ALTNAME_BROKER'), rn_e($wo));
+            rn_melden('WARN', 'MQTT: Fahrzeug umbenannt oder entfernt - der Broker war nicht '
+                . 'zu befragen, die Themen unter ' . $wo . ' sind NICHT geloescht.');
+        }
+    }
+    return $aus;
+}
+
+/**
  * Die Befehle, die Loxone an das Plugin senden kann.
  *
  * Je Befehl: Sprachschluessel und ob er am Fahrzeug etwas VERAENDERT.
@@ -2219,6 +2271,175 @@ function rn_befehl_schaltet($aktion)
 {
     $b = rn_befehle();
     return isset($b[$aktion]) ? (bool) $b[$aktion][1] : true;
+}
+
+/* ---------------- Gleichwert-Unterdrueckung fuer Sollwerte (X-7) ----------------
+ *
+ * Welle-4-Bau, Entscheidung Nr. 19 des Hausherrn (01.10.2026): derselbe
+ * Sollwert fuer dasselbe Fahrzeug innerhalb von 60 s geht nicht noch einmal
+ * an Renault - der Endpunkt antwortet HTTP 200 mit UNVERAENDERT=1. Kein
+ * zusaetzliches 429: ein anderer Wert geht sofort hinaus.
+ *
+ * Warum: Loxone sendet einen Ausgang bei jeder Aenderung, ein flatternder
+ * Baustein denselben Befehl mehrmals. Jeder Befehl weckt das Fahrzeug ueber
+ * die Renault-Cloud; bis 2.1.14 ging jeder hinaus.
+ *
+ * Gebremst werden nur Sollwerte: Klima an (samt Zieltemperatur) und aus,
+ * Laden an und aus, Ladeplan an und aus. Nicht: der Datenabruf.
+ *
+ * Bauform BYD 0.9.22 / AudiConnect 0.9.23: Merker unter flock, geoeffnet mit
+ * "e" (close-on-exec), faellt geschlossen aus (503). Vorgemerkt wird VOR dem
+ * Senden; ist der Befehl danach nicht ausgefuehrt, verwirft der Endpunkt den
+ * eigenen Eintrag wieder (rn_gleichwert_vergessen()).
+ */
+define('RN_GLEICHWERT_S', 60);
+
+/** Pfad des Merkers (Datenordner; nur nach der Tokenpruefung benutzt). */
+function rn_gleichwert_datei()
+{
+    return rn_paths()['datadir'] . '/gleichwert.json';
+}
+
+/**
+ * Gruppe und Sollwert eines Befehls. null = nicht gebremst (Abruf,
+ * Unbekanntes). Die Zieltemperatur der Vorklimatisierung kommt aus den
+ * Einstellungen und gehoert zum Sollwert: 21 und 22 sind zwei Befehle.
+ */
+function rn_gleichwert_gruppe($aktion, $cfg)
+{
+    switch ((string) $aktion) {
+        case 'acnow':
+            $t = (is_array($cfg) && isset($cfg['ac_temp'])) ? trim((string) $cfg['ac_temp']) : '';
+            return array('klima', 'an|' . $t);
+        case 'acoff':
+            return array('klima', 'aus');
+        case 'chargenow':
+            return array('laden', 'an');
+        case 'chargestop':
+            return array('laden', 'aus');
+        case 'cmon':
+            return array('ladeplan', 'an');
+        case 'cmoff':
+            return array('ladeplan', 'aus');
+    }
+    return null;
+}
+
+/** Schluessel des Merkers: Fahrgestellnummer (sonst Nummer) und Gruppe. */
+function rn_gleichwert_schluessel($ziel, $nr, $gruppe)
+{
+    $fz = (is_array($ziel) && isset($ziel['vin']) && trim((string) $ziel['vin']) !== '')
+        ? strtoupper(trim((string) $ziel['vin'])) : 'nr' . (int) $nr;
+    return $fz . '|' . $gruppe;
+}
+
+/**
+ * Das Urteil - rein, ohne Datei.
+ * Rueckgabe: array('' | 'UNVERAENDERT', Sekunden seit dem gemerkten Befehl).
+ */
+function rn_gleichwert_urteil(array $m, $schluessel, $wert, $jetzt)
+{
+    if (!isset($m[$schluessel]) || !is_array($m[$schluessel])
+        || !isset($m[$schluessel]['w'], $m[$schluessel]['t'])
+        || !is_scalar($m[$schluessel]['w']) || !is_scalar($m[$schluessel]['t'])) {
+        return array('', 0);
+    }
+    $seit = (int) $jetzt - (int) $m[$schluessel]['t'];
+    // Uhr zurueckgesprungen: der Merker sagt nichts mehr.
+    if ($seit < 0) {
+        return array('', 0);
+    }
+    if ((string) $m[$schluessel]['w'] === (string) $wert && $seit < RN_GLEICHWERT_S) {
+        return array('UNVERAENDERT', $seit);
+    }
+    return array('', $seit);
+}
+
+/**
+ * Vor dem Senden. Rueckgabe: array(Urteil, Sekunden, Marke).
+ *   'UNVERAENDERT' - derselbe Wert ging vor weniger als 60 s hinaus;
+ *   'MERKER'       - der Merker laesst sich nicht oeffnen, sperren oder
+ *                    schreiben: geschlossen ausfallen;
+ *   ''             - senden; der Befehl ist dann unter der Marke vorgemerkt.
+ */
+function rn_gleichwert_pruefen($schluessel, $wert)
+{
+    $f = rn_gleichwert_datei();
+    if (!is_dir(dirname($f))) {
+        @mkdir(dirname($f), 0775, true);
+    }
+    $fh = @fopen($f, 'c+e');
+    if ($fh === false || !@flock($fh, LOCK_EX)) {
+        if (is_resource($fh)) {
+            fclose($fh);
+        }
+        return array('MERKER', 0, '');
+    }
+    $m = json_decode((string) stream_get_contents($fh), true);
+    if (!is_array($m)) {
+        $m = array();     // unlesbar gilt als leer: im Zweifel senden
+    }
+    $jetzt = time();
+    list($urteil, $seit) = rn_gleichwert_urteil($m, $schluessel, $wert, $jetzt);
+    if ($urteil !== '') {
+        flock($fh, LOCK_UN);
+        fclose($fh);
+        return array($urteil, $seit, '');
+    }
+    // Abgelaufene Eintraege fallen heraus - der Merker bleibt klein.
+    foreach ($m as $k => $e) {
+        if (!is_array($e) || !isset($e['t']) || !is_scalar($e['t'])
+            || $jetzt - (int) $e['t'] >= RN_GLEICHWERT_S || (int) $e['t'] > $jetzt) {
+            unset($m[$k]);
+        }
+    }
+    $marke = bin2hex(random_bytes(6));
+    $m[$schluessel] = array('w' => (string) $wert, 't' => $jetzt, 'm' => $marke);
+    $js = json_encode($m);
+    $ok = $js !== false && ftruncate($fh, 0) && rewind($fh)
+          && fwrite($fh, $js) === strlen($js) && fflush($fh);
+    flock($fh, LOCK_UN);
+    fclose($fh);
+    if (!$ok) {
+        // Nicht vermerkt heisst: der naechste gleiche Befehl wuerde nicht
+        // erkannt. Geschlossen ausfallen.
+        return array('MERKER', 0, '');
+    }
+    return array('', 0, $marke);
+}
+
+/**
+ * Den eigenen Eintrag verwerfen - der Befehl ist nicht ausgefuehrt worden.
+ * $marke '' verwirft jeden Eintrag des Schluessels, sonst nur den eigenen.
+ * Rueckgabe: true, wenn danach kein passender Eintrag mehr steht.
+ */
+function rn_gleichwert_vergessen($schluessel, $marke = '')
+{
+    $f = rn_gleichwert_datei();
+    clearstatcache(true, $f);
+    if (!is_file($f)) {
+        return true;
+    }
+    $fh = @fopen($f, 'c+e');
+    if ($fh === false || !@flock($fh, LOCK_EX)) {
+        if (is_resource($fh)) {
+            fclose($fh);
+        }
+        return false;
+    }
+    $m = json_decode((string) stream_get_contents($fh), true);
+    $ok = true;
+    if (is_array($m) && isset($m[$schluessel]) && ($marke === ''
+            || (is_array($m[$schluessel]) && isset($m[$schluessel]['m'])
+                && (string) $m[$schluessel]['m'] === (string) $marke))) {
+        unset($m[$schluessel]);
+        $js = json_encode($m);
+        $ok = $js !== false && ftruncate($fh, 0) && rewind($fh)
+              && fwrite($fh, $js) === strlen($js) && fflush($fh);
+    }
+    flock($fh, LOCK_UN);
+    fclose($fh);
+    return $ok;
 }
 
 /* ==================================================================
@@ -2479,9 +2700,10 @@ function rn_abo_datei()
  * Rueckgabe: array(Konfiguration|null, Beanstandungen[], uebernommene Werte,
  * Hinweise[] - seit 2.1.13, etwa "das geltende Token bleibt").
  */
-function rn_sicherung_lesen($roh)
+function rn_sicherung_lesen($roh, &$namen = null)
 {
     $mangel = array();
+    $namen = array();     // X-3: die Namen der beanstandeten Einstellungen, nie Werte
     $daten = json_decode((string) $roh, true);
     if (!is_array($daten)) {
         return array(null, array(rn_t('TEXT.SICH_KEIN_JSON')), 0);
@@ -2510,6 +2732,7 @@ function rn_sicherung_lesen($roh)
         if (!in_array($k, $bekannt, true)) {
             $mangel[] = sprintf(rn_t('TEXT.SICH_FREMD'),
                                  htmlspecialchars($k, ENT_QUOTES, 'UTF-8'));
+            $namen[] = $k;
             continue;
         }
         /* Jeder WERT wird geprueft, nicht nur der Schluessel.
@@ -2524,6 +2747,7 @@ function rn_sicherung_lesen($roh)
         if (!rn_wert_taugt($w)) {
             $mangel[] = sprintf(rn_t('TEXT.SICH_WERT'),
                                  htmlspecialchars($k, ENT_QUOTES, 'UTF-8'));
+            $namen[] = $k;
             continue;
         }
         $w = (string) $w;
@@ -2543,6 +2767,7 @@ function rn_sicherung_lesen($roh)
         if (!rn_wert_pruefen($k, $w)) {
             $mangel[] = sprintf(rn_t('TEXT.SICH_WERT'),
                                  htmlspecialchars($k, ENT_QUOTES, 'UTF-8'));
+            $namen[] = $k;
             continue;
         }
         $neu[$k] = $w;
@@ -2561,6 +2786,7 @@ function rn_sicherung_lesen($roh)
         if (!isset($in_datei[$k])) { $fehlend[] = $k; }
     }
     if ($fehlend) {
+        foreach ($fehlend as $k) { $namen[] = $k; }
         $mangel[] = sprintf(rn_t('TEXT.SICH_FEHLT'), count($fehlend), count($bekannt),
             htmlspecialchars(implode(', ', array_slice($fehlend, 0, 8))
                 . (count($fehlend) > 8 ? ' …' : ''), ENT_QUOTES, 'UTF-8'));
@@ -2571,6 +2797,133 @@ function rn_sicherung_lesen($roh)
     /* Alle Beanstandungen werden gesammelt; eine halb gueltige Datei aendert
      * GAR NICHTS. */
     return array($mangel ? null : $neu, $mangel, $anzahl, $hinweise);
+}
+
+/* ---------------- Beiseitegelegte Konfigurationen (Renault-b1) ----------------
+ *
+ * Bis 2.1.14 begann das Plugin nach einem Update mit unbrauchbarer config.php
+ * und ohne brauchbare Zweitschrift mit Werkseinstellungen; die halb lesbare
+ * Datei lag als <ordner>.config.php.kaputt.<zeit> neben dem Konfigordner
+ * (preupgrade.sh, postupgrade.sh, Befund I4) oder als config.php.kaputt darin
+ * (rn_konfig_heilen()), und die Oberflaeche sagte nichts davon. Was darin noch
+ * lesbar ist, bietet der Reiter Einstellungen jetzt zum Neueintragen an.
+ */
+
+/** Die beiseitegelegten Dateien, die neueste zuerst. Liest, schreibt nichts. */
+function rn_kaputt_dateien()
+{
+    $p = rn_paths(false);
+    $kand = glob($p['konfdir'] . '.config.php.kaputt.*');
+    $kand = is_array($kand) ? $kand : array();
+    $kand[] = $p['konfdir'] . '/config.php.kaputt';
+    $aus = array();
+    foreach ($kand as $f) {
+        if (is_string($f) && is_file($f) && is_readable($f)) { $aus[$f] = (int) @filemtime($f); }
+    }
+    uksort($aus, function ($a, $b) use ($aus) {
+        return ($aus[$a] !== $aus[$b]) ? ($aus[$b] - $aus[$a]) : strcmp($b, $a);
+    });
+    return array_keys($aus);
+}
+
+/** Die Geheimnisse der Konfiguration: nie ins Formular, nur genannt. Das
+ *  Aktionstoken zaehlt nicht mit - nach dem Neuanfang traegt die Anlage immer
+ *  ein anderes, der Kasten stuende sonst fuer immer da. */
+function rn_kaputt_geheim()
+{
+    return array('password', 'weather_api_key', 'abrp_token');
+}
+
+/**
+ * Das Angebot aus der NEUESTEN beiseitegelegten Datei, oder null.
+ * Rueckgabe array('datei' => Pfad, 'zeit' => Zeitstempel, 'felder' =>
+ * array(Schluessel => Wert) - nicht geheim, zulaessig, vom jetzigen Stand
+ * abweichend -, 'geheim' => Namen der Geheimnisse, die dort mit einem
+ * anderen Wert stehen). null, wenn es nichts anzubieten gibt.
+ */
+function rn_kaputt_angebot($cfg)
+{
+    $dateien = rn_kaputt_dateien();
+    if (!$dateien) { return null; }
+    $f = $dateien[0];
+    $heil = false;
+    $w = rn_config_einlesen($f, $heil);
+    if (!is_array($w)) { return null; }
+    $felder = array();
+    $geheim = array();
+    foreach (rn_vorgaben() as $k => $v0) {
+        if ($k === 'aktionstoken') { continue; }
+        if (!array_key_exists($k, $w) || !rn_wert_taugt($w[$k])) { continue; }
+        $v = (string) $w[$k];
+        if ($v === '' || !rn_wert_pruefen($k, $v)) { continue; }
+        $jetzt = (is_array($cfg) && isset($cfg[$k])) ? (string) $cfg[$k] : '';
+        if ($v === $jetzt) { continue; }
+        if (in_array($k, rn_kaputt_geheim(), true)) { $geheim[] = $k; }
+        else { $felder[$k] = $v; }
+    }
+    if (!$felder && !$geheim) { return null; }
+    return array('datei' => $f, 'zeit' => (int) @filemtime($f), 'felder' => $felder,
+                 'geheim' => $geheim);
+}
+
+/** Ein Wert aus der neuesten beiseitegelegten Datei ('' = nicht lesbar). */
+function rn_kaputt_wert($k)
+{
+    $dateien = rn_kaputt_dateien();
+    if (!$dateien) { return ''; }
+    $w = rn_config_einlesen($dateien[0]);
+    if (!is_array($w) || !array_key_exists($k, $w) || !rn_wert_taugt($w[$k])) { return ''; }
+    $v = (string) $w[$k];
+    return rn_wert_pruefen($k, $v) ? $v : '';
+}
+
+/**
+ * Das Feld, das "Einstellungen sichern" ausgibt: lesbarer Kopf und die VOLLE
+ * Konfiguration samt Aktionstoken (Begruendung in index.php). An EINER Stelle
+ * fuer den Knopf und fuer rn_rueckspiel_altwerte() (X-3) - sonst pruefte die
+ * Warnung eine andere Datei als die gelieferte.
+ */
+function rn_sicherung_inhalt()
+{
+    $kopf = array(
+        '_hinweis' => 'Sicherung der Einstellungen des LoxBerry-Plugins Renault NG. '
+                    . 'Diese Datei enthaelt Ihr Renault-Kennwort und das Aktionstoken '
+                    . 'im Klartext - behandeln Sie sie wie ein Passwort.',
+        '_plugin'  => 'renault_ng',
+        '_fassung' => rn_fassung(),
+        '_stand'   => date('Y-m-d H:i:s'),
+    );
+    return array_merge($kopf, rn_config_read());
+}
+
+/**
+ * X-3 (Welle-4-Bau): Welche Einstellungen wuerden beim Zurueckspielen der
+ * EIGENEN Sicherung abgewiesen? Gebaut wird genau die Datei, die
+ * "Einstellungen sichern" liefert, und durch dieselbe Pruefung geschickt wie
+ * beim Zurueckspielen (rn_sicherung_lesen). Rueckgabe: Namen (nie Werte),
+ * leer heisst "wuerde angenommen".
+ *
+ * Die Faelle, die hier anschlagen: ein Wert in config.php, den das Formular
+ * nie gespeichert haette (von Hand geaendert, aus einer anderen Fassung, eine
+ * Grenze, die sich geaendert hat). rn_config_read() setzt solche Werte beim
+ * Lesen nicht zurueck - sie stehen in der Sicherung, und das Zurueckspielen
+ * weist die ganze Datei ab.
+ */
+function rn_rueckspiel_altwerte()
+{
+    $js = json_encode(rn_sicherung_inhalt(),
+        JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($js === false) {
+        return array();     // Sichern meldet dann selbst SICH_SCHREIBFEHLER
+    }
+    $namen = array();
+    list($neu) = rn_sicherung_lesen($js, $namen);
+    $namen = array_values(array_unique($namen));
+    sort($namen);
+    if ($neu === null && !$namen) {
+        $namen[] = rn_t('TEXT.SICH_GANZE_DATEI');
+    }
+    return $namen;
 }
 
 /**

@@ -151,8 +151,19 @@ $rn_autos = rn_fahrzeuge($rn_cfg);
  * Fail closed: ohne Zugangsdaten wird nichts versucht
  * ================================================================== */
 if ($rn_cfg['username'] === '' || $rn_cfg['password'] === '') {
-    renault_log('ERROR', 'Zugangsdaten unvollstaendig (Benutzer oder Passwort leer) - '
-        . 'bitte im Plugin die Einstellungen ausfuellen. Es wird nichts an Renault gesendet.');
+    /* Der Cron einer nicht eingerichteten Anlage schweigt (Renault-a1,
+     * Entscheidung Nr. 16): eine INFO-Zeile je Tag statt einer ERROR-Zeile je
+     * Stunde samt Sammelzeile (bis 2.1.14 rund 48 Zeilen am Tag). Nur der
+     * Cron - ein Befehl ohne Zugangsdaten ist ein Fehler und bleibt ERROR. */
+    if ($rn_ist_cron) {
+        renault_log_taeglich('INFO', 'Keine Zugangsdaten eingetragen (Benutzer oder Passwort '
+            . 'leer) - der Abruf ruht, an Renault wird nichts gesendet. Sobald beides in den '
+            . 'Einstellungen steht, laeuft er von selbst an. Diese Zeile steht hoechstens '
+            . 'einmal am Tag.');
+    } else {
+        renault_log('ERROR', 'Zugangsdaten unvollstaendig (Benutzer oder Passwort leer) - '
+            . 'bitte im Plugin die Einstellungen ausfuellen. Es wird nichts an Renault gesendet.');
+    }
     $rn_http_status = 503;        // Einrichtung unvollstaendig
     echo "NO CREDENTIALS\n";
     return;

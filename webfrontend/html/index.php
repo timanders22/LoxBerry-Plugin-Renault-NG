@@ -13,6 +13,13 @@
  *
  * Antwort: Klartext, eine Zeile je Vorgang. HTTP 200 bei Erfolg, sonst
  * 400/403/500/503.
+ *
+ * Gleichwert-Unterdrueckung (X-7, Welle-4-Bau, Entscheidung Nr. 19):
+ * derselbe Sollwert fuer dasselbe Fahrzeug innerhalb von 60 s geht nicht noch
+ * einmal an Renault - HTTP 200, <AKTION>;OK=1;UNVERAENDERT=1;SEIT_S=n, nichts
+ * gesendet. Gilt fuer acnow/acoff (samt Zieltemperatur), chargenow/chargestop
+ * und cmon/cmoff; nicht fuer abruf. Ein anderer Wert geht sofort hinaus (kein
+ * 429). Laesst sich der Merker nicht fuehren: HTTP 503, GRUND=BREMSE_MERKER.
  */
 
 error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE);
@@ -292,6 +299,32 @@ if (!@chdir($rn_htmlauth)) {
             'ERROR', 'Ordner htmlauth nicht erreichbar');
 }
 
+/* X-7: Gleichwert-Unterdrueckung, siehe Kopf und rn_lib.php. Erst hier, hinter
+ * Token, Steuerung, Fahrzeug und Zugangsdaten: ein abgewiesener Aufruf merkt
+ * nichts. Vorgemerkt wird VOR dem Senden (abruf.php sendet sofort); ist der
+ * Befehl danach nicht ausgefuehrt, wird der Eintrag unten wieder verworfen. */
+$rn_gw = rn_gleichwert_gruppe($aktion, $cfg);
+$rn_gw_schl = '';
+$rn_gw_marke = '';
+if ($rn_gw !== null) {
+    $rn_gw_schl = rn_gleichwert_schluessel($ziel, $fahrzeug, $rn_gw[0]);
+    list($rn_gw_urteil, $rn_gw_seit, $rn_gw_marke) = rn_gleichwert_pruefen($rn_gw_schl, $rn_gw[1]);
+    if ($rn_gw_urteil === 'MERKER') {
+        rn_ende(503, strtoupper($aktion) . ';OK=0;GRUND=BREMSE_MERKER' . "\n"
+                   . 'Die Merkerdatei der Gleichwert-Unterdrueckung (' . basename(rn_gleichwert_datei())
+                   . ') laesst sich nicht oeffnen oder schreiben - Sollwert-Befehle werden abgewiesen, '
+                   . 'bis das behoben ist. Pruefen: Platz und Eigentuemer (loxberry) des Datenordners.',
+                'ERROR', 'Aktion ' . $aktion . ' fuer Fahrzeug ' . $fahrzeug . ' abgewiesen - der Merker '
+                   . 'der Gleichwert-Unterdrueckung laesst sich nicht fuehren (' . rn_gleichwert_datei() . ')');
+    }
+    if ($rn_gw_urteil === 'UNVERAENDERT') {
+        rn_ende(200, strtoupper($aktion) . ';OK=1;UNVERAENDERT=1;SEIT_S=' . (int) $rn_gw_seit,
+                'INFO', 'Aktion ' . $aktion . ' fuer Fahrzeug ' . $fahrzeug . ': derselbe Befehl ging vor '
+                   . (int) $rn_gw_seit . ' s hinaus - nichts gesendet (gleiche Sollwerte innerhalb von '
+                   . RN_GLEICHWERT_S . ' s gehen nur einmal an Renault)');
+    }
+}
+
 $_GET = array();                 // nichts Fremdes an abruf.php durchreichen
 $rn_auftrag = array('aktion' => $aktion, 'fahrzeug' => $fahrzeug);
 $rn_http_status = 200;           // abruf.php setzt ihn bei jedem Fehlerausgang
@@ -307,6 +340,9 @@ try {
     $ausgabe = trim((string) ob_get_clean());
 } catch (Throwable $rn_t) {
     $ausgabe = trim((string) ob_get_clean());
+    if ($rn_gw_marke !== '') {
+        rn_gleichwert_vergessen($rn_gw_schl, $rn_gw_marke);    // X-7: nicht ausgefuehrt
+    }
     if (function_exists('renault_log')) {
         renault_log('ERROR', 'Endpunkt: abruf.php ist abgestuerzt: ' . $rn_t->getMessage()
             . ' (' . basename($rn_t->getFile()) . ':' . $rn_t->getLine() . ')');
@@ -334,6 +370,12 @@ $rn_code = (isset($rn_http_status) && (int) $rn_http_status >= 100
  * (aktion=abruf) bleibt es wie bisher. */
 $rn_befehl = isset($rn_befehl_ok) ? $rn_befehl_ok : null;
 $rn_abruf_fehl = !empty($rn_abruf_gescheitert);
+/* X-7: nicht ausgefuehrt (Anmeldung gescheitert, Renault lehnt ab, Wert
+ * unzulaessig ...) heisst nicht gemerkt - der naechste gleiche Befehl geht
+ * hinaus. */
+if ($rn_gw_marke !== '' && $rn_befehl !== true) {
+    rn_gleichwert_vergessen($rn_gw_schl, $rn_gw_marke);
+}
 if ($rn_befehl === true) {
     $rn_was = $rn_abruf_fehl ? ': Befehl ausgefuehrt, Abruf danach gescheitert' : ' ausgefuehrt';
 } elseif ($rn_befehl === false) {

@@ -35,6 +35,114 @@ $rn_fehler  = array();
  * gelungen"), getrennt von "Nicht gespeichert" (Befund U9). */
 $rn_misslungen = array();
 
+/* ---------- X-2: Eingaben nach einer Beanstandung (Welle-4-Bau) ----------
+ *
+ * Regeln/04, "Nach einer Beanstandung stehen die eingetippten Werte wieder im
+ * Formular". Seit der Umleitung nach jedem POST (Befund U1) zeigte der GET
+ * nach einer Beanstandung die GESPEICHERTEN Werte; wer drei Felder richtig
+ * und eines falsch eingab, tippte alle vier neu.
+ *
+ * Mit der Einmalmeldung reisen unter 'eingaben' die Felder des
+ * Einstellungsformulars und die Namen der beanstandeten Felder. Nie mit
+ * reisen Passwort, Wetter-Schluessel und ABRP-Token - sie stehen in keiner
+ * Liste; ihre Felder werden nur markiert. Ein Wert, der keine Zeichenkette in
+ * gueltigem UTF-8 ist oder laenger als 512 Byte, reist nicht mit; sein Feld
+ * zeigt dann den gespeicherten Wert (und bleibt markiert). Bauform
+ * AudiConnect 0.9.23 / Abfahrtsassistent 1.6.19. */
+function rn_eingabe_felder($formular)
+{
+    if ($formular !== 'einst') { return array(); }
+    $f = array('username', 'country', 'cron_ncs', 'cron_acs', 'steuerung_ein', 'ac_temp',
+               'bl_schwelle', 'mail_bl', 'cmon_bl', 'mail_csf', 'exec_bl', 'exec_csf',
+               'soc_min', 'soc_target', 'save_in_db', 'abrp_model');
+    for ($i = 1; $i <= RN_MAX_FAHRZEUGE; $i++) {
+        $nr = ($i === 1) ? '' : (string) $i;
+        foreach (array('zoename', 'vin', 'zoeph') as $n) { $f[] = $n . $nr; }
+    }
+    return $f;
+}
+/* Geheimnisfelder: werden markiert, ihr Wert reist nie mit. */
+function rn_eingabe_geheim()
+{
+    return array('password', 'weather_api_key', 'abrp_token');
+}
+function rn_eingabe_tauglich($w)
+{
+    return is_string($w) && strlen($w) <= 512 && preg_match('//u', $w) === 1;
+}
+/* Ein Feld beanstanden; ohne Argument die Liste. */
+function rn_bean($feld = null)
+{
+    static $liste = array();
+    if ($feld !== null && !in_array((string) $feld, $liste, true)) {
+        $liste[] = (string) $feld;
+    }
+    return $liste;
+}
+/* Die Eingaben eines Formulars aus $_POST - nur die Felder der Liste. */
+function rn_eingaben_sammeln($formular)
+{
+    $werte = array();
+    foreach (rn_eingabe_felder($formular) as $f) {
+        if (isset($_POST[$f]) && rn_eingabe_tauglich($_POST[$f])) {
+            $werte[$f] = $_POST[$f];
+        }
+    }
+    return array('formular' => $formular, 'werte' => $werte, 'falsch' => rn_bean());
+}
+/* Beim GET: die Eingaben aus der Einmalmeldung pruefen und ablegen. */
+function rn_eingaben($setzen = null)
+{
+    static $e = null;
+    if ($setzen !== null) {
+        $e = null;
+        if (is_array($setzen) && isset($setzen['formular'], $setzen['werte'], $setzen['falsch'])
+            && is_string($setzen['formular']) && is_array($setzen['werte'])
+            && is_array($setzen['falsch']) && rn_eingabe_felder($setzen['formular'])) {
+            $erlaubt = rn_eingabe_felder($setzen['formular']);
+            $werte = array();
+            foreach ($setzen['werte'] as $f => $w) {
+                if (in_array((string) $f, $erlaubt, true) && rn_eingabe_tauglich($w)) {
+                    $werte[(string) $f] = $w;
+                }
+            }
+            $falsch = array();
+            foreach ($setzen['falsch'] as $n) {
+                if (is_string($n) && (in_array($n, $erlaubt, true)
+                                      || in_array($n, rn_eingabe_geheim(), true))) {
+                    $falsch[] = $n;
+                }
+            }
+            $e = array('formular' => $setzen['formular'], 'werte' => $werte, 'falsch' => $falsch);
+        }
+    }
+    return $e;
+}
+/* Wert eines Felds: die Eingabe, sonst der gespeicherte Wert. */
+function rn_ein_w($feld, $gespeichert)
+{
+    $e = rn_eingaben();
+    if ($e !== null && in_array($feld, rn_eingabe_felder($e['formular']), true)
+        && isset($e['werte'][$feld]) && is_string($e['werte'][$feld])) {
+        return $e['werte'][$feld];
+    }
+    return (string) $gespeichert;
+}
+/* Markierung eines beanstandeten Felds (Attribute, schon maskiert). */
+function rn_ein_m($feld)
+{
+    $e = rn_eingaben();
+    return ($e !== null && in_array($feld, $e['falsch'], true))
+        ? ' class="sm-beanstandet" aria-invalid="true"' : '';
+}
+/* Nr. 19: enthaelt eine Eingabe Anfuehrungs- oder Steuerzeichen? Bis 2.1.14
+ * wurden sie still entfernt und der Rest gespeichert. */
+function rn_zeichen_falsch($w)
+{
+    return preg_match('/[\x00-\x1F\x7F"\']/', (string) $w) === 1;
+}
+$rn_eingaben_post = null;   // X-2: was mit der Einmalmeldung zurueckreist
+
 /* ---------------------------------------------------------------- *
  * DIE REITERLISTE STEHT GENAU EINMAL
  *
@@ -101,6 +209,7 @@ if ((isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET') !==
         $rn_misslungen = array_merge($rn_misslungen, $rn_einmal['misslungen']);
         $rn_test_titel = $rn_einmal['test_titel'];
         $rn_test_text  = $rn_einmal['test_text'];
+        rn_eingaben($rn_einmal['eingaben']);     // X-2
     }
 }
 
@@ -163,21 +272,47 @@ if (isset($_POST['speichern'])) {
 
     /* Einfache Textfelder. Leere Felder loeschen nichts, wo der Verlust
      * wehtut - das gilt hier fuer das Passwort. */
+    /* Nr. 16/19 (Welle-4-Bau): Anfuehrungs- und Steuerzeichen werden NICHT
+     * mehr still entfernt. Bis 2.1.14 wurde "Zo'e" als "Zoe" gespeichert,
+     * mit gruener Meldung - der Anwender sah den geaenderten Wert erst im
+     * MQTT-Thema. Jetzt ist es eine Beanstandung: nichts gespeichert, Feld
+     * markiert, die Eingabe kommt zurueck (X-2). Still bleiben nur Leerraum
+     * am Rand und der grossgeschriebene Laendercode (Nr. 19, Nr. 21). */
+    $rn_feldname = array(
+        'username' => 'TEXT.L_BENUTZER', 'country' => 'TEXT.L_LAND', 'save_in_db' => 'TEXT.L_SAVE_IN_DB',
+        'steuerung_ein' => 'TEXT.L_STEUERUNG', 'cron_ncs' => 'TEXT.L_CRON_NCS',
+        'cron_acs' => 'TEXT.L_CRON_ACS', 'ac_temp' => 'TEXT.L_AC_TEMP',
+        'bl_schwelle' => 'TEXT.L_BL_SCHWELLE', 'mail_bl' => 'TEXT.L_MAIL_BL',
+        'exec_bl' => 'TEXT.L_EXEC_BL', 'cmon_bl' => 'TEXT.L_CMON_BL', 'mail_csf' => 'TEXT.L_MAIL_CSF',
+        'exec_csf' => 'TEXT.L_EXEC_CSF', 'soc_min' => 'TEXT.L_SOC_MIN',
+        'soc_target' => 'TEXT.L_SOC_TARGET', 'abrp_model' => 'TEXT.L_ABRP_MODEL');
     foreach (array('username', 'country', 'save_in_db', 'steuerung_ein',
                    'cron_ncs', 'cron_acs', 'ac_temp', 'bl_schwelle',
                    'mail_bl', 'exec_bl', 'cmon_bl', 'mail_csf', 'exec_csf',
                    'soc_min', 'soc_target', 'abrp_model') as $f) {
         if (isset($_POST[$f])) {
-            // Nur Steuerzeichen und Anfuehrungszeichen entfernen - ein
-            // preg_replace mit Positivliste zerstoert eingefuegte Werte.
-            $neu[$f] = trim(preg_replace('/[\x00-\x1F\x7F"\']/', '', (string) $_POST[$f]));
+            $rn_roh = is_string($_POST[$f]) ? trim($_POST[$f], " \t\n\r") : null;
+            if ($rn_roh === null || rn_zeichen_falsch($rn_roh)) {
+                $rn_fehler[] = sprintf(rn_t('TEXT.F_ZEICHEN'), rn_e(rn_t($rn_feldname[$f])));
+                rn_bean($f);
+                continue;
+            }
+            // Nr. 21: den Laendercode grosszuschreiben bleibt still.
+            $neu[$f] = ($f === 'country') ? strtoupper($rn_roh) : $rn_roh;
         }
     }
     for ($i = 1; $i <= RN_MAX_FAHRZEUGE; $i++) {
         $nr = ($i === 1) ? '' : (string) $i;
-        foreach (array('zoename', 'vin', 'zoeph') as $f) {
+        foreach (array('zoename' => 'TEXT.L_NAME', 'vin' => 'TEXT.L_VIN', 'zoeph' => 'TEXT.L_PHASE') as $f => $rn_lbl) {
             if (isset($_POST[$f . $nr])) {
-                $neu[$f . $nr] = trim(preg_replace('/[\x00-\x1F\x7F"\']/', '', (string) $_POST[$f . $nr]));
+                $rn_roh = is_string($_POST[$f . $nr]) ? trim($_POST[$f . $nr], " \t\n\r") : null;
+                if ($rn_roh === null || rn_zeichen_falsch($rn_roh)) {
+                    $rn_fehler[] = sprintf(rn_t('TEXT.F_ZEICHEN'),
+                        rn_e(sprintf(rn_t('TEXT.H_FAHRZEUG_NR'), $i) . ': ' . rn_t($rn_lbl)));
+                    rn_bean($f . $nr);
+                    continue;
+                }
+                $neu[$f . $nr] = $rn_roh;
             }
         }
     }
@@ -191,11 +326,37 @@ if (isset($_POST['speichern'])) {
                    'abrp_token' => 'TEXT.L_ABRP_TOKEN') as $f => $rn_lbl) {
         $rn_roh = (isset($_POST[$f]) && is_string($_POST[$f])) ? $_POST[$f] : '';
         if ($f !== 'password') {
-            $rn_roh = trim(preg_replace('/[\x00-\x1F\x7F"\']/', '', $rn_roh));
+            /* Nr. 19: nur der Leerraum am Rand faellt still weg; Anfuehrungs-
+             * und Steuerzeichen sind eine Beanstandung (bis 2.1.14 still
+             * entfernt). Der Wert reist nie zurueck, das Feld wird markiert. */
+            $rn_roh = trim($rn_roh, " \t\n\r");
+            if (rn_zeichen_falsch($rn_roh)) {
+                $rn_fehler[] = sprintf(rn_t('TEXT.F_ZEICHEN'), rn_e(rn_t($rn_lbl)));
+                rn_bean($f);
+                continue;
+            }
+        }
+        /* Renault-b1: das Kennwort aus der beiseitegelegten Datei - auf dem
+         * Server gelesen, nie ueber das Formular. */
+        if ($f === 'password' && !empty($_POST['password_aus_kaputt'])) {
+            if ($rn_roh !== '' || !empty($_POST['password_loeschen'])) {
+                $rn_fehler[] = rn_t('TEXT.F_PASSWORT_DOPPELT');
+                rn_bean('password');
+                continue;
+            }
+            $rn_pw = rn_kaputt_wert('password');
+            if ($rn_pw === '') {
+                $rn_fehler[] = rn_t('TEXT.F_PASSWORT_AUS_KAPUTT');
+                rn_bean('password');
+                continue;
+            }
+            $neu['password'] = $rn_pw;
+            continue;
         }
         $rn_weg = !empty($_POST[$f . '_loeschen']);
         if ($rn_weg && $rn_roh !== '') {
             $rn_fehler[] = sprintf(rn_t('TEXT.F_LOESCHEN_WIDERSPRUCH'), rn_e(rn_t($rn_lbl)));
+            rn_bean($f);
         } elseif ($rn_weg) {
             $neu[$f] = '';
         } elseif ($rn_roh !== '') {
@@ -210,6 +371,7 @@ if (isset($_POST['speichern'])) {
      *      unbrauchbar sind, einzeln beanstandet. ---- */
     if ($neu['zoename'] === '') {
         $rn_fehler[] = rn_t('TEXT.F_NAME_LEER');
+        rn_bean('zoename');
     }
     for ($i = 1; $i <= RN_MAX_FAHRZEUGE; $i++) {
         $nr = ($i === 1) ? '' : (string) $i;
@@ -218,12 +380,15 @@ if (isset($_POST['speichern'])) {
         if ($nm !== '' && (strpos($nm, '/') !== false || strpos($nm, '#') !== false
             || strpos($nm, '+') !== false)) {
             $rn_fehler[] = sprintf(rn_t('TEXT.F_NAME_SONDERZEICHEN'), $i);
+            rn_bean('zoename' . $nr);
         }
         if ($vn !== '' && !preg_match('/^[A-HJ-NPR-Z0-9]{17}$/i', $vn)) {
             $rn_fehler[] = sprintf(rn_t('TEXT.F_VIN'), $i);
+            rn_bean('vin' . $nr);
         }
         if (!in_array($neu['zoeph' . $nr], array('1', '2'), true)) {
             $rn_fehler[] = sprintf(rn_t('TEXT.F_PHASE'), $i);
+            rn_bean('zoeph' . $nr);
         }
     }
     // Doppelte Namen wuerden zwei Fahrzeuge in denselben Themenpfad legen.
@@ -240,40 +405,54 @@ if (isset($_POST['speichern'])) {
              * gar nichts maskiert, laesst eine Eingabe ungeprueft in die
              * Seite. */
             $rn_fehler[] = sprintf(rn_t('TEXT.F_NAME_DOPPELT'), rn_e($nm));
+            rn_bean('zoename' . $nr);
         }
         $rn_namen[] = $nm;
     }
     if (!in_array($neu['save_in_db'], array('Y', 'N'), true)) {
         $rn_fehler[] = rn_t('TEXT.F_AUFZEICHNUNG');
+        rn_bean('save_in_db');
     }
     if (!in_array($neu['steuerung_ein'], array('Y', 'N'), true)) {
         $rn_fehler[] = rn_t('TEXT.F_STEUERUNG');
+        rn_bean('steuerung_ein');
     }
     if (!preg_match('/^[A-Z]{2}$/', $neu['country'])) {
         $rn_fehler[] = rn_t('TEXT.F_LAND');
+        rn_bean('country');
     }
     foreach (array('cron_ncs' => array(1, 60), 'cron_acs' => array(1, 60),
                    'ac_temp' => array(16, 30), 'bl_schwelle' => array(1, 99)) as $f => $gr) {
         if (!preg_match('/^[0-9]+$/', $neu[$f]) || (int) $neu[$f] < $gr[0] || (int) $neu[$f] > $gr[1]) {
             $rn_fehler[] = sprintf(rn_t('TEXT.F_ZAHL'), rn_t('TEXT.L_' . strtoupper($f)), $gr[0], $gr[1]);
+            rn_bean($f);
         }
     }
     foreach (array('soc_min', 'soc_target') as $f) {
         if ($neu[$f] === '') { continue; }         // leer = nicht anfassen
         if (!preg_match('/^[0-9]+$/', $neu[$f]) || (int) $neu[$f] < 20 || (int) $neu[$f] > 100) {
             $rn_fehler[] = sprintf(rn_t('TEXT.F_ZAHL'), rn_t('TEXT.L_' . strtoupper($f)), 20, 100);
+            rn_bean($f);
         }
     }
     if ($neu['soc_min'] !== '' && $neu['soc_target'] !== ''
         && (int) $neu['soc_min'] > (int) $neu['soc_target']) {
         $rn_fehler[] = rn_t('TEXT.F_SOC_REIHENFOLGE');
+        rn_bean('soc_min');
+        rn_bean('soc_target');
     }
+    /* Nr. 19: ein anderer Wert als ja/nein wurde bis 2.1.14 still zu "nein"
+     * und gespeichert. Jetzt eine Beanstandung. */
     foreach (array('mail_bl', 'cmon_bl', 'mail_csf') as $f) {
-        if (!in_array($neu[$f], array('Y', 'N'), true)) { $neu[$f] = 'N'; }
+        if (!in_array($neu[$f], array('Y', 'N'), true)) {
+            $rn_fehler[] = sprintf(rn_t('TEXT.F_AUSWAHL'), rn_e(rn_t($rn_feldname[$f])));
+            rn_bean($f);
+        }
     }
     // Ein Passwort ohne Benutzernamen ist fast immer ein Versehen.
     if ($neu['password'] !== '' && $neu['username'] === '') {
         $rn_fehler[] = rn_t('TEXT.F_BENUTZER_FEHLT');
+        rn_bean('username');
     }
     /* exec_bl und exec_csf wie beim Zurueckspielen und beim Aufruf pruefen
      * (Befund U3, rn_wert_pruefen()). Bis 2.1.12 nahm das Formular "a&b" an;
@@ -282,6 +461,7 @@ if (isset($_POST['speichern'])) {
     foreach (array('exec_bl' => 'TEXT.L_EXEC_BL', 'exec_csf' => 'TEXT.L_EXEC_CSF') as $f => $rn_lbl) {
         if (!rn_wert_pruefen($f, $neu[$f])) {
             $rn_fehler[] = sprintf(rn_t('TEXT.F_EXEC'), rn_e(rn_t($rn_lbl)));
+            rn_bean($f);
         }
     }
     /* Sicherheitsnetz: jeder in DIESEM Speichern geaenderte Wert muss die
@@ -293,6 +473,7 @@ if (isset($_POST['speichern'])) {
             if ((string) $neu[$k] === (string) $rn_cfg[$k]) { continue; }
             if (!rn_wert_taugt($neu[$k]) || !rn_wert_pruefen($k, (string) $neu[$k])) {
                 $rn_fehler[] = sprintf(rn_t('TEXT.F_WERT_ALLG'), rn_e($k));
+                rn_bean($k);
             }
         }
     }
@@ -316,29 +497,19 @@ if (isset($_POST['speichern'])) {
              * leeren, beim Broker nachlesen, das Ergebnis in die Meldung. */
             $rn_namen_nachher = array();
             foreach (rn_fahrzeuge($rn_cfg) as $rn_f0) { $rn_namen_nachher[] = $rn_f0['name']; }
-            foreach (array_values(array_diff($rn_namen_vorher, $rn_namen_nachher)) as $rn_altname) {
-                $rn_wo = 'Renault/' . $rn_altname . '/';
-                $rn_l = rn_mqtt_name_leeren($rn_altname);
-                if ($rn_l['lage'] === 'ok') {
-                    $rn_meldung .= '<br>' . ($rn_l['geloescht'] > 0
-                        ? sprintf(rn_t('TEXT.M_MQTT_ALTNAME_GELOESCHT'), $rn_l['geloescht'], rn_e($rn_wo))
-                        : sprintf(rn_t('TEXT.M_MQTT_ALTNAME_LEER'), rn_e($rn_wo)));
-                    renault_log('INFO', 'MQTT: Fahrzeug umbenannt oder entfernt - unter ' . $rn_wo
-                        . ' ' . $rn_l['geloescht'] . ' zurueckbehaltene Themen geloescht, vom Broker bestaetigt.');
-                } elseif ($rn_l['lage'] === 'offen') {
-                    $rn_misslungen[] = sprintf(rn_t('TEXT.F_MQTT_ALTNAME_OFFEN'), rn_e($rn_wo),
-                        count($rn_l['offen']), rn_e(implode(', ', array_slice($rn_l['offen'], 0, 5))));
-                    renault_log('WARN', 'MQTT: unter ' . $rn_wo . ' stehen nach dem Loeschen noch '
-                        . count($rn_l['offen']) . ' zurueckbehaltene Themen.');
-                } else {
-                    $rn_misslungen[] = sprintf(rn_t('TEXT.F_MQTT_ALTNAME_BROKER'), rn_e($rn_wo));
-                    renault_log('WARN', 'MQTT: Fahrzeug umbenannt oder entfernt - der Broker war nicht '
-                        . 'zu befragen, die Themen unter ' . $rn_wo . ' sind NICHT geloescht.');
-                }
-            }
+            // Seit dem Welle-4-Bau an EINER Stelle (rn_lib.php), auch fuer das
+            // Zurueckspielen (Renault-a2).
+            $rn_alt = rn_mqtt_altnamen_abraeumen($rn_namen_vorher, $rn_namen_nachher);
+            $rn_meldung .= $rn_alt['meldung'];
+            $rn_misslungen = array_merge($rn_misslungen, $rn_alt['misslungen']);
         } else {
             $rn_fehler[] = rn_t('TEXT.F_SCHREIBEN');
         }
+    }
+    /* X-2: nur nach einer Beanstandung (dann ist nichts gespeichert) reisen
+     * die eingetippten Werte zurueck - nie die Geheimnisse. */
+    if ($rn_fehler) {
+        $rn_eingaben_post = rn_eingaben_sammeln('einst');
     }
     $rn_tab = 'tab-settings';
 }
@@ -346,9 +517,51 @@ if (isset($_POST['speichern'])) {
 /* Log leeren und Zwischenspeicher verwerfen: die Rueckgabe von unlink()
  * zaehlt (Befund U9). Bis 2.1.12 kam die Erfolgsmeldung bedingungslos, auch
  * wenn eine Datei stehen blieb (etwa eine, die root gehoert). */
+/* Renault-b1: die gelesenen Felder einer beiseitegelegten Konfiguration ins
+ * Formular holen - ueber denselben Weg wie X-2. Gespeichert wird erst mit
+ * "Speichern"; Geheimnisse reisen nie. */
+if (isset($_POST['kaputt_uebernehmen'])) {
+    $rn_ang = rn_kaputt_angebot($rn_cfg);
+    if ($rn_ang === null || !$rn_ang['felder']) {
+        $rn_misslungen[] = rn_t('TEXT.F_KAPUTT_WEG');
+    } else {
+        $rn_werte = array();
+        foreach (rn_eingabe_felder('einst') as $f) { $rn_werte[$f] = (string) $rn_cfg[$f]; }
+        foreach ($rn_ang['felder'] as $k => $v) { $rn_werte[$k] = $v; }
+        $rn_eingaben_post = array('formular' => 'einst', 'werte' => $rn_werte, 'falsch' => array());
+        $rn_meldung = sprintf(rn_t('TEXT.M_KAPUTT_IM_FORMULAR'),
+                              rn_e(implode(', ', array_keys($rn_ang['felder']))));
+        renault_log('INFO', 'Werte aus der beiseitegelegten Konfiguration ' . basename($rn_ang['datei'])
+            . ' ins Formular geholt (noch nicht gespeichert): ' . implode(', ', array_keys($rn_ang['felder'])));
+    }
+    $rn_tab = 'tab-settings';
+}
+if (isset($_POST['kaputt_verwerfen'])) {
+    if (empty($_POST['kaputt_ja'])) {
+        $rn_fehler[] = rn_t('TEXT.F_KAPUTT_HAKEN');
+    } else {
+        $rn_weg = array();
+        $rn_rest = array();
+        foreach (rn_kaputt_dateien() as $rn_d) {
+            if (@unlink($rn_d)) { $rn_weg[] = basename($rn_d); } else { $rn_rest[] = basename($rn_d); }
+        }
+        if ($rn_rest) {
+            $rn_misslungen[] = sprintf(rn_t('TEXT.F_KAPUTT_LOESCHEN'), rn_e(implode(', ', $rn_rest)));
+        }
+        if ($rn_weg) {
+            $rn_meldung = sprintf(rn_t('TEXT.M_KAPUTT_GELOESCHT'), rn_e(implode(', ', $rn_weg)));
+            renault_log('INFO', 'Beiseitegelegte Konfiguration geloescht: ' . implode(', ', $rn_weg));
+        } elseif (!$rn_rest) {
+            $rn_misslungen[] = rn_t('TEXT.F_KAPUTT_WEG');
+        }
+    }
+    $rn_tab = 'tab-settings';
+}
+
 if (isset($_POST['log_leeren'])) {
     $rn_rest = array();
-    foreach (array($rn_p['log'], $rn_p['log'] . '.1', $rn_p['log'] . '.wdh') as $rn_d) {
+    // .tag: Merker der Tageszeile (Renault-a1, renault_log_taeglich()).
+    foreach (array($rn_p['log'], $rn_p['log'] . '.1', $rn_p['log'] . '.wdh', $rn_p['log'] . '.tag') as $rn_d) {
         if (is_file($rn_d) && !@unlink($rn_d)) { $rn_rest[] = basename($rn_d); }
     }
     if ($rn_rest) {
@@ -429,15 +642,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rn_sichern'])) {
      * zweiten LoxBerry ist genau das der Zweck. Die Schluessel beginnen mit
      * einem Unterstrich; rn_sicherung_lesen() UEBERGEHT sie, statt sie zu
      * beanstanden. */
-    $rn_kopf = array(
-        '_hinweis' => 'Sicherung der Einstellungen des LoxBerry-Plugins Renault NG. '
-                    . 'Diese Datei enthaelt Ihr Renault-Kennwort und das Aktionstoken '
-                    . 'im Klartext - behandeln Sie sie wie ein Passwort.',
-        '_plugin'  => 'renault_ng',
-        '_fassung' => rn_fassung(),
-        '_stand'   => date('Y-m-d H:i:s'),
-    );
-    $rn_js = json_encode(array_merge($rn_kopf, rn_config_read()),
+    /* Kopf und Inhalt kommen seit dem Welle-4-Bau aus rn_sicherung_inhalt()
+     * (rn_lib.php) - dieselbe Datei prueft rn_rueckspiel_altwerte() (X-3).
+     * Wuerde das eigene Zurueckspielen sie abweisen, traegt der Kopf
+     * '_warnung' - nur Namen, nie Werte; geliefert wird sie trotzdem
+     * vollstaendig. */
+    $rn_inhalt = rn_sicherung_inhalt();
+    $rn_sich_warn = rn_rueckspiel_altwerte();
+    if ($rn_sich_warn) {
+        $rn_inhalt = array('_warnung' => sprintf(rn_t('TEXT.SICH_WARN_KOPF'),
+                                                 implode(', ', $rn_sich_warn))) + $rn_inhalt;
+    }
+    $rn_js = json_encode($rn_inhalt,
         JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if ($rn_js !== false) {
         renault_log('INFO', 'Einstellungen gesichert (Datei enthaelt Zugangsdaten '
@@ -470,6 +686,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rn_zurueck'])) {
     } elseif ((int) $_FILES['rn_sicherung']['size'] > 65536) {
         $rn_fehler[] = rn_t('TEXT.SICH_ZU_GROSS');
     } else {
+        /* Die Fahrzeugnamen VOR dem Zurueckspielen (Renault-a2, Befund M3):
+         * eine Sicherung mit anderen Namen laesst sonst die Themen unter dem
+         * alten Namen fuer immer im Broker. */
+        $rn_namen_vorher = array();
+        foreach (rn_fahrzeuge($rn_cfg) as $rn_f0) { $rn_namen_vorher[] = $rn_f0['name']; }
         list($rn_neu, $rn_mangel, $rn_n, $rn_hinweise) = rn_sicherung_lesen(
             (string) @file_get_contents($_FILES['rn_sicherung']['tmp_name']));
         if ($rn_neu === null) {
@@ -512,6 +733,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rn_zurueck'])) {
                 renault_log('INFO', 'Sicherung zurueckgespielt: ' . $rn_n . ' Werte. '
                     . 'Zwischenspeicher und Anmeldung verworfen; der naechste Cron-Lauf '
                     . 'meldet sich mit den neuen Zugangsdaten an.');
+                /* Renault-a2: weggefallene Fahrzeugnamen wie beim Speichern
+                 * abraeumen - erst hier, wenn die Sicherung nachweislich
+                 * dasteht. */
+                $rn_namen_nachher = array();
+                foreach (rn_fahrzeuge($rn_cfg) as $rn_f0) { $rn_namen_nachher[] = $rn_f0['name']; }
+                $rn_alt = rn_mqtt_altnamen_abraeumen($rn_namen_vorher, $rn_namen_nachher);
+                $rn_meldung .= $rn_alt['meldung'];
+                $rn_misslungen = array_merge($rn_misslungen, $rn_alt['misslungen']);
             }
         } else {
             $rn_fehler[] = rn_t('TEXT.SICH_SCHREIBFEHLER');
@@ -534,7 +763,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rn_zurueck'])) {
  * Meldung darf nicht verlorengehen. */
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (rn_einmal_schreiben($rn_meldung, $rn_fehler, $rn_misslungen,
-                            $rn_test_titel, $rn_test_text, $rn_cfg)) {
+                            $rn_test_titel, $rn_test_text, $rn_cfg, $rn_eingaben_post)) {
         header('Location: index.php?form=' . rawurlencode(substr($rn_tab, 4)), true, 303);
         exit;
     }
@@ -544,6 +773,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 /* Erst hier, nach ALLEN Handlern (Befund U2). */
 $rn_ftoken = rn_formtoken($rn_cfg);
+/* Renault-b1: gibt es eine beiseitegelegte Konfiguration mit lesbaren,
+ * abweichenden Feldern? */
+$rn_angebot = rn_kaputt_angebot($rn_cfg);
 
 LBWeb::lbheader($template_title, $helplink, $helptemplate);
 
@@ -653,6 +885,10 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
    sm-aus verdrahtet, die Zustandsanzeige also einseitig gefaerbt. */
 .sm-an  { color: #1a7f1a; font-weight: 700; }
 .sm-aus { color: #b00000; font-weight: 700; }
+/* Eigene Ergaenzung (X-2, Welle-4-Bau): ein beanstandetes Feld. Steht
+   zusammen mit aria-invalid; die Farbe allein waere fuer einen Vorleser
+   unsichtbar. */
+.sm-wrap .sm-beanstandet { border: 2px solid #b00000 !important; background: #fff4f4; }
 </style>
 
 <div class="sm-wrap">
@@ -688,6 +924,37 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 
 <!-- ============================ Einstellungen ============================ -->
 <div class="sm-seite<?php echo $rn_tab === 'tab-settings' ? ' sm-active' : ''; ?>" id="tab-settings">
+<?php if ($rn_angebot) { /* Renault-b1 */ ?>
+<div class="sm-warnung">
+<p><?php echo sprintf(rn_t('TEXT.KAPUTT_ANGEBOT'), rn_e(basename($rn_angebot['datei'])),
+        rn_e(date('d.m.Y H:i', $rn_angebot['zeit']))); ?></p>
+<?php if ($rn_angebot['felder']) { ?>
+<p><?php echo sprintf(rn_t('TEXT.KAPUTT_FELDER'), rn_e(implode(', ', array_keys($rn_angebot['felder'])))); ?></p>
+<?php } ?>
+<?php if ($rn_angebot['geheim']) { ?>
+<p><?php echo sprintf(rn_t('TEXT.KAPUTT_GEHEIM'), rn_e(implode(', ', $rn_angebot['geheim']))); ?></p>
+<?php } ?>
+<div class="sm-legende">
+<span><i class="sm-punkt sm-b-lesen"></i> <?php echo rn_e(rn_t('LEGENDE.LESEN')); ?></span>
+<span><i class="sm-punkt sm-b-aktion"></i> <?php echo rn_e(rn_t('LEGENDE.AKTION')); ?></span>
+</div>
+<div class="sm-knopfreihe">
+<?php if ($rn_angebot['felder']) { ?>
+  <form method="post" action="index.php">
+    <input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
+    <input data-role="none" type="hidden" name="activetab" value="tab-settings">
+    <button data-role="none" class="sm-btn sm-b-lesen" type="submit" name="kaputt_uebernehmen" value="1"><?php echo rn_e(rn_t('TEXT.K_KAPUTT_UEBERNEHMEN')); ?></button>
+  </form>
+<?php } ?>
+  <form method="post" action="index.php">
+    <input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
+    <input data-role="none" type="hidden" name="activetab" value="tab-settings">
+    <label class="sm-small" style="align-self:center;margin-right:8px"><input data-role="none" type="checkbox" name="kaputt_ja" value="1" style="width:auto;margin:0 6px 0 0;vertical-align:middle"><?php echo rn_e(rn_t('TEXT.L_KAPUTT_JA')); ?></label>
+    <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="kaputt_verwerfen" value="1"><?php echo rn_e(rn_t('TEXT.K_KAPUTT_VERWERFEN')); ?></button>
+  </form>
+</div>
+</div>
+<?php } ?>
 <form method="post" action="index.php" autocomplete="off">
 <input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
 <input data-role="none" type="hidden" name="activetab" value="tab-settings">
@@ -697,22 +964,25 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 
 <div class="sm-feld">
   <label for="username"><?php echo rn_e(rn_t('TEXT.L_BENUTZER')); ?></label>
-  <input data-role="none" type="text" id="username" name="username" value="<?php echo rn_e($rn_cfg['username']); ?>">
+  <input data-role="none" type="text" id="username" name="username" value="<?php echo rn_e(rn_ein_w('username', $rn_cfg['username'])); ?>"<?php echo rn_ein_m('username'); ?>>
 </div>
 <div class="sm-feld">
   <label for="password"><?php echo rn_e(rn_t('TEXT.L_PASSWORT')); ?></label>
-  <input data-role="none" type="password" id="password" name="password" value=""
+  <input data-role="none" type="password" id="password" name="password" value=""<?php echo rn_ein_m('password'); ?>
          placeholder="<?php echo rn_e($rn_cfg['password'] !== '' ? rn_t('TEXT.P_GESPEICHERT') : rn_t('TEXT.P_NICHT_GESETZT')); ?>">
   <p class="sm-hilfe"><label><input data-role="none" type="checkbox" name="password_loeschen" value="1" style="width:auto;margin:0 6px 0 0;vertical-align:middle"><?php echo rn_e(rn_t('TEXT.L_PASSWORT_LOESCHEN')); ?></label></p>
+<?php if ($rn_angebot && in_array('password', $rn_angebot['geheim'], true)) { /* Renault-b1 */ ?>
+  <p class="sm-hilfe"><label><input data-role="none" type="checkbox" name="password_aus_kaputt" value="1" style="width:auto;margin:0 6px 0 0;vertical-align:middle"><?php echo rn_e(sprintf(rn_t('TEXT.L_PASSWORT_AUS_KAPUTT'), basename($rn_angebot['datei']))); ?></label></p>
+<?php } ?>
   <p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.H_PASSWORT')); ?></p>
 </div>
 <div class="sm-feld">
   <label for="country"><?php echo rn_e(rn_t('TEXT.L_LAND')); ?></label>
-  <select data-role="none" id="country" name="country">
+  <select data-role="none" id="country" name="country"<?php echo rn_ein_m('country'); ?>>
     <?php foreach (array('DE' => 'Deutschland', 'AT' => 'Österreich', 'CH' => 'Schweiz',
                          'IT' => 'Italia', 'SE' => 'Sverige', 'FR' => 'France',
                          'EN' => rn_t('TEXT.L_ANDERE')) as $k => $v) { ?>
-      <option value="<?php echo rn_e($k); ?>"<?php echo $rn_cfg['country'] === $k ? ' selected' : ''; ?>><?php echo rn_e($v); ?></option>
+      <option value="<?php echo rn_e($k); ?>"<?php echo rn_ein_w('country', $rn_cfg['country']) === $k ? ' selected' : ''; ?>><?php echo rn_e($v); ?></option>
     <?php } ?>
   </select>
 </div>
@@ -726,21 +996,21 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 <div class="sm-feld">
   <label for="zoename<?php echo rn_e($rn_nr); ?>"><?php echo rn_e(rn_t('TEXT.L_NAME')); ?></label>
   <input data-role="none" type="text" id="zoename<?php echo rn_e($rn_nr); ?>" name="zoename<?php echo rn_e($rn_nr); ?>"
-         value="<?php echo rn_e($rn_cfg['zoename' . $rn_nr]); ?>">
+         value="<?php echo rn_e(rn_ein_w('zoename' . $rn_nr, $rn_cfg['zoename' . $rn_nr])); ?>"<?php echo rn_ein_m('zoename' . $rn_nr); ?>>
   <p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.H_NAME')); ?>
      <span class="sm-mono">Renault/<?php echo rn_e($rn_cfg['zoename' . $rn_nr]); ?>/…</span></p>
 </div>
 <div class="sm-feld">
   <label for="vin<?php echo rn_e($rn_nr); ?>"><?php echo rn_e(rn_t('TEXT.L_VIN')); ?></label>
   <input data-role="none" type="text" maxlength="17" id="vin<?php echo rn_e($rn_nr); ?>" name="vin<?php echo rn_e($rn_nr); ?>"
-         value="<?php echo rn_e($rn_cfg['vin' . $rn_nr]); ?>">
+         value="<?php echo rn_e(rn_ein_w('vin' . $rn_nr, $rn_cfg['vin' . $rn_nr])); ?>"<?php echo rn_ein_m('vin' . $rn_nr); ?>>
   <p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.H_VIN')); ?></p>
 </div>
 <div class="sm-feld">
   <label for="zoeph<?php echo rn_e($rn_nr); ?>"><?php echo rn_e(rn_t('TEXT.L_PHASE')); ?></label>
-  <select data-role="none" id="zoeph<?php echo rn_e($rn_nr); ?>" name="zoeph<?php echo rn_e($rn_nr); ?>">
-    <option value="1"<?php echo $rn_cfg['zoeph' . $rn_nr] === '1' ? ' selected' : ''; ?>><?php echo rn_e(rn_t('TEXT.O_PHASE1')); ?></option>
-    <option value="2"<?php echo $rn_cfg['zoeph' . $rn_nr] === '2' ? ' selected' : ''; ?>><?php echo rn_e(rn_t('TEXT.O_PHASE2')); ?></option>
+  <select data-role="none" id="zoeph<?php echo rn_e($rn_nr); ?>" name="zoeph<?php echo rn_e($rn_nr); ?>"<?php echo rn_ein_m('zoeph' . $rn_nr); ?>>
+    <option value="1"<?php echo rn_ein_w('zoeph' . $rn_nr, $rn_cfg['zoeph' . $rn_nr]) === '1' ? ' selected' : ''; ?>><?php echo rn_e(rn_t('TEXT.O_PHASE1')); ?></option>
+    <option value="2"<?php echo rn_ein_w('zoeph' . $rn_nr, $rn_cfg['zoeph' . $rn_nr]) === '2' ? ' selected' : ''; ?>><?php echo rn_e(rn_t('TEXT.O_PHASE2')); ?></option>
   </select>
   <p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.H_PHASE')); ?>
   <?php $rn_sx = rn_session($rn_i); if ($rn_sx && isset($rn_sx[26]) && $rn_sx[26] !== '') { ?>
@@ -753,25 +1023,25 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 <p class="sm-hilfe"><?php echo rn_t('TEXT.H_TAKT_TEXT'); ?></p>
 <div class="sm-feld">
   <label for="cron_ncs"><?php echo rn_e(rn_t('TEXT.L_CRON_NCS')); ?></label>
-  <input data-role="none" type="number" min="1" max="60" id="cron_ncs" name="cron_ncs" value="<?php echo rn_e($rn_cfg['cron_ncs']); ?>">
+  <input data-role="none" type="number" min="1" max="60" id="cron_ncs" name="cron_ncs" value="<?php echo rn_e(rn_ein_w('cron_ncs', $rn_cfg['cron_ncs'])); ?>"<?php echo rn_ein_m('cron_ncs'); ?>>
 </div>
 <div class="sm-feld">
   <label for="cron_acs"><?php echo rn_e(rn_t('TEXT.L_CRON_ACS')); ?></label>
-  <input data-role="none" type="number" min="1" max="60" id="cron_acs" name="cron_acs" value="<?php echo rn_e($rn_cfg['cron_acs']); ?>">
+  <input data-role="none" type="number" min="1" max="60" id="cron_acs" name="cron_acs" value="<?php echo rn_e(rn_ein_w('cron_acs', $rn_cfg['cron_acs'])); ?>"<?php echo rn_ein_m('cron_acs'); ?>>
 </div>
 
 <h2><?php echo rn_e(rn_t('TEXT.H_SCHALTEN')); ?></h2>
 <div class="sm-warnung"><?php echo rn_t('TEXT.H_SCHALTEN_TEXT'); ?></div>
 <div class="sm-feld">
   <label for="steuerung_ein"><?php echo rn_e(rn_t('TEXT.L_STEUERUNG')); ?></label>
-  <select data-role="none" id="steuerung_ein" name="steuerung_ein">
-    <option value="N"<?php echo $rn_cfg['steuerung_ein'] !== 'Y' ? ' selected' : ''; ?>><?php echo rn_e(rn_t('TEXT.O_AUS_VORGABE')); ?></option>
-    <option value="Y"<?php echo $rn_cfg['steuerung_ein'] === 'Y' ? ' selected' : ''; ?>><?php echo rn_e(rn_t('TEXT.O_EIN')); ?></option>
+  <select data-role="none" id="steuerung_ein" name="steuerung_ein"<?php echo rn_ein_m('steuerung_ein'); ?>>
+    <option value="N"<?php echo rn_ein_w('steuerung_ein', $rn_cfg['steuerung_ein']) !== 'Y' ? ' selected' : ''; ?>><?php echo rn_e(rn_t('TEXT.O_AUS_VORGABE')); ?></option>
+    <option value="Y"<?php echo rn_ein_w('steuerung_ein', $rn_cfg['steuerung_ein']) === 'Y' ? ' selected' : ''; ?>><?php echo rn_e(rn_t('TEXT.O_EIN')); ?></option>
   </select>
 </div>
 <div class="sm-feld">
   <label for="ac_temp"><?php echo rn_e(rn_t('TEXT.L_AC_TEMP')); ?></label>
-  <input data-role="none" type="number" min="16" max="30" id="ac_temp" name="ac_temp" value="<?php echo rn_e($rn_cfg['ac_temp']); ?>">
+  <input data-role="none" type="number" min="16" max="30" id="ac_temp" name="ac_temp" value="<?php echo rn_e(rn_ein_w('ac_temp', $rn_cfg['ac_temp'])); ?>"<?php echo rn_ein_m('ac_temp'); ?>>
   <p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.H_AC_TEMP')); ?></p>
 </div>
 
@@ -779,25 +1049,25 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 <p class="sm-hilfe"><?php echo rn_t('TEXT.H_MELDUNGEN_TEXT'); ?></p>
 <div class="sm-feld">
   <label for="bl_schwelle"><?php echo rn_e(rn_t('TEXT.L_BL_SCHWELLE')); ?></label>
-  <input data-role="none" type="number" min="1" max="99" id="bl_schwelle" name="bl_schwelle" value="<?php echo rn_e($rn_cfg['bl_schwelle']); ?>">
+  <input data-role="none" type="number" min="1" max="99" id="bl_schwelle" name="bl_schwelle" value="<?php echo rn_e(rn_ein_w('bl_schwelle', $rn_cfg['bl_schwelle'])); ?>"<?php echo rn_ein_m('bl_schwelle'); ?>>
 </div>
 <?php foreach (array('mail_bl' => 'TEXT.L_MAIL_BL', 'cmon_bl' => 'TEXT.L_CMON_BL',
                      'mail_csf' => 'TEXT.L_MAIL_CSF') as $rn_k => $rn_lbl) { ?>
 <div class="sm-feld">
   <label for="<?php echo rn_e($rn_k); ?>"><?php echo rn_e(rn_t($rn_lbl)); ?></label>
-  <select data-role="none" id="<?php echo rn_e($rn_k); ?>" name="<?php echo rn_e($rn_k); ?>">
-    <option value="N"<?php echo $rn_cfg[$rn_k] !== 'Y' ? ' selected' : ''; ?>><?php echo rn_e(rn_t('TEXT.O_NEIN')); ?></option>
-    <option value="Y"<?php echo $rn_cfg[$rn_k] === 'Y' ? ' selected' : ''; ?>><?php echo rn_e(rn_t('TEXT.O_JA')); ?></option>
+  <select data-role="none" id="<?php echo rn_e($rn_k); ?>" name="<?php echo rn_e($rn_k); ?>"<?php echo rn_ein_m($rn_k); ?>>
+    <option value="N"<?php echo rn_ein_w($rn_k, $rn_cfg[$rn_k]) !== 'Y' ? ' selected' : ''; ?>><?php echo rn_e(rn_t('TEXT.O_NEIN')); ?></option>
+    <option value="Y"<?php echo rn_ein_w($rn_k, $rn_cfg[$rn_k]) === 'Y' ? ' selected' : ''; ?>><?php echo rn_e(rn_t('TEXT.O_JA')); ?></option>
   </select>
 </div>
 <?php } ?>
 <div class="sm-feld">
   <label for="exec_bl"><?php echo rn_e(rn_t('TEXT.L_EXEC_BL')); ?></label>
-  <input data-role="none" type="text" id="exec_bl" name="exec_bl" value="<?php echo rn_e($rn_cfg['exec_bl']); ?>">
+  <input data-role="none" type="text" id="exec_bl" name="exec_bl" value="<?php echo rn_e(rn_ein_w('exec_bl', $rn_cfg['exec_bl'])); ?>"<?php echo rn_ein_m('exec_bl'); ?>>
 </div>
 <div class="sm-feld">
   <label for="exec_csf"><?php echo rn_e(rn_t('TEXT.L_EXEC_CSF')); ?></label>
-  <input data-role="none" type="text" id="exec_csf" name="exec_csf" value="<?php echo rn_e($rn_cfg['exec_csf']); ?>">
+  <input data-role="none" type="text" id="exec_csf" name="exec_csf" value="<?php echo rn_e(rn_ein_w('exec_csf', $rn_cfg['exec_csf'])); ?>"<?php echo rn_ein_m('exec_csf'); ?>>
   <p class="sm-hilfe"><?php echo rn_t('TEXT.H_EXEC'); ?></p>
 </div>
 
@@ -805,20 +1075,20 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 <div class="sm-info"><?php echo rn_t('TEXT.H_LADEZIEL_TEXT'); ?></div>
 <div class="sm-feld">
   <label for="soc_min"><?php echo rn_e(rn_t('TEXT.L_SOC_MIN')); ?></label>
-  <input data-role="none" type="number" min="20" max="100" id="soc_min" name="soc_min" value="<?php echo rn_e($rn_cfg['soc_min']); ?>">
+  <input data-role="none" type="number" min="20" max="100" id="soc_min" name="soc_min" value="<?php echo rn_e(rn_ein_w('soc_min', $rn_cfg['soc_min'])); ?>"<?php echo rn_ein_m('soc_min'); ?>>
 </div>
 <div class="sm-feld">
   <label for="soc_target"><?php echo rn_e(rn_t('TEXT.L_SOC_TARGET')); ?></label>
-  <input data-role="none" type="number" min="20" max="100" id="soc_target" name="soc_target" value="<?php echo rn_e($rn_cfg['soc_target']); ?>">
+  <input data-role="none" type="number" min="20" max="100" id="soc_target" name="soc_target" value="<?php echo rn_e(rn_ein_w('soc_target', $rn_cfg['soc_target'])); ?>"<?php echo rn_ein_m('soc_target'); ?>>
   <p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.H_SOC_LEER')); ?></p>
 </div>
 
 <h2><?php echo rn_e(rn_t('TEXT.H_AUFZEICHNUNG')); ?></h2>
 <div class="sm-feld">
   <label for="save_in_db"><?php echo rn_e(rn_t('TEXT.L_SAVE_IN_DB')); ?></label>
-  <select data-role="none" id="save_in_db" name="save_in_db">
-    <option value="N"<?php echo $rn_cfg['save_in_db'] !== 'Y' ? ' selected' : ''; ?>><?php echo rn_e(rn_t('TEXT.O_NEIN')); ?></option>
-    <option value="Y"<?php echo $rn_cfg['save_in_db'] === 'Y' ? ' selected' : ''; ?>><?php echo rn_e(rn_t('TEXT.O_JA_ANHAENGEN')); ?></option>
+  <select data-role="none" id="save_in_db" name="save_in_db"<?php echo rn_ein_m('save_in_db'); ?>>
+    <option value="N"<?php echo rn_ein_w('save_in_db', $rn_cfg['save_in_db']) !== 'Y' ? ' selected' : ''; ?>><?php echo rn_e(rn_t('TEXT.O_NEIN')); ?></option>
+    <option value="Y"<?php echo rn_ein_w('save_in_db', $rn_cfg['save_in_db']) === 'Y' ? ' selected' : ''; ?>><?php echo rn_e(rn_t('TEXT.O_JA_ANHAENGEN')); ?></option>
   </select>
   <p class="sm-hilfe"><?php echo rn_t('TEXT.H_AUFZEICHNUNG_TEXT'); ?></p>
 </div>
@@ -830,21 +1100,21 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
            "gespeichert / noch nicht gesetzt"; leer heisst unveraendert,
            geloescht wird ueber den Haken. Bis 2.1.12 standen beide Schluessel
            als Klartext im Formular. */ ?>
-  <input data-role="none" type="password" id="weather_api_key" name="weather_api_key" value="" autocomplete="new-password"
+  <input data-role="none" type="password" id="weather_api_key" name="weather_api_key" value="" autocomplete="new-password"<?php echo rn_ein_m('weather_api_key'); ?>
          placeholder="<?php echo rn_e($rn_cfg['weather_api_key'] !== '' ? rn_t('TEXT.P_GESPEICHERT') : rn_t('TEXT.P_NICHT_GESETZT')); ?>">
   <p class="sm-hilfe"><label><input data-role="none" type="checkbox" name="weather_api_key_loeschen" value="1" style="width:auto;margin:0 6px 0 0;vertical-align:middle"><?php echo rn_e(rn_t('TEXT.L_SCHLUESSEL_LOESCHEN')); ?></label></p>
   <p class="sm-hilfe"><?php echo rn_t('TEXT.H_WETTER'); ?> <?php echo rn_e(rn_t('TEXT.H_GEHEIM')); ?></p>
 </div>
 <div class="sm-feld">
   <label for="abrp_token"><?php echo rn_e(rn_t('TEXT.L_ABRP_TOKEN')); ?></label>
-  <input data-role="none" type="password" id="abrp_token" name="abrp_token" value="" autocomplete="new-password"
+  <input data-role="none" type="password" id="abrp_token" name="abrp_token" value="" autocomplete="new-password"<?php echo rn_ein_m('abrp_token'); ?>
          placeholder="<?php echo rn_e($rn_cfg['abrp_token'] !== '' ? rn_t('TEXT.P_GESPEICHERT') : rn_t('TEXT.P_NICHT_GESETZT')); ?>">
   <p class="sm-hilfe"><label><input data-role="none" type="checkbox" name="abrp_token_loeschen" value="1" style="width:auto;margin:0 6px 0 0;vertical-align:middle"><?php echo rn_e(rn_t('TEXT.L_SCHLUESSEL_LOESCHEN')); ?></label></p>
   <p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.H_GEHEIM')); ?></p>
 </div>
 <div class="sm-feld">
   <label for="abrp_model"><?php echo rn_e(rn_t('TEXT.L_ABRP_MODEL')); ?></label>
-  <input data-role="none" type="text" id="abrp_model" name="abrp_model" value="<?php echo rn_e($rn_cfg['abrp_model']); ?>">
+  <input data-role="none" type="text" id="abrp_model" name="abrp_model" value="<?php echo rn_e(rn_ein_w('abrp_model', $rn_cfg['abrp_model'])); ?>"<?php echo rn_ein_m('abrp_model'); ?>>
   <p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.H_ABRP')); ?></p>
 </div>
 
@@ -860,6 +1130,13 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 <h2><?= rn_t('TEXT.H_SICHERUNG') ?></h2>
 <div class="sm-hinweis"><?= rn_t('TEXT.SICH_ERKLAERUNG') ?></div>
 <div class="sm-warnung"><?= rn_t('TEXT.SICH_WARNUNG') ?></div>
+<?php /* X-3 (Welle-4-Bau): Wuerde das Zurueckspielen die eigene Sicherung
+         abweisen, steht es hier - gelb, nur Namen, nie Werte. Die Sicherung
+         wird trotzdem vollstaendig geliefert, ihr Kopf traegt '_warnung'. */
+$rn_sich_warn = rn_rueckspiel_altwerte();
+if ($rn_sich_warn) { ?>
+<div class="sm-warnung"><?php echo sprintf(rn_t('TEXT.SICH_WARN_KNOPF'), rn_e(implode(', ', $rn_sich_warn))); ?></div>
+<?php } ?>
 <div class="sm-knopfreihe">
   <!-- ZWEI GETRENNTE Formulare. Das Sichern schickt einen Download und ruft
        exit auf; das Zurueckspielen braucht enctype="multipart/form-data".

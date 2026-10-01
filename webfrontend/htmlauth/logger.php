@@ -110,6 +110,35 @@ function renault_log($level, $msg)
 }
 
 /**
+ * Eine Zeile hoechstens einmal je Kalendertag (Renault-a1, Entscheidung
+ * Nr. 16 des Hausherrn, 30.09.2026).
+ *
+ * Fuer den Cron einer Anlage ohne Zugangsdaten: dort ist nichts falsch, es
+ * ist nur nichts eingerichtet. Bis 2.1.14 stand dafuer alle drei Minuten eine
+ * ERROR-Zeile an; die Stundenbremse in renault_log() liess davon eine je
+ * Stunde durch, dazu je Stunde die Sammelzeile - rund 48 Zeilen am Tag in
+ * einem Protokoll, das sonst leer waere (am Geraet so vorgefunden).
+ *
+ * Der Merker <protokoll>.tag haelt Datum und Pruefsumme. Ist das Protokoll
+ * fort (Ramdisk nach einem Neustart, "Protokoll leeren"), steht die Zeile
+ * beim naechsten Lauf wieder da - sonst saehe man nach dem Leeren nicht,
+ * warum nichts geschieht. Rueckgabe: true, wenn geschrieben wurde.
+ */
+function renault_log_taeglich($level, $msg)
+{
+    $merker = RENAULT_LOGFILE . '.tag';
+    $stand  = date('Ymd') . '|' . md5($level . '|' . $msg);
+    clearstatcache(true, RENAULT_LOGFILE);
+    if (is_file(RENAULT_LOGFILE) && is_readable($merker)
+        && trim((string) @file_get_contents($merker)) === $stand) {
+        return false;
+    }
+    renault_log_roh($level, $msg);
+    @file_put_contents($merker, $stand, LOCK_EX);
+    return true;
+}
+
+/**
  * Eine Schnittstellenantwort protokollieren: Statuscode und, nur im
  * Fehlerfall, ein gekuerzter Rumpf.
  *
