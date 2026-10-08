@@ -958,6 +958,36 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 </ul></div>
 <?php } ?>
 
+<?php /* Kopf (Entscheidung Nr. 43, seit 2.1.17): Statusuebersicht ueber den
+   Reitern, immer sichtbar. Renault hat keinen Dienst - der Abruf laeuft per
+   Cron. Nur Werte, die die Seite ohnehin liest (Konfiguration, die
+   session-Datei je Fahrzeug wie im Reiter Test, rn_mqtt_broker()); keine
+   Netzabfrage. Vom Konto steht nur, ob Zugangsdaten da sind, nie der Name. */ ?>
+<table class="sm-tbl" style="max-width:620px">
+<tr><th><?php echo rn_e(rn_t('TEXT.KOPF_EIGENSCHAFT')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_WERT')); ?></th></tr>
+<tr><td><?php echo rn_e(rn_t('TEXT.KOPF_ABRUF')); ?></td>
+    <td><?php echo rn_e(sprintf(rn_t('TEXT.KOPF_OHNE_DIENST'), (int) $rn_cfg['cron_ncs'], (int) $rn_cfg['cron_acs'])); ?></td></tr>
+<?php $rn_kk = ((string) $rn_cfg['username'] !== '' && (string) $rn_cfg['password'] !== ''); ?>
+<tr><td><?php echo rn_e(rn_t('TEXT.KOPF_KONTO')); ?></td>
+    <td class="<?php echo $rn_kk ? 'sm-an' : 'sm-aus'; ?>"><?php echo rn_e($rn_kk ? rn_t('TEXT.KOPF_KONTO_JA') : rn_t('TEXT.KOPF_KONTO_NEIN')); ?></td></tr>
+<?php foreach ($rn_autos as $rn_kf) {
+    $rn_ks = rn_session($rn_kf['nr']);
+    $rn_kz = ($rn_ks && isset($rn_ks[25])) ? trim((string) $rn_ks[25]) : '';
+    if (preg_match('/^[0-9]{12}$/', $rn_kz)) {
+        $rn_kz = substr($rn_kz, 6, 2) . '.' . substr($rn_kz, 4, 2) . '.' . substr($rn_kz, 0, 4)
+               . ' ' . substr($rn_kz, 8, 2) . ':' . substr($rn_kz, 10, 2);
+    } ?>
+<tr><td><?php echo rn_e(sprintf(rn_t('TEXT.KOPF_LETZTER_ERFOLG'), $rn_kf['name'])); ?></td>
+    <td><?php echo $rn_kz !== '' ? rn_e($rn_kz) : rn_e(rn_t('TEXT.KOPF_NOCH_KEIN')); ?></td></tr>
+<?php } ?>
+<tr><td><?php echo rn_e(rn_t('TEXT.KOPF_BROKER')); ?></td>
+    <td<?php echo $rn_broker ? '' : ' class="sm-aus"'; ?>><?php echo $rn_broker
+        ? '<span class="sm-mono">' . rn_e($rn_broker['host'] . ':' . $rn_broker['port']) . '</span>'
+        : rn_e(rn_t('TEXT.KOPF_KEIN_BROKER')); ?></td></tr>
+<tr><td><?php echo rn_e(rn_t('TEXT.KOPF_SCHALTEN')); ?></td>
+    <td><?php echo rn_e($rn_cfg['steuerung_ein'] === 'Y' ? rn_t('TEXT.KOPF_SCHALTEN_JA') : rn_t('TEXT.KOPF_SCHALTEN_NEIN')); ?></td></tr>
+</table>
+
 <!-- Reiterleiste: echte Verweise, sm-active vom SERVER, ausgeschrieben.
      Bis 1.4 standen hier <div> ohne Verweis, und sm-active vergab allein das
      JavaScript. Da .sm-seite auf display:none steht, war die Seite ohne
@@ -976,6 +1006,7 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 
 <!-- ============================ Einstellungen ============================ -->
 <div class="sm-seite<?php echo $rn_tab === 'tab-settings' ? ' sm-active' : ''; ?>" id="tab-settings">
+<div class="sm-hinweis"><?php echo rn_t('TEXT.WAS_IST_DAS'); ?></div>
 <?php if ($rn_angebot) { /* Renault-b1 */ ?>
 <div class="sm-warnung">
 <p><?php echo sprintf(rn_t('TEXT.KAPUTT_ANGEBOT'), rn_e(basename($rn_angebot['datei'])),
