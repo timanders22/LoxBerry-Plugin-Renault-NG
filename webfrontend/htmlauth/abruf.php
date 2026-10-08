@@ -924,6 +924,20 @@ foreach ($rn_mit_vin as $rn_f) {
         $rn_s[6] = ($rn_s[10] == 1) ? 'Y' : 'N';
     }
 
+    /* ---- Sprachausgabe (Nr. 36 b, seit 2.1.16) ----
+     * Nach den Meldungen und vor dem Zwischenspeicher: der eigene Stand liegt in
+     * ansage_stand.json. Ins Protokoll kommen Anlass, Fahrzeugnummer und die Kurzform
+     * des Ergebnisses - nie der Text, nie ein Token. Ein Fehler hier haelt den Abruf
+     * nicht auf. */
+    try {
+        foreach (rn_ansage_lauf($rn_cfg, $rn_f, $rn_erfolg, $rn_s) as $rn_an) {
+            renault_log($rn_an['stufe'], 'Ansage ' . $rn_an['anlass'] . ' (Fahrzeug ' . (int) $rn_f['nr']
+                . '): ' . $rn_an['kurz']);
+        }
+    } catch (\Throwable $rn_ae) {
+        renault_log('ERROR', 'Ansage: ' . get_class($rn_ae));
+    }
+
     /* ---- Aufzeichnung ---- */
     if ($rn_erfolg && $rn_cfg['save_in_db'] === 'Y') {
         $rn_csv = $rn_f['csv'];

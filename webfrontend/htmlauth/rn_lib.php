@@ -49,6 +49,10 @@ if (!function_exists('lb_wurzel_ermitteln')) {
  * general.json wird hier nicht verlangt, damit die Attrappen der
  * Pruefwerkzeuge (Werkzeuge/lb) weiter tragen. Bis 2.1.10 genuegte ein
  * vorhandenes Verzeichnis. */
+/* Gemeinsame Sprachausgabe (Abschrift von Werkzeuge/gemeinsam/sprachausgabe.php, Nr. 36 b, seit
+ * 2.1.16). Liegt neben dieser Datei; sie schuetzt sich selbst gegen doppeltes Laden. */
+require_once __DIR__ . '/sprachausgabe.php';
+
 function rn_lbhome()
 {
     $h = rtrim((string) getenv('LBHOMEDIR'), '/');
@@ -498,7 +502,17 @@ function rn_vorgaben()
         'abrp_model'      => '',
         // ---- Endpunkt ----
         'aktionstoken'    => '',
+        // ---- Sprachausgabe (Nr. 36 b, seit 2.1.16): Anlaesse je einzeln abwaehlbar. Gesprochen
+        //      wird erst mit einer Ausgabeart (tts_mode, ab Werk 'aus'). ----
+        'ansage_laden_fertig'  => 'Y',
+        'ansage_laden_abbruch' => 'Y',
+        'ansage_akku'          => 'Y',
+        'ansage_ausfall'       => 'Y',
     );
+    /* Der Block tts des Moduls, flach wie jeder Schluessel dieser Datei (tts_mode, tts_ip, ...). */
+    foreach (ansage_vorgaben('aus') as $rn_tk => $rn_tw) {
+        $v['tts_' . $rn_tk] = (string) $rn_tw;
+    }
     /* Fahrzeug 2 bis 4. Bewusst durchnummerierte Einzelschluessel und kein
      * verschachteltes Feld: config.php wird mit var_export() je Schluessel
      * geschrieben, und rn_config_read() uebernimmt ausdruecklich nur
@@ -2729,6 +2743,16 @@ function rn_sicherung_lesen($roh, &$namen = null)
         if ($k !== '' && $k[0] === '_') {
             continue;
         }
+        /* Nr. 36 b (seit 2.1.16): eine Sicherung dieses Plugins traegt nie ein Sprechtoken - traegt
+         * die Datei eines (auch als Liste, Zahl oder null), stammt sie nicht aus "Einstellungen
+         * sichern" und wird abgewiesen; die geltenden Sprechtoken bleiben. Leer heisst "keines". */
+        if (in_array($k, rn_ansage_tokenfelder(), true)) {
+            if ($w !== '') {
+                $mangel[] = sprintf(rn_t('TEXT.SICH_TTS_TOKEN'), htmlspecialchars($k, ENT_QUOTES, 'UTF-8'));
+                $namen[] = $k;
+            }
+            continue;
+        }
         if (!in_array($k, $bekannt, true)) {
             $mangel[] = sprintf(rn_t('TEXT.SICH_FREMD'),
                                  htmlspecialchars($k, ENT_QUOTES, 'UTF-8'));
@@ -2783,7 +2807,22 @@ function rn_sicherung_lesen($roh, &$namen = null)
     foreach (array_keys($daten) as $k) { $in_datei[(string) $k] = true; }
     $fehlend = array();
     foreach ($bekannt as $k) {
+        /* Nr. 36 b: eine Sicherung von 2.1.15 oder frueher kennt die Sprachausgabe nicht; ihre
+         * Schluessel behalten den Wert dieser Anlage ($neu geht vom Bestand aus). */
+        if (in_array($k, rn_ansage_neue_schluessel(), true)) { continue; }
         if (!isset($in_datei[$k])) { $fehlend[] = $k; }
+    }
+    if (!isset($in_datei['tts_mode'])) {
+        $hinweise[] = rn_t('TEXT.SICH_OHNE_ANSAGE');
+    }
+    /* Nr. 36 b: der Block der Sprachausgabe wie im Formular geprueft (Ausgabeart, Heimnetz). */
+    if (!$mangel) {
+        $rn_tg = '';
+        if (ansage_wert_pruefen(rn_tts_aus($neu), $rn_tg, rn_ansage_modi()) === null) {
+            $mangel[] = sprintf(rn_t('TEXT.SICH_TTS'), htmlspecialchars(
+                ansage_kennung_text($rn_tg, rn_ansage_k()), ENT_QUOTES, 'UTF-8'));
+            $namen[] = 'tts_mode';
+        }
     }
     if ($fehlend) {
         foreach ($fehlend as $k) { $namen[] = $k; }
@@ -2797,6 +2836,247 @@ function rn_sicherung_lesen($roh, &$namen = null)
     /* Alle Beanstandungen werden gesammelt; eine halb gueltige Datei aendert
      * GAR NICHTS. */
     return array($mangel ? null : $neu, $mangel, $anzahl, $hinweise);
+}
+
+/* ==================================================================
+ * Sprachausgabe (Nr. 36 b, Stufe 2, seit 2.1.16)
+ *
+ * abruf.php erkennt nach jedem Abruf eines Fahrzeugs die Anlaesse
+ * (rn_ansage_lauf()) und spricht ueber die gemeinsame Sprachausgabe
+ * (sprachausgabe.php). Ab Werk ist die Ausgabe aus.
+ * ================================================================== */
+
+/** Erlaubte Ausgabearten: alle des Moduls ausser 'audioserver' (die Linie gibt keinen Text an Loxone). */
+function rn_ansage_modi()
+{
+    return array('aus', 'musicserver', 'ms4h', 'custom', 'alexang', 'cc4lox');
+}
+
+/** Optionen fuer Formular-Baustein und Formular-Lesen. */
+function rn_ansage_opt()
+{
+    return array('modi' => rn_ansage_modi());
+}
+
+/** Die Anlaesse: Name => array(Konfigschluessel, Beschriftung). */
+function rn_ansage_anlaesse()
+{
+    return array(
+        'laden_fertig'  => array('ansage_laden_fertig', 'TEXT.L_ANSAGE_LADEN_FERTIG'),
+        'laden_abbruch' => array('ansage_laden_abbruch', 'TEXT.L_ANSAGE_LADEN_ABBRUCH'),
+        'akku'          => array('ansage_akku', 'TEXT.L_ANSAGE_AKKU'),
+        'ausfall'       => array('ansage_ausfall', 'TEXT.L_ANSAGE_AUSFALL'),
+    );
+}
+
+/** Die Konfigschluessel der Sprechtoken - nie in Seite, Sicherung, Protokoll, X-2. */
+function rn_ansage_tokenfelder()
+{
+    $aus = array();
+    foreach (ansage_geheim() as $g) {
+        $aus[] = 'tts_' . $g;
+    }
+    return $aus;
+}
+
+/** Die Schluessel, die mit 2.1.16 dazukamen - eine aeltere Sicherung kennt sie nicht. */
+function rn_ansage_neue_schluessel()
+{
+    $s = array();
+    foreach (rn_ansage_anlaesse() as $a) {
+        $s[] = $a[0];
+    }
+    foreach (array_keys(ansage_vorgaben('aus')) as $k) {
+        $s[] = 'tts_' . $k;
+    }
+    return $s;
+}
+
+/** Der Block tts aus der flachen Konfiguration; Zahlenfelder als Zahl (config.php kennt nur Zeichenketten). */
+function rn_tts_aus($cfg)
+{
+    $t = array();
+    foreach (ansage_vorgaben('aus') as $k => $w) {
+        if (!is_array($cfg) || !array_key_exists('tts_' . $k, $cfg)) {
+            continue;
+        }
+        $v = $cfg['tts_' . $k];
+        if (is_int($w) && is_string($v) && preg_match('/^-?[0-9]{1,6}$/', $v)) {
+            $v = (int) $v;
+        }
+        $t[$k] = $v;
+    }
+    return $t;
+}
+
+/** Der Block tts flach fuer config.php. */
+function rn_tts_flach(array $tts)
+{
+    $aus = array();
+    foreach (array_keys(ansage_vorgaben('aus')) as $k) {
+        $aus['tts_' . $k] = isset($tts[$k]) && is_scalar($tts[$k]) ? (string) $tts[$k] : '';
+    }
+    return $aus;
+}
+
+/**
+ * Der Block tts, geprueft und vervollstaendigt (ab Werk 'aus'). Ein
+ * unzulaessiger Block (von Hand geschrieben) gilt als "aus"; das eigene
+ * Zurueckspielen nennt ihn (X-3).
+ */
+function rn_tts($cfg = null)
+{
+    if ($cfg === null) {
+        $cfg = rn_config_read(false);
+    }
+    $t = rn_tts_aus($cfg);
+    $g = '';
+    if (ansage_wert_pruefen($t, $g, rn_ansage_modi()) === null) {
+        $t = array();
+    }
+    list($t) = ansage_vervollstaendigen($t, 'aus');
+    return $t;
+}
+
+/** Der Kontext des Moduls: Webport, Kopfzeile, Ordner fuer <art>_letzte.json, Texte. */
+function rn_ansage_k()
+{
+    $p = rn_paths(false);
+    return array(
+        'port'   => ansage_webport((string) $p['general']),
+        'kopf'   => array('User-Agent: LoxBerry Renault NG'),
+        'ordner' => @is_dir($p['datadir']) ? $p['datadir'] : '',
+        't'      => function ($s) { return rn_t($s); },
+        /* Zu dieser Kennung hat das Modul (1.1.1) keinen Satz in [ANSAGE]; linieneigen wie Intercom
+         * 2.2.18, bis der Modulschluessel mit einer ergaenzenden Fassung kommt (Entwurf, Stufe 2). */
+        'schluessel' => array('K_TTS_EINTRAG' => 'TEXT.SICH_TTS_EINTRAG'),
+    );
+}
+
+/** Der Satz zu einem Anlass, aus der Sprachdatei. Ladestand und Ladeziel nur, wenn sie bekannt sind. */
+function rn_ansage_satz($anlass, $name, $soc = null, $grenze = null)
+{
+    if ($anlass === 'ausfall') {
+        return sprintf(rn_t('TEXT.ANSAGE_S_AUSFALL'), $name);
+    }
+    if ($anlass === 'akku') {
+        return sprintf(rn_t('TEXT.ANSAGE_S_AKKU'), $name, (int) $soc);
+    }
+    if ($anlass === 'laden_abbruch') {
+        if ($soc === null || $grenze === null) {
+            return sprintf(rn_t('TEXT.ANSAGE_S_LADEN_STOERUNG'), $name);
+        }
+        return sprintf(rn_t('TEXT.ANSAGE_S_LADEN_ABBRUCH'), $name, (int) $soc, (int) $grenze);
+    }
+    $s = sprintf(rn_t('TEXT.ANSAGE_S_LADEN_FERTIG'), $name);
+    return $soc === null ? $s : $s . ' ' . sprintf(rn_t('TEXT.ANSAGE_S_LADESTAND'), (int) $soc);
+}
+
+/** Eine kleine JSON-Datei im Datenordner lesen (nur ein Feld zaehlt). */
+function rn_ansage_json($datei)
+{
+    $d = is_file($datei) ? json_decode((string) @file_get_contents($datei), true) : null;
+    return is_array($d) ? $d : array();
+}
+
+/**
+ * Nach dem Abruf EINES Fahrzeugs: die Anlaesse erkennen und ansagen.
+ *
+ * $s ist der Zwischenspeicher des Laufs (Feld 10 Ladestatus, 12 Batteriestand),
+ * $erfolg sagt, ob der Abruf gelang. Angesagt wird nur ein WECHSEL gegenueber
+ * dem zuletzt gesehenen Stand (ansage_stand.json):
+ *   laden_fertig   Ladestatus 1 -> nicht 1, Batteriestand nicht unter dem Ladeziel
+ *   laden_abbruch  ... Ladestatus negativ (Stoerung) oder mehr als 1 Punkt unter soc_target
+ *   akku           waehrend der Ladung erreicht der Batteriestand bl_schwelle
+ *   ausfall        der dritte gescheiterte Abruf in Folge, nachdem einer gelungen war
+ * Fehlt der Stand oder ist der letzte gelungene Abruf aelter als 6 h, setzt
+ * der Lauf nur den Ausgangsstand. Rueckgabe: je Anlass array('anlass',
+ * 'stufe', 'kurz') fuers Protokoll - nie Text, nie Token.
+ */
+function rn_ansage_lauf($cfg, $f, $erfolg, array $s, $jetzt = null)
+{
+    $jetzt = ($jetzt === null) ? time() : (int) $jetzt;
+    $p = rn_paths(false);
+    if ($p['datadir'] === '' || !@is_dir($p['datadir'])) {
+        return array();
+    }
+    $datei = $p['datadir'] . '/ansage_stand.json';
+    $stand = rn_ansage_json($datei);
+    $nr = (string) (int) $f['nr'];
+    $alt = (isset($stand[$nr]) && is_array($stand[$nr])) ? $stand[$nr] : null;
+    $frisch = $alt !== null && isset($alt['ts_ok']) && is_int($alt['ts_ok'])
+              && $jetzt - $alt['ts_ok'] >= 0 && $jetzt - $alt['ts_ok'] <= 6 * 3600;
+    $anlaesse = array();
+    if ($erfolg) {
+        $st = (isset($s[10]) && is_numeric($s[10])) ? (float) $s[10] : null;
+        $laedt = ($st === null) ? null : (abs($st - 1.0) < 0.001 ? 1 : 0);
+        $soc = (isset($s[12]) && is_numeric($s[12])) ? (int) round((float) $s[12]) : null;
+        if ($soc !== null && ($soc < 0 || $soc > 100)) {
+            $soc = null;
+        }
+        $schwelle = (int) $cfg['bl_schwelle'];
+        $akku = ($laedt === 1 && $soc !== null && $soc >= $schwelle) ? 1 : 0;
+        $neu = array('ts_ok' => $jetzt,
+                     'laedt' => ($laedt !== null) ? $laedt : ($alt !== null && isset($alt['laedt']) ? $alt['laedt'] : null),
+                     'akku' => $akku, 'fehler' => 0, 'ok' => 1);
+        if ($frisch) {
+            if (isset($alt['laedt']) && $alt['laedt'] === 1 && $neu['laedt'] === 0) {
+                $ziel = trim((string) $cfg['soc_target']);
+                $unter = $ziel !== '' && $soc !== null && $soc < (int) $ziel - 1;
+                if ($unter || ($st !== null && $st < 0)) {
+                    $anlaesse[] = array('laden_abbruch', $unter ? $soc : null, $unter ? (int) $ziel : null);
+                } else {
+                    $anlaesse[] = array('laden_fertig', $soc, null);
+                }
+            }
+            if ($akku === 1 && empty($alt['akku'])) {
+                $anlaesse[] = array('akku', $soc, null);
+            }
+        }
+    } else {
+        $neu = ($alt !== null) ? $alt : array('ts_ok' => 0, 'laedt' => null, 'akku' => 0, 'fehler' => 0, 'ok' => 0);
+        $vorher = isset($neu['fehler']) ? (int) $neu['fehler'] : 0;
+        $neu['fehler'] = $vorher + 1;
+        if (!empty($neu['ok']) && $vorher < 3 && $neu['fehler'] >= 3) {
+            $anlaesse[] = array('ausfall', null, null);
+        }
+    }
+    /* Der Stand steht VOR der Ansage fest: scheitert das Schreiben, wird nicht
+     * gesprochen - sonst spraeche jeder folgende Lauf denselben Wechsel. */
+    $stand[$nr] = $neu;
+    $js = json_encode($stand);
+    if (!is_string($js) || !rn_datei_schreiben($datei, $js, 0600)) {
+        return $anlaesse ? array(array('anlass' => 'stand', 'stufe' => 'ERROR',
+            'kurz' => 'ansage_stand.json nicht schreibbar - nichts angesagt')) : array();
+    }
+    $aus = array();
+    if (!$anlaesse) {
+        return $aus;
+    }
+    $tts = rn_tts($cfg);
+    $alle = rn_ansage_anlaesse();
+    foreach ($anlaesse as $a) {
+        list($anlass, $soc, $grenze) = $a;
+        if (!isset($cfg[$alle[$anlass][0]]) || (string) $cfg[$alle[$anlass][0]] !== 'Y'
+            || $tts['mode'] === 'aus') {
+            continue;
+        }
+        $sp_datei = $p['datadir'] . '/ansage_sperre.json';
+        $sp = rn_ansage_json($sp_datei);
+        $schl = $anlass . ':' . $nr;
+        if (isset($sp[$schl]) && is_int($sp[$schl]) && $jetzt - $sp[$schl] >= 0 && $jetzt - $sp[$schl] < 3600) {
+            $aus[] = array('anlass' => $anlass, 'stufe' => 'INFO', 'kurz' => 'unterdrueckt - hoechstens eine je 3600 s');
+            continue;
+        }
+        foreach ($sp as $sk => $sv) {
+            if (!is_int($sv) || $jetzt - $sv < 0 || $jetzt - $sv >= 3600) { unset($sp[$sk]); }
+        }
+        $sp[$schl] = $jetzt;
+        rn_datei_schreiben($sp_datei, (string) json_encode($sp), 0600);
+        $r = ansage_sprechen(rn_ansage_satz($anlass, (string) $f['name'], $soc, $grenze), $tts, rn_ansage_k());
+        $aus[] = array('anlass' => $anlass, 'stufe' => $r['stand'] === 0 ? 'WARN' : 'INFO', 'kurz' => ansage_kurz($r));
+    }
+    return $aus;
 }
 
 /* ---------------- Beiseitegelegte Konfigurationen (Renault-b1) ----------------
@@ -2893,7 +3173,13 @@ function rn_sicherung_inhalt()
         '_fassung' => rn_fassung(),
         '_stand'   => date('Y-m-d H:i:s'),
     );
-    return array_merge($kopf, rn_config_read());
+    /* Nr. 36 b: die Sprechtoken der Sprachausgabe gehen nie in eine Sicherung (Entwurf 5) -
+     * anders als Kennwort und Aktionstoken, die diese Linie bewusst mitsichert. */
+    $rn_c = rn_config_read();
+    foreach (rn_ansage_tokenfelder() as $rn_tf) {
+        unset($rn_c[$rn_tf]);
+    }
+    return array_merge($kopf, $rn_c);
 }
 
 /**
@@ -2977,6 +3263,10 @@ function rn_wert_pruefen($k, $w)
     switch ($k) {
         case 'country':
             return preg_match('/^[A-Z]{2}$/', $w) === 1;
+        case 'ansage_laden_fertig':
+        case 'ansage_laden_abbruch':
+        case 'ansage_akku':
+        case 'ansage_ausfall':
         case 'save_in_db':
         case 'steuerung_ein':
         case 'mail_bl':

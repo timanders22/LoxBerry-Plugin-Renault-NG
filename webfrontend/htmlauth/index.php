@@ -59,12 +59,16 @@ function rn_eingabe_felder($formular)
         $nr = ($i === 1) ? '' : (string) $i;
         foreach (array('zoename', 'vin', 'zoeph') as $n) { $f[] = $n . $nr; }
     }
+    /* Nr. 36 b (seit 2.1.16): die Sprachausgabe und die Anlass-Schalter - nie die Sprechtoken
+     * (ansage_x2_felder() nennt sie nicht; markiert werden koennen sie). */
+    $f = array_merge($f, ansage_x2_felder(rn_ansage_opt()));
+    foreach (rn_ansage_anlaesse() as $a) { $f[] = $a[0]; }
     return $f;
 }
 /* Geheimnisfelder: werden markiert, ihr Wert reist nie mit. */
 function rn_eingabe_geheim()
 {
-    return array('password', 'weather_api_key', 'abrp_token');
+    return array_merge(array('password', 'weather_api_key', 'abrp_token'), rn_ansage_tokenfelder());
 }
 function rn_eingabe_tauglich($w)
 {
@@ -134,6 +138,16 @@ function rn_ein_m($feld)
     $e = rn_eingaben();
     return ($e !== null && in_array($feld, $e['falsch'], true))
         ? ' class="sm-beanstandet" aria-invalid="true"' : '';
+}
+/* Nr. 36 b: ein Haken nach einer Beanstandung - wie abgeschickt (fehlt er in den Eingaben, war er
+ * aus); sonst der gespeicherte Stand. */
+function rn_ein_h($feld, $gespeichert)
+{
+    $e = rn_eingaben();
+    if ($e !== null && in_array($feld, rn_eingabe_felder($e['formular']), true)) {
+        return isset($e['werte'][$feld]);
+    }
+    return (bool) $gespeichert;
 }
 /* Nr. 19: enthaelt eine Eingabe Anfuehrungs- oder Steuerzeichen? Bis 2.1.14
  * wurden sie still entfernt und der Rest gespeichert. */
@@ -464,6 +478,24 @@ if (isset($_POST['speichern'])) {
             rn_bean($f);
         }
     }
+    /* Nr. 36 b (Stufe 2, seit 2.1.16): Sprachausgabe und Anlaesse. Jede Beanstandung verhindert
+     * das Speichern (Nr. 16); kein Sprechtoken steht in einer Meldung, ein leeres Tokenfeld heisst
+     * "behalten", der Haken loescht, beides zugleich ist ein Widerspruch. */
+    foreach (rn_ansage_anlaesse() as $rn_a) {
+        $neu[$rn_a[0]] = isset($_POST[$rn_a[0]]) ? 'Y' : 'N';
+    }
+    $rn_tmangel = array();
+    $rn_tbean = array();
+    $rn_tneu = ansage_formular_lesen($_POST, rn_tts($rn_cfg), $rn_tmangel, $rn_tbean, rn_ansage_opt(),
+                                     rn_ansage_k());
+    foreach ($rn_tmangel as $rn_tm) {
+        $rn_fehler[] = rn_e($rn_tm['text']);
+    }
+    foreach ($rn_tbean as $rn_tb) {
+        rn_bean($rn_tb);     // X-2
+    }
+    $neu = array_merge($neu, rn_tts_flach($rn_tneu));
+
     /* Sicherheitsnetz: jeder in DIESEM Speichern geaenderte Wert muss die
      * Pruefung bestehen, die beim Zurueckspielen gilt - sonst waere die
      * eigene Sicherung nicht zurueckspielbar. Unveraenderte Altwerte
@@ -582,6 +614,26 @@ if (isset($_POST['cache_leeren'])) {
         $rn_misslungen[] = sprintf(rn_t('TEXT.F_CACHE_LEEREN'), rn_e(implode(', ', $rn_rest)));
     } else {
         $rn_meldung = rn_t('TEXT.M_CACHE_LEER');
+    }
+    $rn_tab = 'tab-test';
+}
+
+/* ---------------- Testansage (Nr. 36 b, seit 2.1.16) ----------------
+ * Spricht den Pruefsatz des Moduls ueber die eingestellte Ausgabeart - unabhaengig
+ * von den Anlaessen. Ins Protokoll nur die Kurzform ohne Text und Token. F5 nach dem
+ * Knopf spricht nicht erneut: der PRG-Block unten leitet um (303). */
+if (isset($_POST['ansage_test'])) {
+    $rn_ak = rn_ansage_k();
+    $rn_ar = ansage_testansage(rn_tts($rn_cfg), $rn_ak);
+    renault_log($rn_ar['stand'] === 0 ? 'WARN' : 'INFO', 'Testansage: ' . ansage_kurz($rn_ar));
+    if ($rn_ar['stand'] === 1) {
+        $rn_meldung = rn_e(rn_t('TEXT.M_ANSAGE_TEST_OK'));
+    } elseif ($rn_ar['stand'] === -1) {
+        $rn_meldung = rn_e(sprintf(rn_t('TEXT.M_ANSAGE_TEST_NICHTS'),
+                                   ansage_kennung_text($rn_ar['kennung'], $rn_ak)));
+    } else {
+        $rn_misslungen[] = rn_e(sprintf(rn_t('TEXT.M_ANSAGE_TEST_FEHL'),
+                                        ansage_kennung_text($rn_ar['kennung'], $rn_ak)));
     }
     $rn_tab = 'tab-test';
 }
@@ -1118,6 +1170,24 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
   <p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.H_ABRP')); ?></p>
 </div>
 
+<h2><?php echo rn_e(rn_t('TEXT.H_ANSAGE')); ?></h2>
+<div class="sm-hinweis"><?php echo rn_t('TEXT.ANSAGE_ERKLAERUNG'); ?></div>
+<?php echo ansage_formular_html(rn_tts($rn_cfg), array(
+    'w' => function ($n, $g) { return rn_ein_w($n, $g); },
+    'm' => function ($n) { return rn_ein_m($n); },
+    'c' => function ($n, $g) { return rn_ein_h($n, $g); },
+    'modi' => rn_ansage_modi()), rn_ansage_k()); ?>
+<h3><?php echo rn_e(rn_t('TEXT.H_ANSAGE_ANLAESSE')); ?></h3>
+<?php foreach (rn_ansage_anlaesse() as $rn_a) { ?>
+<div class="sm-feld">
+  <label style="display:inline-flex;align-items:center;gap:8px;">
+    <input data-role="none" type="checkbox" name="<?php echo rn_e($rn_a[0]); ?>" value="Y" style="width:auto" <?php echo rn_ein_h($rn_a[0], (string) $rn_cfg[$rn_a[0]] === 'Y') ? 'checked' : ''; ?><?php echo rn_ein_m($rn_a[0]); ?>>
+    <?php echo rn_e(rn_t($rn_a[1])); ?>
+  </label>
+</div>
+<?php } ?>
+<p class="sm-hilfe"><?php echo rn_t('TEXT.H_ANSAGE_ANLAESSE_HILFE'); ?></p>
+
 <div class="sm-legende">
 <span><i class="sm-punkt sm-b-aktion"></i> <?php echo rn_e(rn_t('LEGENDE.AKTION')); ?></span>
 <span><i class="sm-punkt sm-b-lesen"></i> <?php echo rn_e(rn_t('LEGENDE.LESEN')); ?></span>
@@ -1130,6 +1200,7 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 <h2><?= rn_t('TEXT.H_SICHERUNG') ?></h2>
 <div class="sm-hinweis"><?= rn_t('TEXT.SICH_ERKLAERUNG') ?></div>
 <div class="sm-warnung"><?= rn_t('TEXT.SICH_WARNUNG') ?></div>
+<div class="sm-hinweis"><?= rn_t('TEXT.SICH_OHNE_SPRECHTOKEN') ?></div>
 <?php /* X-3 (Welle-4-Bau): Wuerde das Zurueckspielen die eigene Sicherung
          abweisen, steht es hier - gelb, nur Namen, nie Werte. Die Sicherung
          wird trotzdem vollstaendig geliefert, ihr Kopf traegt '_warnung'. */
@@ -1382,6 +1453,16 @@ if ($rn_striche > 0) {
     <button data-role="none" class="sm-btn sm-b-lesen" type="submit" name="test" value="<?php echo rn_e($rn_w); ?>"><?php echo rn_e(rn_t($rn_k)); ?></button>
   </form>
 <?php } ?>
+</div>
+
+<h2><?php echo rn_e(rn_t('TEXT.H_ANSAGE_TEST')); ?></h2>
+<p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.ANSAGE_TEST_TEXT')); ?></p>
+<div class="sm-knopfreihe">
+  <form method="post" action="index.php">
+    <input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
+    <input data-role="none" type="hidden" name="activetab" value="tab-test">
+    <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="ansage_test" value="1"><?php echo rn_e(rn_t('TEXT.K_ANSAGE_TEST')); ?></button>
+  </form>
 </div>
 
 <h2><?php echo rn_e(rn_t('TEXT.H_TECHNIK')); ?></h2>

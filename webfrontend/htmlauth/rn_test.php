@@ -339,7 +339,29 @@ function rn_test_selbstpruefung($cfg, $broker, $voll = true)
     $z[] = array(rn_t('PRUEF.PROTOKOLL'), $prot ? true : null,
         $prot ? sprintf(rn_t('PRUEF.N_ZEILEN'), count($prot)) : rn_t('PRUEF.LEER'));
 
+    /* Nr. 36 b (seit 2.1.16): die Sprachausgabe. Alexa-NG/Chromecast werden nur gefragt, wenn der
+     * Reiter Test der offene ist (selftest=1, spricht nicht); der Music Server nie. */
+    $z[] = rn_ansage_zeile($cfg, $voll);
+
     return $z;
+}
+
+/** Nr. 36 b: die Zeile der Sprachausgabe - Ausgabeart, letzte Ansage und die eingeschalteten Anlaesse.
+ *  Die Tabelle maskiert jede Antwort (rn_e) - der Befund des Moduls kommt deshalb als Klartext. */
+function rn_ansage_zeile($cfg, $offen)
+{
+    list($st, $html) = ansage_pruefzeile(rn_tts($cfg), (bool) $offen, rn_ansage_k());
+    $an = array();
+    foreach (rn_ansage_anlaesse() as $a) {
+        if (isset($cfg[$a[0]]) && (string) $cfg[$a[0]] === 'Y') {
+            $an[] = rn_t($a[1]);
+        }
+    }
+    $text = trim(html_entity_decode(strip_tags((string) $html), ENT_QUOTES, 'UTF-8')) . ' '
+          . sprintf(rn_t('TEXT.A_ANSAGE_ANLAESSE'), count($an), $an ? implode('; ', $an) : rn_t('TEXT.A_ANSAGE_KEINE'));
+    // 1 Haken, 0 Kreuz, -1 nicht feststellbar, -2 (aus) eine Auskunft.
+    $marke = ($st === 1) ? true : (($st === 0) ? false : (($st === -2) ? 'info' : null));
+    return array(rn_t('PRUEF.ANSAGE'), $marke, $text);
 }
 
 /**

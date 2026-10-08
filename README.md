@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.15 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.16 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,25 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Version 2.1.16 — Ansagen über die gemeinsame Sprachausgabe
+
+Gemessen unter PHP 7.4 und 8.5 gegen Attrappen (Music Server, Alexa-NG); nicht am Gerät, nicht an einem
+echten Lautsprecher, nicht mit einem echten Fahrzeug.
+
+* **Neu: der Abruf sagt einzelne Ereignisse an (ab Werk aus).** Reiter Einstellungen, Abschnitt
+  „Sprachausgabe“: Loxone Music Server, MusicServer4Home, eine eigene Adressvorlage, Alexa-NG oder
+  Google-Lautsprecher (Chromecast 4 Lox NG). Anlässe, jeder einzeln abwählbar: Ladung beendet, Ladung unter
+  dem Ladeziel oder mit Störung beendet, Ladeschwelle erreicht (dieselbe Schwelle wie die Meldung), keine
+  Daten mehr. Angesagt wird nur ein Wechsel, derselbe Anlass je Fahrzeug höchstens einmal je Stunde; nach
+  einer Neuinstallation oder einer Pause von mehr als sechs Stunden setzt der erste Abruf nur den
+  Ausgangsstand. MQTT, Loxone, Mail und exec bleiben unverändert.
+* Adresse des Music Servers und Adressvorlage müssen im Heimnetz liegen.
+* Testansage per Knopf im Reiter Test; die Selbstprüfung zeigt Ausgabeart, letzte Ansage und die
+  eingeschalteten Anlässe.
+* Die Sprechtoken für Alexa-NG und Chromecast 4 Lox NG stehen nie in der Seite, im Protokoll oder in einer
+  Sicherung; eine Sicherungsdatei, die eines trägt, wird abgewiesen. Eine Sicherung von 2.1.15 lässt sich
+  weiter zurückspielen.
 
 ## Version 2.1.15
 

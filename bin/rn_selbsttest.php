@@ -221,7 +221,9 @@ pruefe('Vorgabe: Aufzeichnung aus',  $v['save_in_db'], 'N');
 pruefe('Vorgabe: Mail aus',          $v['mail_bl'], 'N');
 pruefe('Vorgabe: Token leer',        $v['aktionstoken'], '');
 pruefe('Vorgabe: Zieltemperatur 21', $v['ac_temp'], '21');
-pruefe('Vorgabe: 32 Schluessel',     count($v), 32);
+// Nr. 36 b (seit 2.1.16): + 4 Anlass-Schalter + die Felder des Blocks tts (ansage_vorgaben(), Modul 1.1.1: 15).
+pruefe('Vorgabe: Sprachausgabe aus', $v['tts_mode'], 'aus');
+pruefe('Vorgabe: 32 + 4 + tts Schluessel', count($v), 36 + count(ansage_vorgaben('aus')));
 
 /* 7. Jeder Vorgabewert muss die eigene Wertpruefung bestehen.
  *
