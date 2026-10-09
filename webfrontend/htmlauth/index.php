@@ -1394,20 +1394,24 @@ if ($rn_sich_warn) { ?>
 <div class="sm-step">
 <h3 class="sm-h3"><?php echo rn_e(rn_t('TEXT.SCHRITT6')); ?></h3>
 <p class="sm-hilfe"><?php echo rn_t('TEXT.SCHRITT6_TEXT'); ?></p>
-<?php $rn_e1 = $rn_autos[0]['name']; ?>
+<?php $rn_e1 = $rn_autos[0]['name'];
+/* X-10 (2.1.18): Spalte "Eingaenge verbinden mit" in der Schreibweise von
+ * Werkzeuge/leitungen_setzen.py 1.1, sprachfrei: "#N" (Ausgang von Zeile N auf den
+ * ersten Eingang), "V1 = #3", "I1 = #8, I2 = #9", "– (MQTT <Thema>)" fuer Eingaenge
+ * ohne Quelle in der Liste. Bis 2.1.17: "Eingang &larr; #N". */ ?>
 <table class="sm-tbl">
 <tr><th>#</th><th><?php echo rn_e(rn_t('TEXT.S_BAUSTEIN')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_NAME_VORSCHLAG')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_PARAMETER')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_EINGAENGE')); ?></th></tr>
-<tr><td>1</td><td><?php echo rn_e(rn_t('TEXT.B_VI')); ?></td><td>Auto_Akku</td><td><?php echo rn_e(rn_t('TEXT.S_EINHEIT')); ?> <span class="sm-mono">&lt;v.0&gt; %</span></td><td>MQTT <span class="sm-mono">BattSOC</span></td></tr>
-<tr><td>2</td><td><?php echo rn_e(rn_t('TEXT.B_VI')); ?></td><td>Auto_Reichweite</td><td><?php echo rn_e(rn_t('TEXT.S_EINHEIT')); ?> <span class="sm-mono">&lt;v.0&gt; km</span></td><td>MQTT <span class="sm-mono">Range</span></td></tr>
-<tr><td>3</td><td><?php echo rn_e(rn_t('TEXT.B_VI')); ?></td><td>Auto_laedt</td><td><?php echo rn_e(rn_t('TEXT.S_EINHEIT')); ?> <span class="sm-mono">&lt;v.0&gt;</span></td><td>MQTT <span class="sm-mono">ChargingStatus</span></td></tr>
-<tr><td>4</td><td><?php echo rn_e(rn_t('TEXT.B_VI')); ?></td><td>Auto_Kabel</td><td><?php echo rn_e(rn_t('TEXT.S_EINHEIT')); ?> <span class="sm-mono">&lt;v.0&gt;</span></td><td>MQTT <span class="sm-mono">CableStatus</span></td></tr>
-<tr><td>5</td><td><?php echo rn_e(rn_t('TEXT.B_VI')); ?></td><td>Auto_Abruf_ok</td><td><?php echo rn_e(rn_t('TEXT.S_EINHEIT')); ?> <span class="sm-mono">&lt;v.0&gt;</span></td><td>MQTT <span class="sm-mono">ok</span></td></tr>
-<tr><td>6</td><td><?php echo rn_e(rn_t('TEXT.B_VI')); ?></td><td>Auto_Abrufzeit</td><td><?php echo rn_e(rn_t('TEXT.S_EINHEIT')); ?> <span class="sm-mono">&lt;v.0&gt;</span></td><td>MQTT <span class="sm-mono">phpCall</span></td></tr>
-<tr><td>7</td><td><?php echo rn_e(rn_t('TEXT.B_STATUS')); ?></td><td>Auto_Status</td><td><?php echo rn_e(rn_t('TEXT.P_STATUS')); ?></td><td><?php echo rn_e(rn_t('TEXT.S_EINGANG')); ?> &larr; #3</td></tr>
-<tr><td>8</td><td><?php echo rn_e(rn_t('TEXT.B_VERGLEICHER')); ?></td><td>Auto_Akku_niedrig</td><td><?php echo rn_e(rn_t('TEXT.P_SCHWELLE20')); ?></td><td><?php echo rn_e(rn_t('TEXT.S_EINGANG')); ?> &larr; #1</td></tr>
+<tr><td>1</td><td><?php echo rn_e(rn_t('TEXT.B_VI')); ?></td><td>Auto_Akku</td><td><?php echo rn_e(rn_t('TEXT.S_EINHEIT')); ?> <span class="sm-mono">&lt;v.0&gt; %</span></td><td>– (MQTT <span class="sm-mono">BattSOC</span>)</td></tr>
+<tr><td>2</td><td><?php echo rn_e(rn_t('TEXT.B_VI')); ?></td><td>Auto_Reichweite</td><td><?php echo rn_e(rn_t('TEXT.S_EINHEIT')); ?> <span class="sm-mono">&lt;v.0&gt; km</span></td><td>– (MQTT <span class="sm-mono">Range</span>)</td></tr>
+<tr><td>3</td><td><?php echo rn_e(rn_t('TEXT.B_VI')); ?></td><td>Auto_laedt</td><td><?php echo rn_e(rn_t('TEXT.S_EINHEIT')); ?> <span class="sm-mono">&lt;v.0&gt;</span></td><td>– (MQTT <span class="sm-mono">ChargingStatus</span>)</td></tr>
+<tr><td>4</td><td><?php echo rn_e(rn_t('TEXT.B_VI')); ?></td><td>Auto_Kabel</td><td><?php echo rn_e(rn_t('TEXT.S_EINHEIT')); ?> <span class="sm-mono">&lt;v.0&gt;</span></td><td>– (MQTT <span class="sm-mono">CableStatus</span>)</td></tr>
+<tr><td>5</td><td><?php echo rn_e(rn_t('TEXT.B_VI')); ?></td><td>Auto_Abruf_ok</td><td><?php echo rn_e(rn_t('TEXT.S_EINHEIT')); ?> <span class="sm-mono">&lt;v.0&gt;</span></td><td>– (MQTT <span class="sm-mono">ok</span>)</td></tr>
+<tr><td>6</td><td><?php echo rn_e(rn_t('TEXT.B_VI')); ?></td><td>Auto_Abrufzeit</td><td><?php echo rn_e(rn_t('TEXT.S_EINHEIT')); ?> <span class="sm-mono">&lt;v.0&gt;</span></td><td>– (MQTT <span class="sm-mono">phpCall</span>)</td></tr>
+<tr><td>7</td><td><?php echo rn_e(rn_t('TEXT.B_STATUS')); ?></td><td>Auto_Status</td><td><?php echo rn_e(rn_t('TEXT.P_STATUS')); ?></td><td>V1 = #3</td></tr>
+<tr><td>8</td><td><?php echo rn_e(rn_t('TEXT.B_VERGLEICHER')); ?></td><td>Auto_Akku_niedrig</td><td><?php echo rn_e(rn_t('TEXT.P_SCHWELLE20')); ?></td><td>#1</td></tr>
 <tr><td>9</td><td><?php echo rn_e(rn_t('TEXT.B_TREPPENLICHT')); ?></td><td>Auto_Abruf_haengt</td><td><?php echo rn_e(rn_t('TEXT.P_HALTEZEIT')); ?></td><td><?php echo rn_e(rn_t('TEXT.P_FLANKE')); ?> #6</td></tr>
-<tr><td>10</td><td><?php echo rn_e(rn_t('TEXT.B_ODER')); ?></td><td>Auto_Meldungen</td><td>–</td><td><?php echo rn_e(rn_t('TEXT.S_EINGAENGE')); ?> #8, #9</td></tr>
-<tr><td>11</td><td><?php echo rn_e(rn_t('TEXT.B_BENACHRICHTIGUNG')); ?></td><td>Auto_Melder</td><td><?php echo rn_e(rn_t('TEXT.P_TEXT_FREI')); ?></td><td><?php echo rn_e(rn_t('TEXT.S_EINGANG')); ?> &larr; #10</td></tr>
+<tr><td>10</td><td><?php echo rn_e(rn_t('TEXT.B_ODER')); ?></td><td>Auto_Meldungen</td><td>–</td><td>I1 = #8, I2 = #9</td></tr>
+<tr><td>11</td><td><?php echo rn_e(rn_t('TEXT.B_BENACHRICHTIGUNG')); ?></td><td>Auto_Melder</td><td><?php echo rn_e(rn_t('TEXT.P_TEXT_FREI')); ?></td><td>#10</td></tr>
 <tr><td>12</td><td><?php echo rn_e(rn_t('TEXT.B_VQ')); ?></td><td>Auto_Klima_an</td><td><span class="sm-mono">…&amp;aktion=acnow</span></td><td><?php echo rn_e(rn_t('TEXT.S_VON_VISU')); ?></td></tr>
 <tr><td>13</td><td><?php echo rn_e(rn_t('TEXT.B_VQ')); ?></td><td>Auto_Klima_aus</td><td><span class="sm-mono">…&amp;aktion=acoff</span></td><td><?php echo rn_e(rn_t('TEXT.S_VON_VISU')); ?></td></tr>
 <tr><td>14</td><td><?php echo rn_e(rn_t('TEXT.B_VQ')); ?></td><td>Auto_laden_jetzt</td><td><span class="sm-mono">…&amp;aktion=chargenow</span></td><td><?php echo rn_e(rn_t('TEXT.S_VON_VISU')); ?></td></tr>

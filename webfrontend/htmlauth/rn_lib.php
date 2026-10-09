@@ -2947,9 +2947,8 @@ function rn_ansage_k()
         'kopf'   => array('User-Agent: LoxBerry Renault NG'),
         'ordner' => @is_dir($p['datadir']) ? $p['datadir'] : '',
         't'      => function ($s) { return rn_t($s); },
-        /* Zu dieser Kennung hat das Modul (1.1.1) keinen Satz in [ANSAGE]; linieneigen wie Intercom
-         * 2.2.18, bis der Modulschluessel mit einer ergaenzenden Fassung kommt (Entwurf, Stufe 2). */
-        'schluessel' => array('K_TTS_EINTRAG' => 'TEXT.SICH_TTS_EINTRAG'),
+        /* K_TTS_EINTRAG: den Satz bringt das Modul seit 1.1.2 selbst mit; die Umlenkung auf
+         * TEXT.SICH_TTS_EINTRAG ist seit 2.1.18 gestrichen (X-10). Ab Werk aus - kein 'werk'. */
     );
 }
 

@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.17 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.18 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,21 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Neu in 2.1.18
+
+Baustein-Liste in der Schreibweise des Leitungswerkzeugs, gemeinsame Sprachausgabe 1.1.2.
+
+* **Baustein-Liste (Reiter Einbindung in Loxone, Schritt 6):** Die Spalte „Eingänge verbinden mit“
+  nennt die Quellen in fester Form: `#1` statt „Eingang ← #1“, am Statusbaustein `V1 = #3`, am ODER
+  `I1 = #8, I2 = #9`; die MQTT-Eingänge tragen ihr Thema als Bemerkung (`– (MQTT BattSOC)`). Was von
+  der Visualisierung kommt und die Flankenerkennung vor #9, bleibt in Worten. Gleiche Bausteine,
+  gleiche Verbindungen.
+* **Sprachausgabe 1.1.2:** gemeinsames Modul und Abschnitt [ANSAGE] mit 157 Sätzen. Den Satz zu einem
+  unbekannten Eintrag im Block der Sprachausgabe bringt jetzt das Modul mit; die eigene Umlenkung ist
+  gestrichen (gleicher Wortlaut). Dazu aus dem Modul: Zeichenzahl bei kaputtem UTF-8 in Zeichen, die
+  Meldung „Port abgewiesen“ nennt das Feld nicht mehr doppelt.
+* Gerendert unter PHP 7.4, 8.4 und 8.5, nicht am Gerät angesehen.
 
 ## Neu in 2.1.17
 
