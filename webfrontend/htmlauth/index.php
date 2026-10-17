@@ -941,6 +941,15 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
    zusammen mit aria-invalid; die Farbe allein waere fuer einen Vorleser
    unsichtbar. */
 .sm-wrap .sm-beanstandet { border: 2px solid #b00000 !important; background: #fff4f4; }
+/* Welle Bild 17 (2.1.19): drei Seiten aus dem Musterprojekt in Schritt 6 - Bild, Ueberschrift, Schritte und
+   Hinweise je Seite (wie Weissware 0.9.42). */
+.sm-bild { margin: 12px 0; }
+.sm-bild img { max-width: 100%; height: auto; border: 1px solid #ccc; border-radius: 4px; background: #fff; }
+.sm-bild figcaption { font-size: .9em; color: #555; margin-top: 4px; }
+.sm-wrap h4.sm-h4 { color: #4f7d17; font-size: 0.98em; font-weight: 700; margin: 22px 0 4px;
+    padding-top: 10px; border-top: 1px solid #e0e0e0; }
+.sm-schritte { margin: 6px 0 0 18px; padding: 0; }
+.sm-schritte li { margin: 3px 0; }
 </style>
 
 <div class="sm-wrap">
@@ -1391,34 +1400,200 @@ if ($rn_sich_warn) { ?>
 <p class="sm-hilfe"><?php echo rn_t('TEXT.SCHRITT5_TEXT'); ?></p>
 </div>
 
+<?php
+/**
+ * Die Baustein-Listen fuer Schritt 6 (Welle Bild 17, 2.1.19; Hausherr 11.10.2026: Vollausstattung, ein absoluter
+ * Laie soll das Maximum leicht uebernehmen koennen; Entwurf Welle 17 rn, Entscheidungen 1-16 wie empfohlen).
+ * Drei Seiten aus dem LoxBerry-Plugins Musterprojekt, dort in Loxone Config gebaut und verbunden
+ * (Musterprojekt/baustein_listen.txt, Abschnitte "Renault NG" 32, "Renault NG Laden und Klima" 35 und "Renault NG
+ * Fahrzeug" 21 Zeilen, wortgleich). Je Tabellenzeile EIN Sprachschluessel BAUSTEIN.Z<seite>_<nn> = "Typ | Name |
+ * Parameter | Eingaenge" ohne Auszeichnung; jede Zelle und jeder Satz wird maskiert ausgegeben. Zeilen mit
+ * Prozentzeichen stehen in der Sprachdatei mit "%%" und laufen durch sprintf().
+ *
+ * Zweites Feld je Zeile: 'g' = Name eines Gateway-Eingangs. Die Liste nennt ihn fuer den Werksnamen "Renault"
+ * (Renault_Renault_<Thema>); die Ausgabe setzt den Vorsatz aus dem Namen von Fahrzeug 1 so, wie das Gateway den
+ * Eingang benennt (Schritt 3, mqttgateway: / und % werden _). 'b' = Befehl aus rn_vorlage_vo(): bei mehreren
+ * Fahrzeugen steht dort der Fahrzeugname vorn, also auch hier.
+ *
+ * Bis 2.1.18 stand hier eine feste Tabelle mit 16 Zeilen. Sie nannte fuer die Gateway-Eingaenge Namen wie
+ * "Auto_Akku" (wer sie als Titel nahm, bekam beim ersten Wert einen zweiten Eingang), und ihr
+ * Treppenlichtschalter an phpCall stand im Normalbetrieb auf Ein - er meldete beim Anlauf statt beim Ausfall.
+ *
+ * Rueckgabe: je Seite 'kopf' (Name der Musterseite), 'bild', 'schritte' und 'hinweise' (Saetze), 'zeilen'
+ * (je Text mit vier Zellen und Art) - alles reiner Text.
+ */
+function rn_bausteinseiten()
+{
+    return array(
+        array('kopf' => 'Renault NG', 'bild' => 'einbindung_loxone.png',
+              'schritte' => array(
+                  sprintf(rn_t('BAUSTEIN.S1_SCHRITT1'), rn_t('REITER.EINSTELLUNGEN'), rn_t('REITER.TEST'), rn_t('BEFEHL.ABRUF'), rn_t('REITER.LOG')),
+                  rn_t('BAUSTEIN.S1_SCHRITT2'),
+                  rn_t('BAUSTEIN.S1_SCHRITT3'),
+                  rn_t('BAUSTEIN.S1_SCHRITT4'),
+                  rn_t('BAUSTEIN.S1_SCHRITT5'),
+                  rn_t('BAUSTEIN.S1_SCHRITT6')),
+              'zeilen' => array(
+                  array(rn_t('BAUSTEIN.Z1_01'), 'g'),
+                  array(rn_t('BAUSTEIN.Z1_02'), 'g'),
+                  array(rn_t('BAUSTEIN.Z1_03'), 'g'),
+                  array(sprintf(rn_t('BAUSTEIN.Z1_04')), 'g'),
+                  array(rn_t('BAUSTEIN.Z1_05'), 'g'),
+                  array(rn_t('BAUSTEIN.Z1_06'), 'g'),
+                  array(rn_t('BAUSTEIN.Z1_07'), 'g'),
+                  array(rn_t('BAUSTEIN.Z1_08'), ''),
+                  array(rn_t('BAUSTEIN.Z1_09'), ''),
+                  array(rn_t('BAUSTEIN.Z1_10'), ''),
+                  array(rn_t('BAUSTEIN.Z1_11'), ''),
+                  array(rn_t('BAUSTEIN.Z1_12'), ''),
+                  array(rn_t('BAUSTEIN.Z1_13'), ''),
+                  array(rn_t('BAUSTEIN.Z1_14'), ''),
+                  array(rn_t('BAUSTEIN.Z1_15'), ''),
+                  array(rn_t('BAUSTEIN.Z1_16'), ''),
+                  array(rn_t('BAUSTEIN.Z1_17'), ''),
+                  array(sprintf(rn_t('BAUSTEIN.Z1_18')), ''),
+                  array(rn_t('BAUSTEIN.Z1_19'), ''),
+                  array(rn_t('BAUSTEIN.Z1_20'), ''),
+                  array(rn_t('BAUSTEIN.Z1_21'), ''),
+                  array(rn_t('BAUSTEIN.Z1_22'), ''),
+                  array(rn_t('BAUSTEIN.Z1_23'), ''),
+                  array(sprintf(rn_t('BAUSTEIN.Z1_24')), ''),
+                  array(sprintf(rn_t('BAUSTEIN.Z1_25')), ''),
+                  array(rn_t('BAUSTEIN.Z1_26'), ''),
+                  array(rn_t('BAUSTEIN.Z1_27'), ''),
+                  array(rn_t('BAUSTEIN.Z1_28'), ''),
+                  array(rn_t('BAUSTEIN.Z1_29'), ''),
+                  array(rn_t('BAUSTEIN.Z1_30'), ''),
+                  array(rn_t('BAUSTEIN.Z1_31'), ''),
+                  array(rn_t('BAUSTEIN.Z1_32'), '')),
+              'hinweise' => array(
+                  rn_t('BAUSTEIN.S1_H1'),
+                  rn_t('BAUSTEIN.S1_H2'),
+                  rn_t('BAUSTEIN.S1_H3'),
+                  sprintf(rn_t('BAUSTEIN.S1_H4'), rn_t('REITER.EINSTELLUNGEN'), rn_t('TEXT.H_ANSAGE')),
+                  rn_t('BAUSTEIN.S1_H5'))),
+        array('kopf' => 'Renault NG Laden und Klima', 'bild' => 'einbindung_loxone_laden_klima.png',
+              'schritte' => array(
+                  sprintf(rn_t('BAUSTEIN.S2_SCHRITT1'), rn_t('REITER.EINSTELLUNGEN'), rn_t('TEXT.H_SCHALTEN'), rn_t('TEXT.L_STEUERUNG')),
+                  sprintf(rn_t('BAUSTEIN.S2_SCHRITT2'), rn_t('REITER.LOXONE'), rn_t('TEXT.K_VORLAGE_VQ')),
+                  rn_t('BAUSTEIN.S2_SCHRITT3'),
+                  rn_t('BAUSTEIN.S2_SCHRITT4'),
+                  rn_t('BAUSTEIN.S2_SCHRITT5'),
+                  sprintf(rn_t('BAUSTEIN.S2_SCHRITT6'), rn_t('REITER.LOG'))),
+              'zeilen' => array(
+                  array(rn_t('BAUSTEIN.Z2_01'), 'g'),
+                  array(sprintf(rn_t('BAUSTEIN.Z2_02')), 'g'),
+                  array(rn_t('BAUSTEIN.Z2_03'), 'g'),
+                  array(rn_t('BAUSTEIN.Z2_04'), 'g'),
+                  array(rn_t('BAUSTEIN.Z2_05'), 'g'),
+                  array(rn_t('BAUSTEIN.Z2_06'), 'g'),
+                  array(rn_t('BAUSTEIN.Z2_07'), ''),
+                  array(sprintf(rn_t('BAUSTEIN.Z2_08')), ''),
+                  array(rn_t('BAUSTEIN.Z2_09'), ''),
+                  array(rn_t('BAUSTEIN.Z2_10'), ''),
+                  array(rn_t('BAUSTEIN.Z2_11'), ''),
+                  array(rn_t('BAUSTEIN.Z2_12'), ''),
+                  array(rn_t('BAUSTEIN.Z2_13'), ''),
+                  array(rn_t('BAUSTEIN.Z2_14'), ''),
+                  array(rn_t('BAUSTEIN.Z2_15'), ''),
+                  array(rn_t('BAUSTEIN.Z2_16'), ''),
+                  array(rn_t('BAUSTEIN.Z2_17'), 'b'),
+                  array(rn_t('BAUSTEIN.Z2_18'), ''),
+                  array(rn_t('BAUSTEIN.Z2_19'), 'b'),
+                  array(rn_t('BAUSTEIN.Z2_20'), ''),
+                  array(rn_t('BAUSTEIN.Z2_21'), ''),
+                  array(rn_t('BAUSTEIN.Z2_22'), 'b'),
+                  array(rn_t('BAUSTEIN.Z2_23'), 'b'),
+                  array(rn_t('BAUSTEIN.Z2_24'), 'g'),
+                  array(rn_t('BAUSTEIN.Z2_25'), 'g'),
+                  array(rn_t('BAUSTEIN.Z2_26'), 'g'),
+                  array(rn_t('BAUSTEIN.Z2_27'), ''),
+                  array(rn_t('BAUSTEIN.Z2_28'), ''),
+                  array(rn_t('BAUSTEIN.Z2_29'), ''),
+                  array(rn_t('BAUSTEIN.Z2_30'), ''),
+                  array(rn_t('BAUSTEIN.Z2_31'), ''),
+                  array(rn_t('BAUSTEIN.Z2_32'), ''),
+                  array(rn_t('BAUSTEIN.Z2_33'), 'b'),
+                  array(rn_t('BAUSTEIN.Z2_34'), ''),
+                  array(rn_t('BAUSTEIN.Z2_35'), 'b')),
+              'hinweise' => array(
+                  rn_t('BAUSTEIN.S2_H1'),
+                  rn_t('BAUSTEIN.S2_H2'),
+                  sprintf(rn_t('BAUSTEIN.S2_H3'), rn_t('REITER.EINSTELLUNGEN')),
+                  rn_t('BAUSTEIN.S2_H4'),
+                  rn_t('BAUSTEIN.S2_H5'),
+                  rn_t('BAUSTEIN.S2_H6'))),
+        array('kopf' => 'Renault NG Fahrzeug', 'bild' => 'einbindung_loxone_fahrzeug.png',
+              'schritte' => array(
+                  rn_t('BAUSTEIN.S3_SCHRITT1'),
+                  rn_t('BAUSTEIN.S3_SCHRITT2'),
+                  rn_t('BAUSTEIN.S3_SCHRITT3')),
+              'zeilen' => array(
+                  array(rn_t('BAUSTEIN.Z3_01'), 'g'),
+                  array(rn_t('BAUSTEIN.Z3_02'), 'g'),
+                  array(rn_t('BAUSTEIN.Z3_03'), 'g'),
+                  array(rn_t('BAUSTEIN.Z3_04'), 'g'),
+                  array(rn_t('BAUSTEIN.Z3_05'), 'g'),
+                  array(rn_t('BAUSTEIN.Z3_06'), 'g'),
+                  array(rn_t('BAUSTEIN.Z3_07'), 'g'),
+                  array(rn_t('BAUSTEIN.Z3_08'), ''),
+                  array(rn_t('BAUSTEIN.Z3_09'), ''),
+                  array(rn_t('BAUSTEIN.Z3_10'), ''),
+                  array(rn_t('BAUSTEIN.Z3_11'), ''),
+                  array(sprintf(rn_t('BAUSTEIN.Z3_12')), 'g'),
+                  array(sprintf(rn_t('BAUSTEIN.Z3_13')), 'g'),
+                  array(rn_t('BAUSTEIN.Z3_14'), 'g'),
+                  array(rn_t('BAUSTEIN.Z3_15'), 'g'),
+                  array(rn_t('BAUSTEIN.Z3_16'), 'g'),
+                  array(rn_t('BAUSTEIN.Z3_17'), 'g'),
+                  array(rn_t('BAUSTEIN.Z3_18'), 'g'),
+                  array(sprintf(rn_t('BAUSTEIN.Z3_19')), ''),
+                  array(rn_t('BAUSTEIN.Z3_20'), ''),
+                  array(rn_t('BAUSTEIN.Z3_21'), 'b')),
+              'hinweise' => array(
+                  rn_t('BAUSTEIN.S3_H1'),
+                  rn_t('BAUSTEIN.S3_H2'),
+                  rn_t('BAUSTEIN.S3_H3'))),
+    );
+}
+?>
 <div class="sm-step">
 <h3 class="sm-h3"><?php echo rn_e(rn_t('TEXT.SCHRITT6')); ?></h3>
 <p class="sm-hilfe"><?php echo rn_t('TEXT.SCHRITT6_TEXT'); ?></p>
-<?php $rn_e1 = $rn_autos[0]['name'];
-/* X-10 (2.1.18): Spalte "Eingaenge verbinden mit" in der Schreibweise von
- * Werkzeuge/leitungen_setzen.py 1.1, sprachfrei: "#N" (Ausgang von Zeile N auf den
- * ersten Eingang), "V1 = #3", "I1 = #8, I2 = #9", "– (MQTT <Thema>)" fuer Eingaenge
- * ohne Quelle in der Liste. Bis 2.1.17: "Eingang &larr; #N". */ ?>
+<?php $rn_bs_vor = str_replace(array('/', '%'), '_', 'Renault/' . $rn_autos[0]['name'] . '/');
+      $rn_bs_bef = count($rn_autos) > 1 ? $rn_autos[0]['name'] . ': ' : '';
+foreach (rn_bausteinseiten() as $rn_bs) { ?>
+<h4 class="sm-h4"><?php echo rn_e($rn_bs['kopf']); ?></h4>
+<div class="sm-hinweis"><b><?php echo rn_e(rn_t('BAUSTEIN.SCHRITTE_TITEL')); ?></b>
+<ol class="sm-schritte">
+<?php foreach ($rn_bs['schritte'] as $rn_bx) { ?>
+<li><?php echo rn_e($rn_bx); ?></li>
+<?php } ?>
+</ol></div>
 <table class="sm-tbl">
-<tr><th>#</th><th><?php echo rn_e(rn_t('TEXT.S_BAUSTEIN')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_NAME_VORSCHLAG')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_PARAMETER')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_EINGAENGE')); ?></th></tr>
-<tr><td>1</td><td><?php echo rn_e(rn_t('TEXT.B_VI')); ?></td><td>Auto_Akku</td><td><?php echo rn_e(rn_t('TEXT.S_EINHEIT')); ?> <span class="sm-mono">&lt;v.0&gt; %</span></td><td>– (MQTT <span class="sm-mono">BattSOC</span>)</td></tr>
-<tr><td>2</td><td><?php echo rn_e(rn_t('TEXT.B_VI')); ?></td><td>Auto_Reichweite</td><td><?php echo rn_e(rn_t('TEXT.S_EINHEIT')); ?> <span class="sm-mono">&lt;v.0&gt; km</span></td><td>– (MQTT <span class="sm-mono">Range</span>)</td></tr>
-<tr><td>3</td><td><?php echo rn_e(rn_t('TEXT.B_VI')); ?></td><td>Auto_laedt</td><td><?php echo rn_e(rn_t('TEXT.S_EINHEIT')); ?> <span class="sm-mono">&lt;v.0&gt;</span></td><td>– (MQTT <span class="sm-mono">ChargingStatus</span>)</td></tr>
-<tr><td>4</td><td><?php echo rn_e(rn_t('TEXT.B_VI')); ?></td><td>Auto_Kabel</td><td><?php echo rn_e(rn_t('TEXT.S_EINHEIT')); ?> <span class="sm-mono">&lt;v.0&gt;</span></td><td>– (MQTT <span class="sm-mono">CableStatus</span>)</td></tr>
-<tr><td>5</td><td><?php echo rn_e(rn_t('TEXT.B_VI')); ?></td><td>Auto_Abruf_ok</td><td><?php echo rn_e(rn_t('TEXT.S_EINHEIT')); ?> <span class="sm-mono">&lt;v.0&gt;</span></td><td>– (MQTT <span class="sm-mono">ok</span>)</td></tr>
-<tr><td>6</td><td><?php echo rn_e(rn_t('TEXT.B_VI')); ?></td><td>Auto_Abrufzeit</td><td><?php echo rn_e(rn_t('TEXT.S_EINHEIT')); ?> <span class="sm-mono">&lt;v.0&gt;</span></td><td>– (MQTT <span class="sm-mono">phpCall</span>)</td></tr>
-<tr><td>7</td><td><?php echo rn_e(rn_t('TEXT.B_STATUS')); ?></td><td>Auto_Status</td><td><?php echo rn_e(rn_t('TEXT.P_STATUS')); ?></td><td>V1 = #3</td></tr>
-<tr><td>8</td><td><?php echo rn_e(rn_t('TEXT.B_VERGLEICHER')); ?></td><td>Auto_Akku_niedrig</td><td><?php echo rn_e(rn_t('TEXT.P_SCHWELLE20')); ?></td><td>#1</td></tr>
-<tr><td>9</td><td><?php echo rn_e(rn_t('TEXT.B_TREPPENLICHT')); ?></td><td>Auto_Abruf_haengt</td><td><?php echo rn_e(rn_t('TEXT.P_HALTEZEIT')); ?></td><td><?php echo rn_e(rn_t('TEXT.P_FLANKE')); ?> #6</td></tr>
-<tr><td>10</td><td><?php echo rn_e(rn_t('TEXT.B_ODER')); ?></td><td>Auto_Meldungen</td><td>–</td><td>I1 = #8, I2 = #9</td></tr>
-<tr><td>11</td><td><?php echo rn_e(rn_t('TEXT.B_BENACHRICHTIGUNG')); ?></td><td>Auto_Melder</td><td><?php echo rn_e(rn_t('TEXT.P_TEXT_FREI')); ?></td><td>#10</td></tr>
-<tr><td>12</td><td><?php echo rn_e(rn_t('TEXT.B_VQ')); ?></td><td>Auto_Klima_an</td><td><span class="sm-mono">…&amp;aktion=acnow</span></td><td><?php echo rn_e(rn_t('TEXT.S_VON_VISU')); ?></td></tr>
-<tr><td>13</td><td><?php echo rn_e(rn_t('TEXT.B_VQ')); ?></td><td>Auto_Klima_aus</td><td><span class="sm-mono">…&amp;aktion=acoff</span></td><td><?php echo rn_e(rn_t('TEXT.S_VON_VISU')); ?></td></tr>
-<tr><td>14</td><td><?php echo rn_e(rn_t('TEXT.B_VQ')); ?></td><td>Auto_laden_jetzt</td><td><span class="sm-mono">…&amp;aktion=chargenow</span></td><td><?php echo rn_e(rn_t('TEXT.S_VON_VISU')); ?></td></tr>
-<tr><td>15</td><td><?php echo rn_e(rn_t('TEXT.B_VQ')); ?></td><td>Auto_laden_stopp</td><td><span class="sm-mono">…&amp;aktion=chargestop</span></td><td><?php echo rn_e(rn_t('TEXT.S_VON_VISU')); ?></td></tr>
-<tr><td>16 <i><?php echo rn_e(rn_t('TEXT.H_OPTIONAL')); ?></i></td><td><?php echo rn_e(rn_t('TEXT.B_VQ')); ?></td><td>Auto_Ladeplan_an</td><td><span class="sm-mono">…&amp;aktion=cmon</span></td><td><?php echo rn_e(rn_t('TEXT.S_VON_VISU')); ?></td></tr>
+<tr><th>#</th><th><?php echo rn_e(rn_t('TEXT.S_BAUSTEIN')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_NAME')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_PARAMETER')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_EINGAENGE')); ?></th></tr>
+<?php foreach ($rn_bs['zeilen'] as $rn_i => $rn_bz) {
+    $rn_c = array_pad(explode(' | ', $rn_bz[0], 4), 4, '');
+    if ($rn_bz[1] === 'g' && strpos($rn_c[1], 'Renault_Renault_') === 0) {
+        $rn_c[1] = $rn_bs_vor . substr($rn_c[1], 16);
+    } elseif ($rn_bz[1] === 'b') {
+        $rn_c[1] = $rn_bs_bef . $rn_c[1];
+    } ?>
+<tr><td><?php echo (int) $rn_i + 1; ?></td><td><?php echo rn_e($rn_c[0]); ?></td><td><?php echo rn_e($rn_c[1]); ?></td><td><?php echo rn_e($rn_c[2]); ?></td><td><?php echo rn_e($rn_c[3]); ?></td></tr>
+<?php } ?>
 </table>
-<p class="sm-hilfe"><b><?php echo rn_e(rn_t('TEXT.ZU_9')); ?></b> <?php echo rn_t('TEXT.ZU_9_TEXT'); ?></p>
+<div class="sm-warnung"><b><?php echo rn_e(rn_t('BAUSTEIN.HINWEISE_TITEL')); ?></b>
+<ul class="sm-schritte">
+<?php foreach ($rn_bs['hinweise'] as $rn_bx) { ?>
+<li><?php echo rn_e($rn_bx); ?></li>
+<?php } ?>
+</ul></div>
+<figure class="sm-bild">
+<img src="<?php echo rn_e($rn_bs['bild']); ?>" alt="<?php echo rn_e(rn_t('TEXT.BILD_ALT')); ?>" loading="lazy">
+<figcaption><?php echo rn_e(sprintf(rn_t('TEXT.BILD_UNTERSCHRIFT'), $rn_bs['kopf'])); ?></figcaption>
+</figure>
+<div class="sm-hilfe"><?php echo rn_t('TEXT.MUSTERPROJEKT'); ?></div>
+<?php } ?>
 <p class="sm-hilfe"><b><?php echo rn_e(rn_t('TEXT.ZU_10')); ?></b> <?php echo rn_t('TEXT.ZU_10_TEXT'); ?></p>
 </div>
 

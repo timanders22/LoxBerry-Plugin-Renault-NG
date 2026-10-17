@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.18 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.19 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,35 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Neu in 2.1.19
+
+Einbindung in Loxone in Vollausstattung: drei Seiten aus dem gemeinsamen Musterprojekt mit drei Bildern und
+Schritt-für-Schritt-Anleitung; Befehlstitel der Importdatei fest deutsch.
+
+* **Reiter „Einbindung in Loxone“, Schritt 6:** Statt der bisherigen Liste mit 16 Zeilen stehen dort die drei
+  Seiten des [LoxBerry-Plugins Musterprojekts](https://github.com/timanders22/LoxBerry-Plugins-Musterprojekt),
+  je mit Kasten „So übernehmen Sie diese Seite“, Tabelle, Hinweisen und Bild: „Renault NG“ (32 Zeilen: läuft das
+  Plugin, Ladestand, Reichweite, lädt es, steckt das Kabel; Meldungen gestört, Ladestand knapp, Ladung beendet und
+  Ladestörung), „Renault NG Laden und Klima“ (35 Zeilen: Ladeleistung, Restzeit, Ladeziel aus Loxone mit
+  automatischem Anhalten – ab Werk aus –, Laden starten und anhalten, Ladeplan als Schalter, Vorklimatisierung per
+  Schaltuhr nur bei Anwesenheit, Klima jetzt und aus) und „Renault NG Fahrzeug“ (21 Zeilen: Kilometerstand und
+  heute gefahrene Kilometer, Position, Generation und Batterietemperatur, letzter Ladevorgang, Jetzt abrufen).
+* **Namen der Eingänge:** Die Tabellen nennen für die Werte über das MQTT-Gateway den Namen, den das Gateway
+  vergibt (`Renault_<Fahrzeugname>_<Thema>`, aus dem eingestellten Namen von Fahrzeug 1 gerechnet) – der Titel
+  des virtuellen Eingangs muss genau so lauten, der lesbare Name kommt in die Beschreibung.
+* **Wer die alte Liste gebaut hat:** Ihr Treppenlichtschalter an `phpCall` stand im Normalbetrieb auf Ein und
+  meldete beim Anlauf statt beim Ausfall; die Schwelle 20 meldete ohne Verzögerung, auch beim Laden. Die neue
+  Seite „Renault NG“ erkennt den Ausfall über das Lebenszeichen `status/zaehler` (Analogwertvalidierung, 900 s)
+  und `ok`, mit Einschaltverzögerungen vor jeder Meldung. Schritt 5 erklärt das jetzt so.
+* **Befehlstitel fest deutsch:** Die Importdatei für die Befehle benennt ihre sieben Befehle jetzt auch bei
+  englischer Oberfläche deutsch („Vorklimatisierung starten“ …), wie Liste, Bild und Musterprojekt; die
+  Kommentare bleiben übersetzt. Bei deutscher Oberfläche ist die Datei unverändert; bestehende Projekte behalten
+  ihre Ausgänge.
+* **Texte berichtigt:** Bedeutung von `ChargingStatus` (1 = lädt, unter 0 = Störung), Ausfallerkennung in
+  Schritt 5 und in der Hilfe; die Schlüsselzahl im Abschnitt „Nachprüfbar“ (stand noch auf 287).
+* Kein Verhalten geändert: Abruf, MQTT, Endpunkt und Befehle wie bisher. Gerendert unter PHP 7.4, 8.4 und 8.5,
+  nicht am Gerät angesehen.
 
 ## Neu in 2.1.18
 
@@ -679,7 +708,10 @@ ist, zeigten alle Pfade der Zweitinstallation auf die erste.
   `Renault/<Fahrzeugname>/…`
 - Befehle über `/plugins/renault_ng/index.php?token=<TOKEN>&aktion=…` (ohne
   LoxBerry-Anmeldung, dafür mit Token; ab Werk gesperrt)
-- Ladehistorie mit Tagesdiagramm, Ausfallerkennung über `ok` und `phpCall`
+- Ladehistorie mit Tagesdiagramm, Ausfallerkennung über das Lebenszeichen `status/zaehler` und `ok`
+- Einbindung in Loxone mit drei fertig verbundenen Seiten aus dem
+  [LoxBerry-Plugins Musterprojekt](https://github.com/timanders22/LoxBerry-Plugins-Musterprojekt) – die ganze
+  Projektdatei mit allen Plugin-Seiten und Vorlagen; im Reiter je Seite Tabelle, Anleitung und Bild
 - Sechs Reiter: **Einstellungen**, **MQTT**, **Einbindung in Loxone**, **Test**,
   **Ladehistorie**, **Logdateien**
 
@@ -763,8 +795,9 @@ Drei-Minuten-Cron meldet dort, wenn etwas fehlt.
 
 ## Nachprüfbar
 
-`templates/lang/language_de.ini` und `language_en.ini` führen je **287
-Schlüssel**, deckungsgleich; jeder davon wird benutzt, und jeder benutzte
+`templates/lang/language_de.ini` und `language_en.ini` führen je **760
+Schlüssel** (603 eigene und die 157 Sätze der gemeinsamen Sprachausgabe im Abschnitt `[ANSAGE]`),
+deckungsgleich; jeder davon wird benutzt, und jeder benutzte
 Schlüssel ist vorhanden. Beide Dateien werden aus einer Quelle erzeugt, damit
 die Mengen gar nicht auseinanderlaufen können — bis 2.0.6 war das nur eine
 Zusage in dieser Datei, und sie nannte dazu die falsche Zahl (223 statt der tatsächlichen 227).

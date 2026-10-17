@@ -2287,6 +2287,30 @@ function rn_befehl_schaltet($aktion)
     return isset($b[$aktion]) ? (bool) $b[$aktion][1] : true;
 }
 
+/**
+ * Fester deutscher Titel eines Befehls in der Loxone-Vorlage (rn_vorlage_vo()).
+ *
+ * Welle Bild 17 (2.1.19, Entwurf Welle 17 rn, E13; Sprachregel 13.10.2026, Regeln/07): Titel bleiben fest
+ * deutsch, nur der Kommentar wird uebersetzt. Bis 2.1.18 kam der Titel aus BEFEHL.* der Sprachdatei, und ein
+ * englischer LoxBerry legte "Start preconditioning" an - Baustein-Liste, Bild und Musterprojekt passten dann
+ * nicht mehr. Die Werte sind die bisherigen deutschen BEFEHL-Texte (im Bauskript gegen die Sprachdatei
+ * geprueft): fuer eine deutsche Oberflaeche bleibt die Vorlage bytegleich, bestehende Projekte behalten ihre
+ * Ausgaenge. Unbekannte Aktion: die Aktion selbst.
+ */
+function rn_befehl_titel($aktion)
+{
+    $t = array(
+        'acnow' => 'Vorklimatisierung starten',
+        'acoff' => 'Vorklimatisierung beenden',
+        'chargenow' => 'Sofort laden starten',
+        'chargestop' => 'Laden anhalten',
+        'cmon' => 'Ladeplan aktivieren',
+        'cmoff' => 'Ladeplan abschalten (immer laden)',
+        'abruf' => 'Daten sofort neu abrufen',
+    );
+    return isset($t[$aktion]) ? $t[$aktion] : (string) $aktion;
+}
+
 /* ---------------- Gleichwert-Unterdrueckung fuer Sollwerte (X-7) ----------------
  *
  * Welle-4-Bau, Entscheidung Nr. 19 des Hausherrn (01.10.2026): derselbe
@@ -2589,12 +2613,16 @@ function rn_vorlage_vo()
             // 2.1.0 echte Zeichen tragen: schreibt jemand doch wieder eine
             // Entitaet hinein, stuende sie sonst doppelt maskiert im XML.
             $rn_klar  = html_entity_decode(rn_t($rn_angabe[0]), ENT_QUOTES, 'UTF-8');
-            $rn_titel = $mehr ? $rn_f['name'] . ': ' . $rn_klar : $rn_klar;
+            /* Welle Bild 17 (2.1.19): der Titel ist fest deutsch (rn_befehl_titel()), nur der
+             * Kommentar unten bleibt uebersetzt. Bis 2.1.18 stand hier $rn_klar. */
+            $rn_fest  = rn_befehl_titel($rn_a);
+            $rn_titel = $mehr ? $rn_f['name'] . ': ' . $rn_fest : $rn_fest;
             /* Der Comment ist der ANZEIGENAME in Loxone Config (Regeln/07);
              * bis 2.1.6 stand dort "", und Config zeigte den Titel. Der
              * Vorsatz nennt das Fahrzeug, weil die Bausteinsuche des
              * Miniservers den Geraeteknoten nicht kennt. Uebersetzt wird
-             * nichts Neues - die Beschriftung ist derselbe Text. */
+             * nichts Neues - die Beschriftung ist derselbe Text (seit 2.1.19
+             * uebersetzt; der Titel ist fest deutsch, rn_befehl_titel()). */
             $rn_anzeige = $mehr
                 ? 'Renault ' . $rn_f['name'] . ': ' . $rn_klar
                 : 'Renault: ' . $rn_klar;
