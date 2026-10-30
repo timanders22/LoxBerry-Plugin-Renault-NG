@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.19 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.20 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,66 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Neu in 2.1.20
+
+Hausform wie MGiSmart 1.1.28: MQTT-Gateway V2, Befehlsbrücke, Haus-Themen. Renault-seitig nur mit Attrappen
+geprüft (im Haus kein Konto) – das Plugin bleibt **BETA**.
+
+* **Wer die HTTP-Vorlage nutzt, ändert nichts** – der Endpunkt bleibt beim Update offen (Haken
+  „Befehle über den bisherigen HTTP-Endpunkt annehmen“); eine **Neuinstallation hat ihn aus**. Ein Befehl geht
+  sofort hinaus; der Abruf danach nur, wenn kein anderer läuft (sonst die Zeile `ABRUF=SKIP`).
+* **Gateway V2:** Datenpunkte anhaken (Tabelle im Reiter MQTT, `ok`, `status/zaehler` und `Renault/status/befehle`
+  als Noncached), Brückenvorlage importieren. Zahlthemen ohne Wert kommen mit Fehlwert (-1, Temperaturen -99,
+  GPS -999); `ChargingStatus` ohne Wert wird nicht gesendet (bei Renault heißt -1 Ladefehler). Das Abo
+  `Renault/#` bleibt als Rückfall für Gateway V1. Ein Fahrzeug darf nicht mehr `status` oder `befehl` heißen.
+* **Befehle über MQTT** (Befehlsbrücke 1.0.2, ab Werk aus): `Renault/befehl/laden 1/0`, `klima_an 1`,
+  `klima_aus 1`, `ladeplan 1/0`, `auffrischen 1`, `aussentemp <°C>`; Fahrzeug 2–4 unter `Renault/befehl/<n>/…`.
+  Quittung unter `…/quittung`. UDP 11884 ist im Heimnetz ohne Anmeldung erreichbar – Schutz sind die Haken
+  „Befehle über MQTT annehmen“ und (für alles Schaltende) „Steuerung“.
+* **Anmeldefehler:** im Cron gehen je Fahrzeug `ok = 0` und das Lebenszeichen hinaus (bis 2.1.19 gar nichts).
+* **Minutentakt** `cron.01min` (leicht, kein Abruf): Wächter der Brücke, abgekoppelter Leser der Haus-Themen.
+* **Vorklimatisierung zur Abfahrt** aus `haus/abfahrt` (ab Werk aus; nur mit Steuerung): höchstens zwei
+  „Klima ein“ je Abfahrt (Senden – Abruf – Senden), wahlweise nur bei Anwesenheit (`haus/anwesenheit/jemand`)
+  und nur bei Kälte oder Hitze (Außentemperatur aus Loxone über `Renault/befehl/aussentemp`, sonst die des
+  Fahrzeugs). Schweigt das Haus-Thema, klimatisiert das Plugin nicht. Nur eine Quelle nutzen: Schaltuhr in Loxone
+  **oder** dieser Haken.
+* **Heimzone** (ab Werk aus, Generation 2): `Zuhause` 1/0/-1 und `Entfernung` in km. Die GPS-Zeit gilt, solange
+  sie höchstens 60 Minuten älter ist als die letzte Fahrzeugantwort. Die Koordinaten stehen nur in `config.php`.
+* **Ankunft** (ab Werk aus): BLE-Tag oder Person live 0 → 1 fragt das Fahrzeug einmal ab (höchstens je 30 min).
+* **Ladekosten** je Ladung aus `haus/strompreis` (ab Werk aus). **Rechenweg:** Renault liefert die Ladeleistung
+  nicht im Minutentakt. Die Energie je Abschnitt zwischen zwei Abrufen kommt aus der vom Fahrzeug gemeldeten
+  Energie im Akku, sonst aus Akkustand-Differenz × eingetragener Kapazität; jede Minute trägt den Preis, den das
+  Plugin in ihr mitschreibt (Endpreis ohne Grundpreis). Gerechnet wird die in den Akku geladene Energie, ohne
+  Ladeverluste. Kosten -1, wenn die Energie nicht bestimmbar ist, der Preis für mehr als 10 Prozent der Energie
+  fehlt oder die Ladung nicht zu Hause begann – nie geschätzt. Die Minuten zwischen der Fahrzeugzeit der ersten
+  Meldung und dem Abruf, der die Ladung erkennt, nimmt das Plugin aus der Preisvorschau (`haus/strompreis/vorschau`),
+  nie aus dem aktuellen Preis. MQTT `LadungKosten`, `LadungEnergie`,
+  `LadungPreis` (retained), Tabelle im Reiter Ladehistorie.
+* **Meldungen an SignalBot** (ab Werk aus) über dessen Brücke; das Ergebnis von `mail()` steht im Protokoll.
+* **Healthcheck** auf der LoxBerry-Systemseite (nur lesend).
+* **Behoben:** Kontowechsel verwirft die Anmeldung, nach 401/403 wird das Konto höchstens einmal je Stunde neu
+  ermittelt; Speichern löscht die Merker nur noch bei geänderter VIN/Phase/Zugangsdaten, das Update rettet
+  `session*`; die Aufzeichnung schreibt nur bei einer Änderung – **das Update fasst alte gleiche Zeilen einmal
+  zusammen**, die alte Datei liegt als `database*.csv.vor_2120` (0600) daneben; die Sicherung beim Update ist
+  unteilbar (ohne heile Zweitschrift bricht das Update ab, statt die Einstellungen zu verlieren); die
+  Deinstallation folgt keinem Verweis und tut für fremde Plugins nichts; ABRP nur für Fahrzeug 1; die Ladehistorie
+  meldet Serverfehler als Warnung; Fehler des Cron stehen in `cron.err`; der Reiter Test lädt neu; die Sperre
+  liegt unter `log/plugins/<ordner>/abruf.lock`; Sprachausgabe 1.2.1 mit Sonos4Lox und SonoX. Die Einstellung trägt
+  dafür den neuen Schlüssel `tts_ziele` (leer = keine weiteren Ziele).
+* **Mehrere Lautsprecher gleichzeitig (Sprachmodul 1.2.1):** Unter der Ausgabeart (jetzt „Ziel 1“) nimmt die Tabelle
+  *Weitere Ausgabeziele (gleichzeitig)* bis zu fünf weitere Ziele auf – etwa Google-Lautsprecher (Chromecast 4 Lox NG)
+  in einem Raum und Amazon Echo (Alexa-NG) in einem anderen neben dem Loxone Music Server. Die Ansage geht an alle
+  eingeschalteten Ziele zugleich (eine Ansage dauert so lange wie das langsamste Ziel, höchstens 10 s, mit Sonos 30 s);
+  scheitert eines, sprechen die anderen. Protokoll und Reiter Test nennen jedes Ziel, im Reiter Test gibt es je Ziel
+  eine Testansage. Die bestehende Einstellung ist unverändert Ziel 1; ohne weitere Ziele verhält sich alles wie in
+  2.1.19. Antwort an Loxone, MQTT-Themen und Brückenbefehl `ansage` bleiben, wie sie sind.
+* **Vor einem Zurückgehen** auf 2.1.19 oder älter die weiteren Ziele entfernen: ältere Fassungen kennen die Liste nicht
+  und fielen beim Laden auf die Werkseinstellung der Sprachausgabe zurück.
+* **Reiter Test:** *Testansage* spricht wie bisher an alle Ziele; die Knöpfe *Testansage an Ziel n* daneben sprechen
+  den Testsatz nur an diesem Ziel.
+* Das Plugin regelt das Laden nicht nach Preis oder Überschuss; dafür sind Loxone (Wallbox-Regelung) und die Werte
+  dieses Plugins da.
 
 ## Neu in 2.1.19
 

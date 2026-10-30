@@ -20,6 +20,15 @@
  * gesendet. Gilt fuer acnow/acoff (samt Zieltemperatur), chargenow/chargestop
  * und cmon/cmoff; nicht fuer abruf. Ein anderer Wert geht sofort hinaus (kein
  * 429). Laesst sich der Merker nicht fuehren: HTTP 503, GRUND=BREMSE_MERKER.
+ *
+ * Seit 2.1.20 (Gruppe 40, 2.3):
+ * - endpunkt_ein = N (ab Werk bei Neuinstallation) -> jeder Aufruf ausser
+ *   ?selftest bekommt nach der Tokenpruefung HTTP 403 RENAULT;OK=0;ERR=ENDPUNKT_AUS;
+ *   ?selftest meldet zusaetzlich ;ENDPUNKT=AUS|EIN.
+ * - Ein schaltender Befehl geht ueber rn_befehl_annehmen() OHNE Sperre (X-7 dort
+ *   fuer alle Wege); der Abruf danach nur bei freier Abrufsperre
+ *   (<logdir>/abruf.lock, dieselbe wie cron.03min/cron.10min), sonst die Zeile
+ *   ABRUF=SKIP. Die Antwortzeilen bleiben die von 2.1.19.
  */
 
 error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE);
@@ -202,7 +211,8 @@ if (isset($_GET['selftest'])) {
     $rn_ausgewiesen = true;
     rn_ende(200, 'SELFTEST;OK=1;TOKEN=OK;STEUERUNG='
        . ($cfg['steuerung_ein'] === 'Y' ? 'EIN' : 'AUS')
-       . ';FAHRZEUGE=' . count(rn_fahrzeuge($cfg)), 'INFO', 'Selbsttest beantwortet');
+       . ';FAHRZEUGE=' . count(rn_fahrzeuge($cfg))
+       . ';ENDPUNKT=' . ((string) $cfg['endpunkt_ein'] === 'Y' ? 'EIN' : 'AUS'), 'INFO', 'Selbsttest beantwortet');
 }
 
 /* ---------------------------- Token ---------------------------- */
@@ -220,6 +230,20 @@ if (!hash_equals($soll, $ist)) {
             'abgewiesen - falsches Token (' . strlen($ist) . ' Zeichen)');
 }
 $rn_ausgewiesen = true;
+
+/* ------------------------- endpunkt_ein -------------------------
+ *
+ * Gruppe 40 (2.1.20, wie MG E-E1 A und SignalBot E-E8): der Endpunkt ist bei
+ * Renault ganz ein Befehlsweg - es gibt keinen Lesezweig ohne Befehl
+ * (Regeln/07 :303). Ab Werk (Neuinstallation) ist er aus; ein Update setzt den
+ * Bestand auf "an" (postupgrade.sh, bin/rn_bestand.php), damit eine laufende
+ * Loxone-Vorlage nicht stumm wird. Aus heisst: jeder Aufruf ausser ?selftest
+ * bekommt nach der Tokenpruefung 403. Neue Anlagen nehmen Gateway V2 und die
+ * Befehlsbruecke. */
+if ((string) $cfg['endpunkt_ein'] !== 'Y') {
+    rn_ende(403, 'RENAULT;OK=0;ERR=ENDPUNKT_AUS', 'WARN',
+            'abgewiesen - der Endpunkt ist ausgeschaltet (Reiter Einbindung in Loxone, Bisheriger Weg ueber HTTP)');
+}
 
 /* ---------------------------- Aktion ---------------------------- */
 $aktion = (isset($_GET['aktion']) && is_string($_GET['aktion'])) ? $_GET['aktion'] : '';
@@ -243,13 +267,8 @@ if (rn_befehl_schaltet($aktion) && $cfg['steuerung_ein'] !== 'Y') {
 
 /* --------------------------- Fahrzeug ---------------------------
  *
- * Bis 2.1.5 stand hier (int) $_GET['fahrzeug'] ohne Formpruefung. Gemessen
- * unter 7.4.33 und 8.4.24, jeweils ohne Warnung: "2abc", "2.9", " 2" und
- * "2e0" wurden alle zu 2 - und ein FELD (?fahrzeug[]=2) zu 1. Damit hielte
- * "…&aktion=chargestop&fahrzeug[]=2" das Laden an Fahrzeug 1 an, und ein
- * Tippfehler in einer Loxone-Adresse traefe stillschweigend ein Fahrzeug,
- * statt abgewiesen zu werden. Eingaben werden abgewiesen und gemeldet, nie
- * still zurechtgebogen. */
+ * Bis 2.1.5 stand hier (int) $_GET['fahrzeug'] ohne Formpruefung. Eingaben
+ * werden abgewiesen und gemeldet, nie still zurechtgebogen. */
 $fahrzeug = 1;
 if (isset($_GET['fahrzeug'])) {
     if (!is_string($_GET['fahrzeug'])
@@ -276,113 +295,107 @@ if ($cfg['username'] === '' || $cfg['password'] === '' || $ziel['vin'] === '') {
                'abgewiesen - Zugangsdaten oder Fahrgestellnummer unvollstaendig');
 }
 
-/* ==================================================================
- * abruf.php aufrufen
- * ==================================================================
- *
- * abruf.php bindet seine Nachbardateien (api-keys.php, loxberry_web.php,
- * phpMQTT) ueber relative Pfade ein. Deshalb muss das Arbeitsverzeichnis
- * stimmen.
- *
- * Der Auftrag wird als ARRAY uebergeben und nicht mehr ueber $_GET.
- * Bis 2.0.6 setzte diese Datei $_GET['cron'] = '1' - allein, um
- * Klartext statt HTML zu bekommen. abruf.php las daraus aber die
- * Betriebsart "Cron" und lief damit in die Intervallsperre, und die stand
- * VOR den Befehlsbloecken. Ein Befehl kam nur in etwa einer von sechs
- * Minuten durch; in den uebrigen antwortete das Plugin mit HTTP 200 und
- * dem Text "INTERVAL NOT REACHED" - einer Erfolgsmeldung fuer eine nicht
- * ausgefuehrte Handlung. Ausgabeformat und Betriebsart haengen jetzt
- * nicht mehr am selben Merker.
- */
+/* abruf.php bindet seine Nachbardateien ueber relative Pfade ein - das
+ * Arbeitsverzeichnis muss stimmen (siehe Kopf von 2.1.19). */
 if (!@chdir($rn_htmlauth)) {
     rn_ende(500, 'Der Ordner htmlauth ist nicht erreichbar: ' . $rn_htmlauth,
             'ERROR', 'Ordner htmlauth nicht erreichbar');
 }
 
-/* X-7: Gleichwert-Unterdrueckung, siehe Kopf und rn_lib.php. Erst hier, hinter
- * Token, Steuerung, Fahrzeug und Zugangsdaten: ein abgewiesener Aufruf merkt
- * nichts. Vorgemerkt wird VOR dem Senden (abruf.php sendet sofort); ist der
- * Befehl danach nicht ausgefuehrt, wird der Eintrag unten wieder verworfen. */
-$rn_gw = rn_gleichwert_gruppe($aktion, $cfg);
-$rn_gw_schl = '';
-$rn_gw_marke = '';
-if ($rn_gw !== null) {
-    $rn_gw_schl = rn_gleichwert_schluessel($ziel, $fahrzeug, $rn_gw[0]);
-    list($rn_gw_urteil, $rn_gw_seit, $rn_gw_marke) = rn_gleichwert_pruefen($rn_gw_schl, $rn_gw[1]);
-    if ($rn_gw_urteil === 'MERKER') {
-        rn_ende(503, strtoupper($aktion) . ';OK=0;GRUND=BREMSE_MERKER' . "\n"
+/* ==================================================================
+ * Der Befehl - OHNE Abrufsperre (Gruppe 40, 2.3, T3-1)
+ * ==================================================================
+ *
+ * Seit 2.1.20 geht ein schaltender Befehl ueber rn_befehl_annehmen() (rn_lib.php)
+ * - dieselbe Funktion wie Befehlsbruecke und Vorklimatisierung, X-7 dort an EINER
+ * Stelle. Der Befehl wartet nicht auf den Cron: er sendet sofort. Danach der
+ * Abruf - nur bei freier Abrufsperre, sonst ABRUF=SKIP (der Cron holt binnen 3
+ * min). Bis 2.1.19 liefen Befehl und Abruf in einem require ohne Sperre, und ein
+ * gleichzeitiger Cron-Lauf holte doppelt (Pruefbericht T3-1). Die Antwortzeilen
+ * bleiben die von 2.1.19 (P-E-5).
+ */
+$_GET = array();                 // nichts Fremdes durchreichen
+$rn_zeilen = array();
+$rn_befehl = null;
+if ($aktion !== 'abruf') {
+    $rn_be = rn_befehl_annehmen($aktion, $fahrzeug, 'http', $cfg);
+    if ($rn_be[1] === 'UNVERAENDERT') {
+        rn_ende(200, $rn_be[3], 'INFO', 'Aktion ' . $aktion . ' fuer Fahrzeug ' . $fahrzeug . ': derselbe Befehl ging '
+            . 'vor kurzem hinaus - nichts gesendet (gleiche Sollwerte innerhalb von ' . RN_GLEICHWERT_S
+            . ' s gehen nur einmal an Renault)');
+    }
+    if ($rn_be[1] === 'BREMSE_MERKER') {
+        rn_ende(503, $rn_be[3] . "\n"
                    . 'Die Merkerdatei der Gleichwert-Unterdrueckung (' . basename(rn_gleichwert_datei())
                    . ') laesst sich nicht oeffnen oder schreiben - Sollwert-Befehle werden abgewiesen, '
                    . 'bis das behoben ist. Pruefen: Platz und Eigentuemer (loxberry) des Datenordners.',
                 'ERROR', 'Aktion ' . $aktion . ' fuer Fahrzeug ' . $fahrzeug . ' abgewiesen - der Merker '
                    . 'der Gleichwert-Unterdrueckung laesst sich nicht fuehren (' . rn_gleichwert_datei() . ')');
     }
-    if ($rn_gw_urteil === 'UNVERAENDERT') {
-        rn_ende(200, strtoupper($aktion) . ';OK=1;UNVERAENDERT=1;SEIT_S=' . (int) $rn_gw_seit,
-                'INFO', 'Aktion ' . $aktion . ' fuer Fahrzeug ' . $fahrzeug . ': derselbe Befehl ging vor '
-                   . (int) $rn_gw_seit . ' s hinaus - nichts gesendet (gleiche Sollwerte innerhalb von '
-                   . RN_GLEICHWERT_S . ' s gehen nur einmal an Renault)');
+    if ($rn_be[1] !== 'OK' && strpos($rn_be[1], 'RENAULT_') !== 0) {
+        rn_ende((int) $rn_be[2], $rn_be[3], 'ERROR', 'Aktion ' . $aktion . ' fuer Fahrzeug ' . $fahrzeug
+            . ' NICHT ausgefuehrt (' . $rn_be[1] . ')');
     }
+    $rn_befehl = ((int) $rn_be[0] === 1);
+    $rn_zeilen[] = $rn_be[3];
 }
 
-$_GET = array();                 // nichts Fremdes an abruf.php durchreichen
-$rn_auftrag = array('aktion' => $aktion, 'fahrzeug' => $fahrzeug);
-$rn_http_status = 200;           // abruf.php setzt ihn bei jedem Fehlerausgang
-
-/* Ein Absturz in abruf.php darf nicht wieder als leerer HTTP 500 beim
- * Miniserver ankommen - das war der Fehler aus Punkt 1 der README, und er
- * blieb genau deshalb ein Jahr lang unentdeckt. Fehlt etwa die
- * curl-Erweiterung, soll dort eine lesbare Zeile stehen und nicht nichts.
- * Throwable faengt seit PHP 7 auch Error, nicht nur Exception. */
-ob_start();
-try {
-    require $rn_htmlauth . '/abruf.php';
-    $ausgabe = trim((string) ob_get_clean());
-} catch (Throwable $rn_t) {
-    $ausgabe = trim((string) ob_get_clean());
-    if ($rn_gw_marke !== '') {
-        rn_gleichwert_vergessen($rn_gw_schl, $rn_gw_marke);    // X-7: nicht ausgefuehrt
+/* ------------------- danach der Abruf, nur bei freier Sperre -------------------
+ * 'ce' beim Oeffnen der Sperre (rn_abruf_sperre_nehmen()): exec_bl/exec_csf
+ * erben den Griff nicht (Gedaechtnis "Sperre vererbt sich an Kinder"). */
+$rn_sperre = rn_abruf_sperre_nehmen();
+$rn_abruf_fehl = false;
+$rn_code_abruf = 200;
+if ($rn_sperre === null) {
+    $rn_zeilen[] = 'ABRUF=SKIP';
+} else {
+    $rn_auftrag = array('aktion' => 'abruf', 'fahrzeug' => $fahrzeug);
+    $rn_http_status = 200;           // abruf.php setzt ihn bei jedem Fehlerausgang
+    /* Ein Absturz in abruf.php darf nicht als leerer HTTP 500 beim Miniserver
+     * ankommen. Throwable faengt seit PHP 7 auch Error. */
+    ob_start();
+    try {
+        require $rn_htmlauth . '/abruf.php';
+        $rn_aus = trim((string) ob_get_clean());
+    } catch (Throwable $rn_t) {
+        $rn_aus = trim((string) ob_get_clean());
+        flock($rn_sperre, LOCK_UN);
+        fclose($rn_sperre);
+        if (function_exists('renault_log')) {
+            renault_log('ERROR', 'Endpunkt: abruf.php ist abgestuerzt: ' . $rn_t->getMessage()
+                . ' (' . basename($rn_t->getFile()) . ':' . $rn_t->getLine() . ')');
+        }
+        rn_ende(500, implode("\n", $rn_zeilen) . ($rn_zeilen ? "\n" : '') . 'ABRUF;OK=0;ERR=' . $rn_t->getMessage()
+                     . ' (' . basename($rn_t->getFile()) . ':' . $rn_t->getLine() . ')'
+                     . ($rn_aus !== '' ? "\n" . $rn_aus : ''), 'ERROR',
+                     'abruf.php ist abgestuerzt');
     }
-    if (function_exists('renault_log')) {
-        renault_log('ERROR', 'Endpunkt: abruf.php ist abgestuerzt: ' . $rn_t->getMessage()
-            . ' (' . basename($rn_t->getFile()) . ':' . $rn_t->getLine() . ')');
-    }
-    rn_ende(500, 'ABRUF;OK=0;ERR=' . $rn_t->getMessage()
-                 . ' (' . basename($rn_t->getFile()) . ':' . $rn_t->getLine() . ')'
-                 . ($ausgabe !== '' ? "\n" . $ausgabe : ''), 'ERROR',
-                 'abruf.php ist abgestuerzt');
+    flock($rn_sperre, LOCK_UN);
+    fclose($rn_sperre);
+    if ($rn_aus !== '') { $rn_zeilen[] = $rn_aus; }
+    $rn_code_abruf = (isset($rn_http_status) && (int) $rn_http_status >= 100
+                      && (int) $rn_http_status < 600) ? (int) $rn_http_status : 200;
+    $rn_abruf_fehl = !empty($rn_abruf_gescheitert);
 }
 
-/* Der Statuscode kommt aus abruf.php, nicht aus dem blossen Umstand, dass
- * der require zurueckgekehrt ist.
- *
- * Bis 2.1.5 stand hier rn_ende(200, …) - und damit antwortete der Endpunkt
- * auch auf LOGIN FAILED, NO CREDENTIALS, NO VIN, STEUERUNG AUS und OK=0 mit
- * HTTP 200. Das ist wortgleich die Klasse, die der Kommentar oben fuer
- * behoben erklaert: eine Erfolgsmeldung fuer eine nicht ausgefuehrte
- * Handlung. Loxone wertet nur den Code aus. */
-$rn_code = (isset($rn_http_status) && (int) $rn_http_status >= 100
-            && (int) $rn_http_status < 600) ? (int) $rn_http_status : 200;
-/* Die Protokollzeile sagt, was mit dem BEFEHL geschah, nicht mit dem Abruf
- * danach (Befund C2). Bis 2.1.12 hing "ausgefuehrt" am Statuscode, und der
- * hing am Abruf: ein gescheiterter Befehl stand als "ausgefuehrt" im
- * Protokoll, ein angenommener als "NICHT ausgefuehrt". Ohne Befehl
- * (aktion=abruf) bleibt es wie bisher. */
-$rn_befehl = isset($rn_befehl_ok) ? $rn_befehl_ok : null;
-$rn_abruf_fehl = !empty($rn_abruf_gescheitert);
-/* X-7: nicht ausgefuehrt (Anmeldung gescheitert, Renault lehnt ab, Wert
- * unzulaessig ...) heisst nicht gemerkt - der naechste gleiche Befehl geht
- * hinaus. */
-if ($rn_gw_marke !== '' && $rn_befehl !== true) {
-    rn_gleichwert_vergessen($rn_gw_schl, $rn_gw_marke);
-}
+/* Der Statuscode: bei einem Befehl entscheidet das Ergebnis des BEFEHLS
+ * (Befund C2) - ein angenommener Befehl ist 200, auch wenn der Abruf danach
+ * scheiterte; ein abgewiesener 502. Ohne Befehl (aktion=abruf) der Code des
+ * Abrufs. */
 if ($rn_befehl === true) {
+    $rn_code = 200;
     $rn_was = $rn_abruf_fehl ? ': Befehl ausgefuehrt, Abruf danach gescheitert' : ' ausgefuehrt';
 } elseif ($rn_befehl === false) {
+    $rn_code = 502;
     $rn_was = ' NICHT ausgefuehrt';
 } else {
+    $rn_code = $rn_code_abruf;
     $rn_was = ($rn_code === 200) ? ' ausgefuehrt' : ' NICHT ausgefuehrt';
 }
-rn_ende($rn_code, $ausgabe !== '' ? $ausgabe : 'OK',
+if ($rn_sperre === null) {
+    $rn_was .= ' (Abruf uebersprungen - der laufende Abruf holt die Werte)';
+}
+$rn_ausgabe = implode("\n", $rn_zeilen);
+rn_ende($rn_code, $rn_ausgabe !== '' ? $rn_ausgabe : 'OK',
         $rn_code !== 200 ? 'ERROR' : ($rn_abruf_fehl ? 'WARN' : 'INFO'),
         'Aktion ' . $aktion . ' fuer Fahrzeug ' . $fahrzeug . $rn_was);

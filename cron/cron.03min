@@ -47,7 +47,15 @@ fi
 # Text. Bei einer Zweitinstallation haengt LoxBerry einen Zaehler an
 # (renault_ng_01); mit einem festen Namen sperrten sich die beiden
 # Installationen gegenseitig aus, und je Minute liefe nur eine von beiden.
-SPERRE="/tmp/$(basename "$VERZ").lock"
+#
+# Seit 2.1.20 (Gruppe 40, eigener Fund F9) liegt die Sperre im Protokollordner
+# des Plugins (REPLACELBPLOGDIR/abruf.lock), nicht mehr unter /tmp: ob Apache am
+# Geraet mit PrivateTmp laeuft, ist nicht gemessen - dann saehen Cron und
+# Endpunkt verschiedene /tmp, und der Endpunkt (der die Sperre seit 2.1.20
+# ebenfalls fragt) holte trotz laufendem Cron. Der Protokollordner ist fuer beide
+# derselbe und uebersteht ein Update.
+mkdir -p "REPLACELBPLOGDIR" 2>/dev/null
+SPERRE="REPLACELBPLOGDIR/abruf.lock"
 #
 # flock ist nicht blockierend: wer nicht drankommt, geht kommentarlos wieder -
 # das ist der Normalfall und keine Meldung wert. Laesst sich die Sperrdatei
@@ -61,10 +69,21 @@ if ! exec 9>"$SPERRE"; then
 fi
 flock -n 9 || exit 0
 
+# Fehlerausgabe nach cron.err (seit 2.1.20, V7-b/T3-3, Regeln/06 :475; Form MG
+# cron.01min): LoxBerry ruft jede Cron-Datei mit "> /dev/null 2>&1" auf, und bis
+# 2.1.19 blieb von einem Syntaxfehler in php nirgends eine Spur. Ueber 256 kB
+# bleiben die letzten 300 Zeilen. Der Reiter Logdateien zeigt die Datei, sobald
+# etwas darin steht.
+ERR="REPLACELBPLOGDIR/cron.err"
+mkdir -p "REPLACELBPLOGDIR" 2>/dev/null
+touch "$ERR" 2>/dev/null
+if [ -f "$ERR" ] && [ "$(stat -c %s "$ERR" 2>/dev/null || echo 0)" -gt 262144 ]; then
+    tail -n 300 "$ERR" > "$ERR.neu" 2>/dev/null && mv -f "$ERR.neu" "$ERR"
+fi
 cd "$VERZ" || exit 1
 # 9<&- (Befund C4): php und alles, was es startet (exec_bl, exec_csf),
 # bekommt den Griff der Sperre NICHT vererbt; die Schale haelt ihn, bis php
 # zurueckkehrt. Bis 2.1.12 erbte ein langlebiges Kind des Hakens fd 9, und
 # jeder weitere Lauf endete still an "flock -n 9 || exit 0" (in WSL gemessen,
 # zweiter Lauf ohne Ausgabe mit rc 0). Gilt ebenso fuer cron.10min.
-php abruf.php cron 9<&-
+php abruf.php cron 9<&- 2>>"$ERR"

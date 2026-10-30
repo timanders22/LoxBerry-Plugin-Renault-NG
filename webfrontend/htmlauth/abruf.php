@@ -50,6 +50,20 @@
  * CURLOPT_TIMEOUT 30 s). Ohne sie haengt ein Abruf, den Gigya oder die
  * Renault-Schnittstelle nicht beantwortet, bis zum Systemende - im Cron
  * staut sich das auf.
+ *
+ * ===================================================================
+ * WAS SICH MIT 2.1.20 GEAENDERT HAT (Gruppe 40)
+ * ===================================================================
+ * - Alle Aufrufe an Gigya und Kamereon gehen ueber EINE Nahtstelle,
+ *   rn_http_senden() in rn_lib.php; rn_get()/rn_post() und die Anmeldung
+ *   (rn_anmelden()) stehen dort, ebenso der Befehl (rn_befehl_annehmen()) -
+ *   dieselben Funktionen fuer Endpunkt, Befehlsbruecke und Vorklimatisierung.
+ * - Betriebsarten: cron, takt (Minutentakt aus cron.01min), abruf [n],
+ *   --haus-lesen (abgekoppelter Leser), --mqtt-leeren (Deinstallation) und die
+ *   Befehlsnamen. Alles andere: Satz auf STDERR, Rueckgabe 2, ohne Wirkung.
+ * - Die Broker-Verbindung entsteht VOR der Anmeldung; scheitert die Anmeldung
+ *   im Cron, gehen je Fahrzeug ok = 0 und das Lebenszeichen hinaus (F3).
+ * - Eine Zeile der Aufzeichnung nur noch, wenn sich der Stand aendert (V3).
  */
 
 require_once 'loxberry_web.php';
@@ -57,6 +71,23 @@ require_once 'loxberry_io.php';
 require_once 'phpMQTT/phpMQTT.php';
 
 require_once __DIR__ . '/rn_lib.php';
+
+/* Unbekannte Betriebsart (V7-f wie MG, Bauvorschrift 2.4): Satz auf STDERR,
+ * Rueckgabe 2, OHNE Wirkung. Bis 2.1.19 lief jedes unbekannte Argument als
+ * Aktionsname in die Befehlspruefung - "--mqt-leeren" (ein Tippfehler) meldete
+ * sich an und rief Renault, statt nichts zu tun. Steht vor allem anderen. */
+if (!isset($rn_auftrag)) {
+    $rn_erlaubt = array_merge(array('cron', 'takt', 'abruf', '--haus-lesen', '--mqtt-leeren'),
+                              array_keys(rn_befehle()));
+    $rn_a1 = isset($argv[1]) ? (string) $argv[1] : '';
+    $rn_a2_ok = !isset($argv[2]) || preg_match('/^[1-' . RN_MAX_FAHRZEUGE . ']$/', (string) $argv[2]) === 1;
+    if (!in_array($rn_a1, $rn_erlaubt, true) || !$rn_a2_ok || count($argv) > 3) {
+        fwrite(STDERR, 'abruf.php: unbekannte Betriebsart oder unbekannter Schalter ('
+            . ($rn_a1 === '' ? 'keiner' : $rn_a1) . '). Erlaubt: ' . implode(', ', $rn_erlaubt)
+            . ' [Fahrzeugnummer 1-' . RN_MAX_FAHRZEUGE . ']. Es geschah nichts.' . "\n");
+        exit(2);
+    }
+}
 
 /* Ohne Anlage nichts holen, nichts senden, nichts schreiben - und das VOR
  * logger.php, dessen erste Zeile ueber rn_paths() die Ordner anlegt, und vor
@@ -86,8 +117,22 @@ if (!isset($rn_auftrag) && isset($argv[1]) && $argv[1] === '--mqtt-leeren') {
     exit(rn_mqtt_leeren());
 }
 
+/* Der Minutentakt (2.4, cron.01min): Waechter der Befehlsbruecke, Leser der
+ * Haus-Themen starten, Vorklimatisierung, Ankunft, Preisproben. KEIN Abruf.
+ * Ist nichts eingeschaltet, endet er nach dem Lesen der Konfiguration - ohne
+ * Protokoll (logger.php wird erst geladen, wenn eine Zeile faellig ist). */
+if (!isset($rn_auftrag) && isset($argv[1]) && $argv[1] === 'takt') {
+    rn_takt_lauf(__FILE__);
+    exit(0);
+}
+/* Der abgekoppelte Leser (aus dem Takt gestartet, eigene Sperre, bis 65 s). */
+if (!isset($rn_auftrag) && isset($argv[1]) && $argv[1] === '--haus-lesen') {
+    rn_haus_leser_lauf();
+    exit(0);
+}
+
 require_once __DIR__ . '/logger.php';
-require 'api-keys.php';
+list($gigya_api, $kamereon_api) = rn_api_schluessel();   // api-keys.php, einmal gelesen
 
 rn_umzug();                      // einmaliger Umzug aus dem Programmordner
 
@@ -181,316 +226,13 @@ if (!$rn_mit_vin) {
 }
 
 /* ==================================================================
- * Hilfsmittel
- * ================================================================== */
-
-/** Ein GET an die Kamereon-Schnittstelle. Gibt array(httpcode, daten, roh). */
-function rn_get($url, $kamereon_api, $jwt, $name = '')
-{
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, array(
-        'apikey: ' . $kamereon_api,
-        'x-gigya-id_token: ' . $jwt,
-    ));
-    $antwort = curl_exec($ch);
-    if ($name !== '') { renault_log_api($name, $ch, $antwort); }
-    $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    if (PHP_VERSION_ID < 80000) { curl_close($ch); }
-    if ($antwort === FALSE) { return array(0, null, ''); }
-    return array($code, json_decode($antwort, TRUE), $antwort);
-}
-
-/** Ein POST an die Kamereon-Schnittstelle. Gibt array(httpcode, daten, roh). */
-function rn_post($url, $kamereon_api, $jwt, $json, $name = '')
-{
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_POST, TRUE);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, array(
-        'Content-type: application/vnd.api+json',
-        'apikey: ' . $kamereon_api,
-        'x-gigya-id_token: ' . $jwt,
-    ));
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $json);
-    $antwort = curl_exec($ch);
-    if ($name !== '') { renault_log_api($name, $ch, $antwort); }
-    $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    if (PHP_VERSION_ID < 80000) { curl_close($ch); }
-    if ($antwort === FALSE) { return array(0, null, ''); }
-    return array($code, json_decode($antwort, TRUE), $antwort);
-}
-
-define('RN_BASIS', 'https://api-wired-prod-1-euw1.wrd-aws.com/commerce/v1');
-
-/** Der Pfad zum Fahrzeug in der kca-Welt. */
-function rn_kca($konto, $vin, $rest, $land, $v = 'v1')
-{
-    return RN_BASIS . '/accounts/' . rawurlencode($konto) . '/kamereon/kca/car-adapter/'
-         . $v . '/cars/' . rawurlencode($vin) . '/' . $rest . '?country=' . rawurlencode($land);
-}
-
-/** Der Pfad zum Fahrzeug in der kcm-Welt (neuere Plattformen). */
-function rn_kcm($konto, $vin, $rest, $land)
-{
-    return RN_BASIS . '/accounts/' . rawurlencode($konto) . '/kamereon/kcm/v1/vehicles/'
-         . rawurlencode($vin) . '/' . $rest . '?country=' . rawurlencode($land);
-}
-
-/* ==================================================================
- * Anmeldung - einmal je Tag, gemeinsam fuer alle Fahrzeuge
- * ================================================================== */
-$rn_anm = rn_anmeldung_lesen();          // 0 Datum, 1 JWT, 2 Konto, 3 personId
-$rn_heute = date('md');
-$rn_jetzt = date('YmdHi');
-
-if ($rn_anm[1] === '' || $rn_anm[0] !== $rn_heute) {
-    $rn_ch = curl_init('https://accounts.eu1.gigya.com/accounts.login');
-    curl_setopt($rn_ch, CURLOPT_POST, TRUE);
-    curl_setopt($rn_ch, CURLOPT_RETURNTRANSFER, TRUE);
-    curl_setopt($rn_ch, CURLOPT_CONNECTTIMEOUT, 10);
-    curl_setopt($rn_ch, CURLOPT_TIMEOUT, 30);
-    curl_setopt($rn_ch, CURLOPT_POSTFIELDS, array(
-        'ApiKey'            => $gigya_api,
-        'loginId'           => $rn_cfg['username'],
-        'password'          => $rn_cfg['password'],
-        'include'           => 'data',
-        'sessionExpiration' => 60,
-    ));
-    $rn_r = curl_exec($rn_ch);
-    renault_log_api('Gigya Login (accounts.login)', $rn_ch, $rn_r);
-    if (PHP_VERSION_ID < 80000) { curl_close($rn_ch); }
-    if ($rn_r === FALSE) {
-        renault_log('ERROR', 'Gigya Login: keine Antwort (Zeitueberschreitung oder Netzfehler).');
-        $rn_http_status = 502;    // die Gegenstelle hat abgewiesen
-        echo "LOGIN FAILED\n";
-        return;
-    }
-    $rn_d = json_decode($rn_r, TRUE);
-    if (isset($rn_d['errorCode']) && $rn_d['errorCode'] != 0) {
-        renault_log('ERROR', 'Gigya Login fehlgeschlagen: errorCode=' . $rn_d['errorCode']
-            . ' (' . (isset($rn_d['errorDetails']) ? $rn_d['errorDetails'] : '') . ') - '
-            . 'Benutzername und Passwort pruefen.');
-    }
-    $rn_person = isset($rn_d['data']['personId']) ? $rn_d['data']['personId'] : '';
-    $rn_oauth  = isset($rn_d['sessionInfo']['cookieValue']) ? $rn_d['sessionInfo']['cookieValue'] : '';
-    if ($rn_oauth === '') {
-        renault_log('ERROR', 'Gigya Login: kein Sitzungswert (cookieValue) erhalten - Anmeldung abgebrochen.');
-        $rn_http_status = 502;    // die Gegenstelle hat abgewiesen
-        echo "LOGIN FAILED\n";
-        return;
-    }
-
-    $rn_ch = curl_init('https://accounts.eu1.gigya.com/accounts.getJWT');
-    curl_setopt($rn_ch, CURLOPT_POST, TRUE);
-    curl_setopt($rn_ch, CURLOPT_RETURNTRANSFER, TRUE);
-    curl_setopt($rn_ch, CURLOPT_CONNECTTIMEOUT, 10);
-    curl_setopt($rn_ch, CURLOPT_TIMEOUT, 30);
-    curl_setopt($rn_ch, CURLOPT_POSTFIELDS, array(
-        'login_token' => $rn_oauth,
-        'ApiKey'      => $gigya_api,
-        'fields'      => 'data.personId,data.gigyaDataCenter',
-        'expiration'  => 87000,
-    ));
-    $rn_r = curl_exec($rn_ch);
-    renault_log_api('Gigya JWT (accounts.getJWT)', $rn_ch, $rn_r);
-    if (PHP_VERSION_ID < 80000) { curl_close($rn_ch); }
-    $rn_d = ($rn_r === FALSE) ? null : json_decode($rn_r, TRUE);
-    if (empty($rn_d['id_token'])) {
-        // Einen fehlgeschlagenen Login NICHT bis Mitternacht zwischenspeichern.
-        renault_log('ERROR', 'Gigya JWT: kein id_token erhalten. Antwort: '
-            . substr(preg_replace('/\s+/', ' ', (string) $rn_r), 0, 300));
-        rn_anmeldung_schreiben(array('0000', '', $rn_anm[2], $rn_person));
-        $rn_http_status = 502;    // die Gegenstelle hat abgewiesen
-        echo "LOGIN FAILED\n";
-        return;
-    }
-    renault_log('INFO', 'Gigya JWT Token erfolgreich erhalten.');
-    $rn_anm = array($rn_heute, $rn_d['id_token'], $rn_anm[2], $rn_person);
-    rn_anmeldung_schreiben($rn_anm);
-}
-
-/* ---- Kamereon-Konto, falls noch keines bekannt ist ----
+ * Broker - VOR der Anmeldung (Gruppe 40, F3/E6)
  *
- * Bis 2.0.6 stand die personId nur im Anmeldeblock. War die Kontoabfrage
- * einmal fehlgeschlagen, das JWT aber gueltig, lief die Abfrage fuer den
- * Rest des Tages gegen /persons/?country=DE - also ohne Person. Die
- * personId steht deshalb jetzt mit in der Anmeldedatei. */
-if ($rn_anm[2] === '') {
-    if ($rn_anm[3] === '') {
-        renault_log('ERROR', 'Kein Kamereon-Konto und keine personId bekannt - '
-            . 'die Anmeldung wird beim naechsten Lauf wiederholt.');
-        rn_anmeldung_schreiben(array('0000', '', '', ''));
-        $rn_http_status = 502;
-        echo "NO ACCOUNT\n";
-        return;
-    }
-    list($rn_code, $rn_d) = rn_get(RN_BASIS . '/persons/' . rawurlencode($rn_anm[3])
-        . '?country=' . rawurlencode($rn_cfg['country']),
-        $kamereon_api, $rn_anm[1], 'Kamereon Konto (persons)');
-    $rn_konten = isset($rn_d['accounts']) ? $rn_d['accounts'] : null;
-    if (is_array($rn_konten)) {
-        foreach ($rn_konten as $rn_k) {
-            renault_log('INFO', 'Renault-Konto gefunden: ' . (isset($rn_k['accountId']) ? $rn_k['accountId'] : '?')
-                . ' (Typ: ' . (isset($rn_k['accountType']) ? $rn_k['accountType'] : '?')
-                . ', Status: ' . (isset($rn_k['accountStatus']) ? $rn_k['accountStatus'] : '?') . ')');
-        }
-        // Das MYRENAULT-Konto bevorzugen - manche Nutzer haben ein zweites
-        // (etwa SFDC), das das Fahrzeug nicht kennt und mit 404
-        // "no data for this vin and uid" antwortet.
-        foreach ($rn_konten as $rn_k) {
-            if (isset($rn_k['accountType']) && $rn_k['accountType'] === 'MYRENAULT') {
-                $rn_anm[2] = $rn_k['accountId']; break;
-            }
-        }
-        if ($rn_anm[2] === '' && isset($rn_konten[0]['accountId'])) {
-            $rn_anm[2] = $rn_konten[0]['accountId'];
-        }
-    }
-    if ($rn_anm[2] === '') {
-        renault_log('ERROR', 'Keine Konto-Kennung erhalten (HTTP ' . $rn_code . ').');
-        $rn_http_status = 502;
-        echo "NO ACCOUNT\n";
-        return;
-    }
-    renault_log('INFO', 'Verwende Konto-Kennung: ' . $rn_anm[2]);
-    rn_anmeldung_schreiben($rn_anm);
-}
-
-$rn_konto = $rn_anm[2];
-$rn_jwt   = $rn_anm[1];
-$rn_land  = $rn_cfg['country'];
-
-/* ==================================================================
- * BEFEHLE - vor der Abrufbremse, siehe Kopf dieser Datei
- * ================================================================== */
-$rn_ausgabe = array();
-$rn_befehl_ok = null;
-$rn_abruf_gescheitert = false;   // fuer die Protokollzeile des Endpunkts (Befund C2)
-
-if ($rn_aktion !== '' && $rn_aktion !== 'abruf') {
-    $rn_ziel = rn_fahrzeug($rn_fahrzeugnr, $rn_cfg);
-    if (!$rn_ziel || $rn_ziel['vin'] === '') {
-        renault_log('ERROR', 'Befehl ' . $rn_aktion . ': Fahrzeug ' . $rn_fahrzeugnr . ' ist nicht eingerichtet.');
-        $rn_http_status = 400;
-        echo "UNKNOWN VEHICLE\n";
-        return;
-    }
-    /* Schaltende Befehle nur, wenn die Steuerung eingeschaltet ist.
-     * Ab Werk steht sie aus - ein Plugin, das sofort nach der
-     * Installation die Vorklimatisierung starten kann, waere ein
-     * Vorgabewert, der ungefragt schaltet. */
-    if (rn_befehl_schaltet($rn_aktion) && $rn_cfg['steuerung_ein'] !== 'Y') {
-        renault_log('WARN', 'Befehl ' . $rn_aktion . ' abgewiesen: die Steuerung ist in den '
-            . 'Einstellungen ausgeschaltet (Vorgabe). Wer aus Loxone schalten will, schaltet sie dort ein.');
-        $rn_http_status = 403;
-        echo "STEUERUNG AUS\n";
-        return;
-    }
-
-    $rn_vin = $rn_ziel['vin'];
-    /* Ein unzulaessiger Wert wird abgewiesen und gemeldet, nicht still auf
-     * 21 gebogen. Bis 2.1.5 geschah genau das: wer 35 eintrug - oder wessen
-     * Konfiguration den Schluessel aus einer aelteren Fassung gar nicht
-     * fuehrte -, klimatisierte auf 21 Grad und erfuhr es nie. Das Formular
-     * laesst nur 16 bis 30 zu; hierher kommt ein anderer Wert nur aus einer
-     * von Hand geaenderten Datei. */
-    $rn_temp = (int) $rn_cfg['ac_temp'];
-    if (preg_match('/^[0-9]+$/', (string) $rn_cfg['ac_temp']) !== 1
-        || $rn_temp < 16 || $rn_temp > 30) {
-        renault_log('ERROR', 'Die Zieltemperatur der Vorklimatisierung ist '
-            . 'unzulaessig (ac_temp = "' . $rn_cfg['ac_temp'] . '", erlaubt sind '
-            . '16 bis 30 Grad). Es wurde NICHTS an das Fahrzeug gesendet; bitte '
-            . 'den Wert in den Einstellungen richtigstellen.');
-        $rn_http_status = 409;
-        echo "AC TEMP UNZULAESSIG\n";
-        return;
-    }
-
-    switch ($rn_aktion) {
-        case 'acnow':
-            list($rn_code) = rn_post(rn_kca($rn_konto, $rn_vin, 'actions/hvac-start', $rn_land),
-                $kamereon_api, $rn_jwt,
-                '{"data":{"type":"HvacStart","attributes":{"action":"start","targetTemperature":"' . $rn_temp . '"}}}',
-                'Vorklimatisierung starten (hvac-start)');
-            break;
-        case 'acoff':
-            /* "cancel" ist die Form, die die Renault-Schnittstelle fuer die
-             * meisten Fahrzeuge fuehrt; einzelne (A290, R5, Spring) kennen
-             * stattdessen "stop". Antwortet die erste Form mit einem
-             * Fehlercode, wird die zweite versucht - das kostet einen
-             * zusaetzlichen Aufruf und erspart eine Auswahlliste, die
-             * niemand belegen kann. */
-            list($rn_code) = rn_post(rn_kca($rn_konto, $rn_vin, 'actions/hvac-start', $rn_land),
-                $kamereon_api, $rn_jwt,
-                '{"data":{"type":"HvacStart","attributes":{"action":"cancel"}}}',
-                'Vorklimatisierung beenden (hvac-start cancel)');
-            if ($rn_code >= 400) {
-                list($rn_code) = rn_post(rn_kca($rn_konto, $rn_vin, 'actions/hvac-start', $rn_land),
-                    $kamereon_api, $rn_jwt,
-                    '{"data":{"type":"HvacStart","attributes":{"action":"stop"}}}',
-                    'Vorklimatisierung beenden (hvac-start stop)');
-            }
-            break;
-        case 'chargenow':
-            list($rn_code) = rn_post(rn_kca($rn_konto, $rn_vin, 'actions/charging-start', $rn_land),
-                $kamereon_api, $rn_jwt,
-                '{"data":{"type":"ChargingStart","attributes":{"action":"start"}}}',
-                'Sofort laden (charging-start)');
-            break;
-        case 'chargestop':
-            /* Erst der Weg, den Zoe PH1 und Twingo kennen. Zoe PH2 und
-             * Dacia Spring antworten darauf mit einem Fehler und halten das
-             * Laden ueber kcm/charge/pause-resume an. */
-            list($rn_code) = rn_post(rn_kca($rn_konto, $rn_vin, 'actions/charging-start', $rn_land),
-                $kamereon_api, $rn_jwt,
-                '{"data":{"type":"ChargingStart","attributes":{"action":"stop"}}}',
-                'Laden anhalten (charging-start stop)');
-            if ($rn_code >= 400) {
-                list($rn_code) = rn_post(rn_kcm($rn_konto, $rn_vin, 'charge/pause-resume', $rn_land),
-                    $kamereon_api, $rn_jwt,
-                    '{"data":{"type":"ChargePauseResume","attributes":{"action":"pause"}}}',
-                    'Laden anhalten (charge/pause-resume)');
-            }
-            break;
-        case 'cmon':
-            list($rn_code) = rn_post(rn_kca($rn_konto, $rn_vin, 'actions/charge-mode', $rn_land),
-                $kamereon_api, $rn_jwt,
-                '{"data":{"type":"ChargeMode","attributes":{"action":"schedule_mode"}}}',
-                'Ladeplan aktivieren (charge-mode)');
-            break;
-        case 'cmoff':
-            list($rn_code) = rn_post(rn_kca($rn_konto, $rn_vin, 'actions/charge-mode', $rn_land),
-                $kamereon_api, $rn_jwt,
-                '{"data":{"type":"ChargeMode","attributes":{"action":"always_charging"}}}',
-                'Ladeplan abschalten (charge-mode)');
-            break;
-        default:
-            renault_log('ERROR', 'Unbekannter Befehl: ' . $rn_aktion);
-            $rn_http_status = 400;
-            echo "UNKNOWN ACTION\n";
-            return;
-    }
-    $rn_befehl_ok = ($rn_code > 0 && $rn_code < 400);
-    renault_log($rn_befehl_ok ? 'INFO' : 'ERROR',
-        'Befehl ' . $rn_aktion . ' an ' . $rn_ziel['name'] . ': HTTP ' . $rn_code
-        . ($rn_befehl_ok ? '' : ' - der Befehl wurde NICHT ausgefuehrt.'));
-    $rn_ausgabe[] = strtoupper($rn_aktion) . ';OK=' . ($rn_befehl_ok ? '1' : '0') . ';HTTP=' . $rn_code;
-    /* Bei einem Befehl entscheidet das Ergebnis des BEFEHLS ueber den
-     * HTTP-Code (Befund C2). Bis 2.1.12 setzte ihn allein der Abruf danach:
-     * ein gescheiterter Befehl kam als 200 bei Loxone an, wenn der Abruf
-     * gelang oder die Minutenbremse ihn uebersprang - und ein angenommener
-     * als 502, wenn nur der Abruf danach scheiterte (in WSL gemessen, Faelle
-     * S1 bis S5). */
-    if (!$rn_befehl_ok) { $rn_http_status = 502; }
-}
-
-/* ==================================================================
- * Abruf je Fahrzeug
+ * Bis 2.1.19 entstand die Verbindung erst nach der Anmeldung; bei jedem
+ * Anmeldefehler ging gar nichts hinaus, und Loxone sah weiter "ok = 1" und
+ * ein laufendes Lebenszeichen vom letzten guten Lauf. Ohne Zugangsdaten bzw.
+ * ohne VIN wird weiter NICHTS gesendet (oben ausgestiegen): nicht
+ * eingerichtet ist kein Ausfall.
  * ================================================================== */
 $rn_broker = mqtt_connectiondetails();
 $rn_mqtt = null;
@@ -510,21 +252,11 @@ if (is_array($rn_broker) && !empty($rn_broker['brokerhost'])) {
  * Ein Thema veroeffentlichen - retained oder nicht, je Thema.
  *
  * Bis 2.1.5 stand hier fest publish(…, 0, 1): alle 29 Themen gingen mit
- * gesetztem Retain-Merker hinaus, auch der Zeitstempel des Plugins. Ein
- * zurueckbehaltenes Lebenszeichen zeigt einem neu verbindenden Teilnehmer
- * einen alten Wert als frisch - es meldet also immer "lebt". Welches Thema
- * retained geht, entscheidet rn_thema_retained() in rn_lib.php; dort steht
- * es an EINER Stelle, und die Themen-Tabelle im Reiter MQTT zeigt es (seit
- * 2.1.9 als eigene Spalte - bis dahin stand dort das Gegenteil).
- *
- * Den Merker selbst liefert rn_retain_merker(): ein LEERER Wert geht nie
- * retained hinaus, denn eine leere Nutzlast mit Retain loescht das Thema im
- * Broker. Bis 2.1.8 fehlte diese Ausnahme.
- *
- * Gesendet wird seit 2.1.11 ueber rn_mqtt_senden() in rn_lib.php - dieselbe
- * Stelle wie in history.php. Dort geht vor einem gueltigen Wert, wenn noetig,
- * die leere retain-Nutzlast hinaus, die den Altwert eines frueher
- * zurueckbehaltenen Themas loescht (rn_mqtt_altlast()).
+ * gesetztem Retain-Merker hinaus, auch der Zeitstempel des Plugins. Welches
+ * Thema retained geht, entscheidet rn_thema_retained() in rn_lib.php; die
+ * Nutzlast eines Themas ohne Wert rn_mqtt_nutzlast() (seit 2.1.20 mit dem
+ * Fehlwert aus rn_fehlwert()). Gesendet wird ueber rn_mqtt_senden() - dieselbe
+ * Stelle wie in history.php und im Minutentakt.
  */
 function rn_sende($mqtt, $name, $thema, $wert)
 {
@@ -534,16 +266,8 @@ function rn_sende($mqtt, $name, $thema, $wert)
 /**
  * Das Lebenszeichen - bei JEDEM Durchgang, nie retained.
  *
- * Bis 2.1.5 ging bei einem uebersprungenen Lauf gar nichts hinaus, auch
- * kein "ok": das continue der Abrufbremse stand vor dem ganzen MQTT-Block.
- * Bei der Werkseinstellung (Takt 5 Minuten, Cron alle 3) ist das jeder
- * zweite Lauf - ein stillstehender Cron war am Broker von einem regulaeren
- * Sprungzweig nicht zu unterscheiden.
- *
- * $ts sind Unix-Sekunden, nicht HHMM: aus HHMM laesst sich kein Alter
- * rechnen, und um Mitternacht faellt der Wert von 2359 auf 0005. Der
- * Zaehler laeuft 0…999 um; -1 gibt es nicht, weil er bei jedem Lauf
- * fortgeschrieben wird.
+ * $ts sind Unix-Sekunden, nicht HHMM. Der Zaehler laeuft 0…999 um; -1 gibt
+ * es nicht, weil er bei jedem Lauf fortgeschrieben wird.
  */
 function rn_lebenszeichen($mqtt, $name, $datadir)
 {
@@ -555,6 +279,71 @@ function rn_lebenszeichen($mqtt, $name, $datadir)
     rn_sende($mqtt, $name, 'status/zaehler', $z);
 }
 
+/**
+ * Bei einem Anmeldefehler im Cron (2.1, F3/E6): je Fahrzeug mit VIN ok = 0 und
+ * das Lebenszeichen - der Lauf hat stattgefunden, der Abruf ist gescheitert.
+ * Ein Befehl ueber Endpunkt oder Bruecke sendet das nicht (er hat keinen Abruf
+ * gemacht).
+ */
+function rn_ausfall_senden($mqtt, array $autos, $grund)
+{
+    if ($mqtt === null) { return; }
+    foreach ($autos as $f) {
+        if ((string) $f['vin'] === '') { continue; }
+        rn_sende($mqtt, $f['name'], 'ok', 0);
+        rn_lebenszeichen($mqtt, $f['name'], dirname($f['session']));
+    }
+    renault_log('INFO', 'Anmeldung gescheitert (' . $grund . ') - je Fahrzeug ok = 0 und das Lebenszeichen gesendet.');
+}
+
+/* ==================================================================
+ * BEFEHLE - vor der Abrufbremse, siehe Kopf dieser Datei
+ *
+ * Seit 2.1.20 ueber rn_befehl_annehmen() (rn_lib.php) - dieselbe Funktion wie
+ * Endpunkt, Befehlsbruecke und Vorklimatisierung, mit X-7 fuer alle Wege. Der
+ * Endpunkt ruft diese Datei nur noch fuer den Abruf; ein Befehl kommt hier nur
+ * noch ueber die Kommandozeile an. Die Antwortzeilen sind die bisherigen.
+ * ================================================================== */
+$rn_ausgabe = array();
+$rn_befehl_ok = null;
+$rn_abruf_gescheitert = false;   // fuer die Protokollzeile des Endpunkts (Befund C2)
+
+if ($rn_aktion !== '' && $rn_aktion !== 'abruf') {
+    $rn_be = rn_befehl_annehmen($rn_aktion, $rn_fahrzeugnr, 'http', $rn_cfg);
+    if (!in_array($rn_be[1], array('OK', 'UNVERAENDERT'), true) && strpos($rn_be[1], 'RENAULT_') !== 0) {
+        $rn_http_status = (int) $rn_be[2];
+        echo $rn_be[3] . "\n";
+        if ($rn_mqtt !== null) { $rn_mqtt->close(); }
+        return;
+    }
+    $rn_befehl_ok = ((int) $rn_be[0] === 1);
+    $rn_ausgabe[] = $rn_be[3];
+    if (!$rn_befehl_ok) { $rn_http_status = 502; }
+}
+
+/* ==================================================================
+ * Anmeldung - einmal je Tag, gemeinsam fuer alle Fahrzeuge (rn_anmelden())
+ * ================================================================== */
+$rn_jetzt = date('YmdHi');
+$rn_am = rn_anmelden($rn_cfg);
+if (!$rn_am[0]) {
+    if ($rn_ist_cron) {
+        rn_ausfall_senden($rn_mqtt, $rn_mit_vin, $rn_am[3]);
+    }
+    if ($rn_mqtt !== null) { $rn_mqtt->close(); }
+    if ($rn_befehl_ok === null) { $rn_http_status = 502; }
+    $rn_ausgabe[] = $rn_am[4];
+    echo implode("\n", $rn_ausgabe) . "\n";
+    return;
+}
+$rn_anm   = $rn_am[6];
+$rn_konto = $rn_am[1];
+$rn_jwt   = $rn_am[2];
+$rn_land  = $rn_cfg['country'];
+
+/* ==================================================================
+ * Abruf je Fahrzeug
+ * ================================================================== */
 $rn_irgendwas_ok = false;
 
 foreach ($rn_mit_vin as $rn_f) {
@@ -583,16 +372,20 @@ foreach ($rn_mit_vin as $rn_f) {
      * 21 frei (bis 2.0.6 Schwelle, jetzt in der Konfiguration)
      * 22 Aussentemperatur Wetterdienst  23 Wetterlage  24 Lademodus
      * 25 Zeitpunkt des letzten ERFOLGREICHEN Abrufs  26 Modellkennung
-     * 27 Innentemperatur  28 Aussentemperatur des Fahrzeugs */
+     * 27 Innentemperatur  28 Aussentemperatur des Fahrzeugs
+     * seit 2.1.20 (Gruppe 40): 29 GPS-Zeit als Unix-Sekunden (3.1)
+     * 30 Zeitstempel der Fahrzeugantwort als Unix-Sekunden (E-E1 B, 3.2)
+     * 31 HvAcStatus des letzten Abrufs (Vorklimatisierung, Versuch 2)
+     * Aeltere Dateien haben die Felder leer (array_pad). */
     $rn_roh = @file_get_contents($rn_f['session']);
     if ($rn_roh === FALSE || $rn_roh === '') {
-        $rn_s = array_fill(0, 29, '');
+        $rn_s = array_fill(0, 32, '');
         $rn_s[4] = '202001010000';
         $rn_s[5] = 'N';
         $rn_s[6] = 'N';
         $rn_s[25] = '';
     } else {
-        $rn_s = array_pad(explode('|', $rn_roh), 29, '');
+        $rn_s = array_pad(explode('|', $rn_roh), 32, '');
     }
 
     /* ---- Abrufbremse: nur im Cron, und nur fuer den Datenabruf ---- */
@@ -646,8 +439,14 @@ foreach ($rn_mit_vin as $rn_f) {
          * Passwortwechsel bei Renault). Bis 2.0.6 wurde erst um Mitternacht
          * neu angemeldet - das Plugin stand also bis zum Tageswechsel. */
         if ($rn_code === 401 || $rn_code === 403) {
-            renault_log('WARN', 'Die Anmeldung wird verworfen und beim naechsten Lauf erneuert.');
-            rn_anmeldung_schreiben(array('0000', '', $rn_anm[2], $rn_anm[3]));
+            /* V1 (Gruppe 40, T2-2/F1): das Konto wird neu ermittelt - aber
+             * hoechstens einmal je Stunde (RN_KONTO_NEU_S), kein persons-Abruf
+             * je 3-min-Lauf. Bis 2.1.19 blieb die Konto-Kennung fuer immer. */
+            $rn_anm_alt = rn_anmeldung_lesen();
+            list($rn_anm_neu, $rn_leer) = rn_anmeldung_nach_abweisung($rn_anm_alt, time(), (int) $rn_anm_alt[4]);
+            renault_log('WARN', 'Die Anmeldung wird verworfen und beim naechsten Lauf erneuert'
+                . ($rn_anm_neu[2] === '' ? '; die Konto-Kennung wird neu ermittelt.' : '.'));
+            rn_anmeldung_schreiben($rn_anm_neu);
         }
         // Diagnose bei 404 "no data for this vin and uid".
         if (strpos($rn_rohantwort, 'notFound') !== FALSE) {
@@ -680,6 +479,7 @@ foreach ($rn_mit_vin as $rn_f) {
             timezone_open('UTC'));
         if ($rn_zeit === false) { $rn_zeit = date_create('now', timezone_open('UTC')); }
         $rn_utc = date_timestamp_get($rn_zeit);
+        $rn_s[30] = (string) $rn_utc;          // Fahrzeugzeit (E-E1 B)
         $rn_wetter_dt = date_format($rn_zeit, 'U');
         $rn_zeit = date_timezone_set($rn_zeit, timezone_open('Europe/Berlin'));
         $rn_s[8]  = date_format($rn_zeit, 'd.m.Y');
@@ -736,6 +536,7 @@ foreach ($rn_mit_vin as $rn_f) {
                         ? date_create_from_format(DATE_ISO8601, $rn_ga['lastUpdateTime'], timezone_open('UTC'))
                         : false;
                     if ($rn_gz !== false) {
+                        $rn_s[29] = (string) date_timestamp_get($rn_gz);   // GPS-Zeit (3.1)
                         $rn_gz = date_timezone_set($rn_gz, timezone_open('Europe/Berlin'));
                         $rn_s[19] = date_format($rn_gz, 'd.m.Y');
                         $rn_s[20] = date_format($rn_gz, 'H:i');
@@ -776,16 +577,12 @@ foreach ($rn_mit_vin as $rn_f) {
              * Fahrzeug keine eigene Aussentemperatur liefert - siehe unten. */
             if ($rn_ph !== '1' && $rn_cfg['weather_api_key'] !== ''
                 && $rn_s[17] !== '' && $rn_s[18] !== '') {
-                $rn_ch = curl_init('https://api.openweathermap.org/data/2.5/onecall/timemachine?lat='
+                /* Ueber die Nahtstelle (seit 2.1.20) - dieselben Zeitschranken. */
+                list($rn_wc, $rn_wr) = rn_http_senden('GET', 'https://api.openweathermap.org/data/2.5/onecall/timemachine?lat='
                     . rawurlencode($rn_s[17]) . '&lon=' . rawurlencode($rn_s[18])
                     . '&dt=' . rawurlencode($rn_wetter_dt) . '&units=metric&appid='
-                    . rawurlencode($rn_cfg['weather_api_key']));
-                curl_setopt($rn_ch, CURLOPT_RETURNTRANSFER, TRUE);
-                curl_setopt($rn_ch, CURLOPT_CONNECTTIMEOUT, 10);
-                curl_setopt($rn_ch, CURLOPT_TIMEOUT, 30);
-                $rn_wr = curl_exec($rn_ch);
-                $rn_wc = (int) curl_getinfo($rn_ch, CURLINFO_HTTP_CODE);
-                if (PHP_VERSION_ID < 80000) { curl_close($rn_ch); }
+                    . rawurlencode($rn_cfg['weather_api_key']), array(), null, rn_http_zeitschranke());
+                $rn_wc = (int) $rn_wc;
                 if ($rn_wr === FALSE || $rn_wc >= 400) {
                     renault_log('WARN', 'Wetterdienst antwortete mit HTTP ' . $rn_wc
                         . '. Hinweis: die hier benutzte Fassung 2.5 von OpenWeatherMap ist '
@@ -826,7 +623,7 @@ foreach ($rn_mit_vin as $rn_f) {
             $kamereon_api, $rn_jwt);
         if (isset($rn_dd['data']['attributes'])) {
             $rn_ha = $rn_dd['data']['attributes'];
-            if (isset($rn_ha['hvacStatus'])) { $rn_hvac = $rn_ha['hvacStatus']; }
+            if (isset($rn_ha['hvacStatus'])) { $rn_hvac = $rn_ha['hvacStatus']; $rn_s[31] = (string) $rn_hvac; }
             if (isset($rn_ha['internalTemperature'])) { $rn_s[27] = $rn_ha['internalTemperature']; }
             if (isset($rn_ha['externalTemperature'])) { $rn_s[28] = $rn_ha['externalTemperature']; }
         } elseif (rn_endpunkt_unbekannt($rn_c)) {
@@ -869,7 +666,10 @@ foreach ($rn_mit_vin as $rn_f) {
 
     /* ---- Meldungen ---- */
     $rn_schwelle = (int) $rn_cfg['bl_schwelle'];
-    if ($rn_erfolg && ($rn_cfg['mail_bl'] === 'Y' || $rn_cfg['cmon_bl'] === 'Y' || $rn_cfg['exec_bl'] !== '')) {
+    /* signal_bl gehoert in die Bedingung (3.3): sonst wuerde die Meldung bei nur
+     * eingeschaltetem SignalBot gar nicht berechnet. */
+    if ($rn_erfolg && ($rn_cfg['mail_bl'] === 'Y' || $rn_cfg['cmon_bl'] === 'Y' || $rn_cfg['exec_bl'] !== ''
+                       || $rn_cfg['signal_bl'] === 'Y')) {
         if ($rn_s[12] !== '' && $rn_s[12] >= $rn_schwelle && $rn_s[10] == 1 && $rn_s[5] !== 'Y') {
             $rn_rest = ($rn_s[15] !== '') ? $rn_s[15] : rn_t('MELDUNG.WENIGE');
             $rn_text = rn_t('MELDUNG.AKKUSTAND_ERREICHT') . ' (' . $rn_name . ')' . "\n"
@@ -886,7 +686,11 @@ foreach ($rn_mit_vin as $rn_f) {
                 $rn_s[5] = 'N';
                 rn_melden_stuendlich('ERROR', $rn_sess_fehl);
             } else {
-                if ($rn_cfg['mail_bl'] === 'Y') { @mail($rn_cfg['username'], $rn_name, $rn_text); }
+                /* V7-i (F4): das Ergebnis von mail() zaehlt - bis 2.1.19 hiess es
+                 * "Meldung ausgeloest", auch wenn sendmail fehlte. */
+                $rn_wege = array('mail' => null, 'signal' => null, 'befehl' => null);
+                if ($rn_cfg['mail_bl'] === 'Y') { $rn_wege['mail'] = (bool) @mail($rn_cfg['username'], $rn_name, $rn_text); }
+                if ($rn_cfg['signal_bl'] === 'Y') { $rn_wege['signal'] = rn_signal_senden($rn_mqtt, $rn_cfg, $rn_text); }
                 if ($rn_cfg['cmon_bl'] === 'Y') {
                     list($rn_c) = rn_post(rn_kca($rn_konto, $rn_vin, 'actions/charge-mode', $rn_land),
                         $kamereon_api, $rn_jwt,
@@ -896,14 +700,17 @@ foreach ($rn_mit_vin as $rn_f) {
                 /* Gepruefter Aufruf, siehe rn_hook_ausfuehren(): der Befehl ist
                  * eine bewusste Eingabe des Betreibers - das heisst aber nicht,
                  * dass ein Semikolon darin harmlos waere. */
-                rn_hook_ausfuehren($rn_cfg['exec_bl'], $rn_text, 'exec_bl');
-                renault_log('INFO', 'Akkustand ' . $rn_schwelle . ' % erreicht (' . $rn_name . ') - Meldung ausgeloest.');
+                if (trim((string) $rn_cfg['exec_bl']) !== '') {
+                    $rn_wege['befehl'] = rn_hook_ausfuehren($rn_cfg['exec_bl'], $rn_text, 'exec_bl');
+                }
+                list($rn_ws, $rn_wt) = rn_meldewege_text($rn_wege);
+                renault_log($rn_ws, 'Akkustand ' . $rn_schwelle . ' % erreicht (' . $rn_name . ') - ' . $rn_wt . '.');
             }
         } elseif ($rn_s[5] === 'Y' && $rn_s[10] != 1) {
             $rn_s[5] = 'N';
         }
     }
-    if ($rn_erfolg && ($rn_cfg['mail_csf'] === 'Y' || $rn_cfg['exec_csf'] !== '')) {
+    if ($rn_erfolg && ($rn_cfg['mail_csf'] === 'Y' || $rn_cfg['exec_csf'] !== '' || $rn_cfg['signal_csf'] === 'Y')) {
         if ($rn_s[6] === 'Y' && $rn_s[10] != 1) {
             $rn_text = rn_t('MELDUNG.LADEN_BEENDET') . ' (' . $rn_name . ')' . "\n"
                      . rn_t('MELDUNG.AKKUSTAND') . ': ' . $rn_s[12] . ' %' . "\n"
@@ -915,10 +722,15 @@ foreach ($rn_mit_vin as $rn_f) {
                 $rn_s[6] = 'Y';
                 rn_melden_stuendlich('ERROR', $rn_sess_fehl);
             } else {
-                if ($rn_cfg['mail_csf'] === 'Y') { @mail($rn_cfg['username'], $rn_name, $rn_text); }
+                $rn_wege = array('mail' => null, 'signal' => null, 'befehl' => null);
+                if ($rn_cfg['mail_csf'] === 'Y') { $rn_wege['mail'] = (bool) @mail($rn_cfg['username'], $rn_name, $rn_text); }
+                if ($rn_cfg['signal_csf'] === 'Y') { $rn_wege['signal'] = rn_signal_senden($rn_mqtt, $rn_cfg, $rn_text); }
                 // Bis 1.4 stand hier $exec_bl, obwohl die Bedingung $exec_csf prueft.
-                rn_hook_ausfuehren($rn_cfg['exec_csf'], $rn_text, 'exec_csf');
-                renault_log('INFO', 'Ladung beendet (' . $rn_name . ') - Meldung ausgeloest.');
+                if (trim((string) $rn_cfg['exec_csf']) !== '') {
+                    $rn_wege['befehl'] = rn_hook_ausfuehren($rn_cfg['exec_csf'], $rn_text, 'exec_csf');
+                }
+                list($rn_ws, $rn_wt) = rn_meldewege_text($rn_wege);
+                renault_log($rn_ws, 'Ladung beendet (' . $rn_name . ') - ' . $rn_wt . '.');
             }
         }
         $rn_s[6] = ($rn_s[10] == 1) ? 'Y' : 'N';
@@ -947,15 +759,26 @@ foreach ($rn_mit_vin as $rn_f) {
                 . 'GPS Latitude;GPS Longitude;GPS date;GPS time;Outside temperature;'
                 . 'Weather condition;Charging schedule' . "\n");
         }
-        @file_put_contents($rn_csv, implode(';', array(
+        /* V3 (Gruppe 40, T2-4): eine Zeile nur, wenn sich der Stand des
+         * Fahrzeugs aendert (Zeitstempel, Kilometer, Ladestand, Reichweite,
+         * Kabel, Ladestatus). Bis 2.1.19 entstand bei jedem gelungenen Abruf
+         * eine - bis 720 je Tag mit denselben Werten. Gelesen werden nur die
+         * letzten 4096 Byte (rn_csv_letzte_zeile()). */
+        $rn_zeile = array(
             $rn_s[8], $rn_s[9], $rn_s[7], $rn_s[12], $rn_s[13], $rn_s[14], $rn_s[11], $rn_s[10],
             $rn_s[16], $rn_s[15], $rn_s[17], $rn_s[18], $rn_s[19], $rn_s[20],
             ($rn_s[28] !== '' ? $rn_s[28] : $rn_s[22]), $rn_s[23], $rn_s[24],
-        )) . "\n", FILE_APPEND);
+        );
+        if (rn_csv_neu(rn_csv_letzte_zeile($rn_csv), $rn_zeile)) {
+            @file_put_contents($rn_csv, implode(';', $rn_zeile) . "\n", FILE_APPEND);
+        }
     }
 
     /* ---- ABRP ---- */
-    if ($rn_erfolg && $rn_cfg['abrp_token'] !== '' && $rn_cfg['abrp_model'] !== '') {
+    /* V7-d (T2-6): ABRP gilt nur fuer Fahrzeug 1 - es gibt EIN Token. Bis
+     * 2.1.19 ging jeder Lauf mit dem Stand jedes Fahrzeugs an dasselbe Token,
+     * und ABRP sah zwei Autos abwechselnd. */
+    if ($rn_erfolg && (int) $rn_f['nr'] === 1 && $rn_cfg['abrp_token'] !== '' && $rn_cfg['abrp_model'] !== '') {
         $rn_tlm = urlencode(json_encode(array(
             'car_model'   => $rn_cfg['abrp_model'],
             'utc'         => $rn_utc,
@@ -963,14 +786,9 @@ foreach ($rn_mit_vin as $rn_f) {
             'odometer'    => $rn_s[7] === '' ? 0 : (float) $rn_s[7],
             'is_charging' => ($rn_s[10] == 1) ? 1 : 0,
         )));
-        $rn_ch = curl_init('https://api.iternio.com/1/tlm/send?api_key=fd99255b-91a0-45cd-9df5-d6baa8e50ef8&token='
-            . rawurlencode($rn_cfg['abrp_token']) . '&tlm=' . $rn_tlm);
-        curl_setopt($rn_ch, CURLOPT_RETURNTRANSFER, TRUE);
-        curl_setopt($rn_ch, CURLOPT_CONNECTTIMEOUT, 10);
-        curl_setopt($rn_ch, CURLOPT_TIMEOUT, 30);
-        $rn_ar = curl_exec($rn_ch);
-        $rn_ac = (int) curl_getinfo($rn_ch, CURLINFO_HTTP_CODE);
-        if (PHP_VERSION_ID < 80000) { curl_close($rn_ch); }
+        list($rn_ac, $rn_ar) = rn_http_senden('GET', 'https://api.iternio.com/1/tlm/send?api_key=fd99255b-91a0-45cd-9df5-d6baa8e50ef8&token='
+            . rawurlencode($rn_cfg['abrp_token']) . '&tlm=' . $rn_tlm, array(), null, rn_http_zeitschranke());
+        $rn_ac = (int) $rn_ac;
         if ($rn_ar === FALSE || $rn_ac >= 400) {
             renault_log('WARN', 'ABRP antwortete mit HTTP ' . $rn_ac . ' - Telemetrie nicht uebernommen.');
         }
@@ -1000,6 +818,18 @@ foreach ($rn_mit_vin as $rn_f) {
         $rn_s[25] = $rn_jetzt;
         $rn_irgendwas_ok = true;
 
+        /* 3.1 Heimzone (E-E1 B) und E-E2 Ladekosten. Die Heimkoordinaten gehen
+         * nie ins Protokoll, nie an MQTT. */
+        list($rn_zh, $rn_ent) = rn_zuhause($rn_cfg, $rn_s[17], $rn_s[18], $rn_s[29], $rn_s[30], $rn_ph);
+        $rn_ladung = rn_ladung_fortschreiben($rn_cfg, (int) $rn_f['nr'], $rn_s[10] == 1, (int) $rn_s[30],
+            $rn_s[12], $rn_ph !== '1' ? $rn_s[13] : null, $rn_zh);
+        if (is_array($rn_ladung)) {
+            renault_log('INFO', 'Ladung beendet (' . $rn_name . '): ' . ($rn_ladung['kwh'] >= 0
+                ? round($rn_ladung['kwh'], 2) . ' kWh in den Akku' : 'Energie nicht bestimmbar') . ', Kosten '
+                . ($rn_ladung['kosten_eur'] >= 0 ? number_format($rn_ladung['kosten_eur'], 2, ',', '') . ' EUR'
+                   : 'ohne Aussage') . ' (' . $rn_ladung['kosten_grund'] . ').');
+        }
+
         rn_sende($rn_mqtt, $rn_name, 'BattSOC',        $rn_s[12]);
         rn_sende($rn_mqtt, $rn_name, 'Range',          $rn_s[14]);
         rn_sende($rn_mqtt, $rn_name, 'ChargingStatus', $rn_s[10]);
@@ -1019,6 +849,14 @@ foreach ($rn_mit_vin as $rn_f) {
                 // Text und Zahl gemeinsam: unbekannt heisst "-", nicht der alte Stand.
                 rn_sende($rn_mqtt, $rn_name, 'HvAcStatusBin', '-');
             }
+        }
+        rn_sende($rn_mqtt, $rn_name, 'Zuhause',    $rn_zh);
+        rn_sende($rn_mqtt, $rn_name, 'Entfernung', $rn_ent);
+        rn_sende($rn_mqtt, $rn_name, 'Vorklima',   rn_vorklima_feld($rn_cfg, (int) $rn_f['nr']));
+        if (is_array($rn_ladung)) {
+            rn_sende($rn_mqtt, $rn_name, 'LadungKosten',  $rn_ladung['kosten_eur']);
+            rn_sende($rn_mqtt, $rn_name, 'LadungEnergie', $rn_ladung['kwh']);
+            rn_sende($rn_mqtt, $rn_name, 'LadungPreis',   $rn_ladung['preis_ct']);
         }
         rn_sende($rn_mqtt, $rn_name, 'InTemp',  $rn_s[27]);
         // Aussentemperatur: die des Fahrzeugs hat Vorrang vor der des

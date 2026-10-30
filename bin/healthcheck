@@ -1,0 +1,68 @@
+#!/usr/bin/env php
+<?php
+/**
+ * Renault NG - Anschluss an den LoxBerry-Healthcheck (seit 2.1.20, Gruppe 40, X5)
+ *
+ * sbin/healthcheck.pl ruft eine ausfuehrbare Datei bin/healthcheck des Plugins auf - einmal mit "title",
+ * einmal mit "check" (Regeln/03 :73-78, Regeln/04 :809). Beide Antworten sind JSON:
+ *   title -> {"desc":"Renault NG"}
+ *   check -> {"desc", "status", "result", "logfile"}; Status 3 Fehler, 4 Warnung, 5 in Ordnung, 6 Hinweis.
+ * Bis 2.1.19 gab es die Datei nicht, und healthcheck.pl uebersprang das Plugin.
+ *
+ * NUR LESEND: kein Netz, kein Broker, keine Anmeldung bei Renault, kein Protokoll, keine Datei. Geurteilt
+ * wird ueber das ALTER (Lebenszeichen, letzter Erfolg je Fahrzeug), nie ueber einen einzelnen Abruf
+ * (rn_gesund_urteil() in rn_lib.php):
+ *   - Zugangsdaten leer -> 6 "nicht eingerichtet" (eine Neuinstallation ist kein Fehler);
+ *   - config.php nicht 0600 -> 4; Lebenszeichen (data/plugins/<ordner>/zaehler) aelter als 10 min -> 3;
+ *   - letzter Erfolg aelter als 3 x Takt -> 4, aelter als 1 h -> 3;
+ *   - Gateway V2: Haken fehlen -> 4 mit Namen (Gateway V1: keine Aussage);
+ *   - Befehle ueber MQTT an, aber die Bruecke steht -> 4.
+ * Aufruf wie LoxBerry (Regeln/02): direkt, als loxberry, Eingabe aus /dev/null. Der Installer setzt bin/ 755.
+ */
+
+error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE);
+ini_set('display_errors', '0');
+
+$rn_was = isset($argv[1]) ? strtolower((string) $argv[1]) : 'check';
+if ($rn_was === 'title') {
+    echo json_encode(array('desc' => 'Renault NG')) . "\n";
+    exit(0);
+}
+
+/* Die Bibliothek: liegt diese Datei unter .../bin/plugins/<ordner>, ist sie installiert, sonst im Archiv. */
+if (basename(dirname(__DIR__)) === 'plugins') {
+    $rn_lib = dirname(dirname(dirname(__DIR__))) . '/webfrontend/htmlauth/plugins/' . basename(__DIR__) . '/rn_lib.php';
+} else {
+    $rn_lib = dirname(__DIR__) . '/webfrontend/htmlauth/rn_lib.php';
+}
+if (!is_file($rn_lib)) {
+    echo json_encode(array('desc' => 'Renault NG', 'status' => 3,
+        'result' => 'rn_lib.php nicht gefunden - das Plugin ist unvollstaendig installiert.')) . "\n";
+    exit(0);
+}
+require_once $rn_lib;
+
+$rn_p = rn_paths(false);
+if ($rn_p['home'] === '') {
+    echo json_encode(array('desc' => 'Renault NG', 'status' => 3,
+        'result' => 'Kein LoxBerry-Wurzelverzeichnis gefunden (ausgepacktes Archiv oder Pruefordner) - nichts geprueft.')) . "\n";
+    exit(0);
+}
+// Die Sprache des LoxBerry, wenn der Aufrufer keine setzt (nur gelesen).
+if (!getenv('LBLANG')) {
+    $rn_gen = json_decode((string) @file_get_contents($rn_p['home'] . '/config/system/general.json'), true);
+    if (isset($rn_gen['Base']['Lang']) && is_string($rn_gen['Base']['Lang'])) {
+        putenv('LBLANG=' . $rn_gen['Base']['Lang']);
+    }
+}
+
+$rn_cfg = rn_config_read(false);
+list($rn_status, $rn_text) = rn_gesund_urteil(rn_gesund_fakten($rn_cfg));
+
+echo json_encode(array(
+    'desc' => 'Renault NG',
+    'status' => (int) $rn_status,
+    'result' => (string) $rn_text,
+    'logfile' => $rn_p['log'],
+), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE) . "\n";
+exit(0);

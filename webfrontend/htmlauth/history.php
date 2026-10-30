@@ -54,7 +54,7 @@ if ($rn_ohne !== '') {
 }
 
 require_once __DIR__ . '/logger.php';
-require 'api-keys.php';
+list($gigya_api, $kamereon_api) = rn_api_schluessel();   // api-keys.php (seit 2.1.20 ueber die Bibliothek)
 
 rn_umzug();
 session_cache_limiter('nocache');
@@ -133,18 +133,9 @@ foreach (rn_fahrzeuge($rn_cfg) as $rn_f) {
             . rawurlencode($rn_f['vin']) . '/charges?country=' . rawurlencode($rn_land)
             . '&start=' . $rn_von . '&end=' . $rn_bis;
 
-    $rn_ch = curl_init($rn_url);
-    curl_setopt($rn_ch, CURLOPT_RETURNTRANSFER, TRUE);
-    curl_setopt($rn_ch, CURLOPT_CONNECTTIMEOUT, 10);
-    curl_setopt($rn_ch, CURLOPT_TIMEOUT, 30);
-    curl_setopt($rn_ch, CURLOPT_HTTPHEADER, array(
-        'apikey: ' . $kamereon_api,
-        'x-gigya-id_token: ' . $rn_jwt,
-    ));
-    $rn_r = curl_exec($rn_ch);
-    renault_log_api('Ladehistorie ' . $rn_name . ' (charges)', $rn_ch, $rn_r);
-    $rn_code = (int) curl_getinfo($rn_ch, CURLINFO_HTTP_CODE);
-    if (PHP_VERSION_ID < 80000) { curl_close($rn_ch); }
+    /* Ueber die Nahtstelle rn_http_senden() (seit 2.1.20, Bauvorschrift 1.0). */
+    list($rn_code, , $rn_r) = rn_get($rn_url, $kamereon_api, $rn_jwt, 'Ladehistorie ' . $rn_name . ' (charges)');
+    if ((int) $rn_code === 0 && (string) $rn_r === '') { $rn_r = false; }
 
     if ($rn_r === FALSE) {
         renault_log('ERROR', 'Ladehistorie ' . $rn_name . ': keine Antwort (Zeitueberschreitung oder Netzfehler).');
@@ -159,9 +150,17 @@ foreach (rn_fahrzeuge($rn_cfg) as $rn_f) {
     if (!$rn_liste) {
         /* Nicht jedes Fahrzeug kennt diesen Endpunkt - fuer Clio V, Espace VI
          * und Duster III ist er nicht belegt. Deshalb eine Auskunft, keine
-         * Fehlermeldung. */
-        renault_log('INFO', 'Ladehistorie ' . $rn_name . ': keine Ladevorgaenge im Zeitraum '
-            . $rn_von . ' bis ' . $rn_bis . ' (HTTP ' . $rn_code . ').');
+         * Fehlermeldung - aber nur bei HTTP 2xx oder einem nachweislich
+         * unbekannten Endpunkt (V7-e, T2-3). Bis 2.1.19 stand auch ein 500 oder
+         * 502 als INFO "keine Ladevorgaenge" da; jetzt eine WARN-Zeile mit Code,
+         * hoechstens einmal je Stunde (rn_history_stufe()). */
+        if (rn_history_stufe($rn_code, false) === 'INFO') {
+            renault_log('INFO', 'Ladehistorie ' . $rn_name . ': keine Ladevorgaenge im Zeitraum '
+                . $rn_von . ' bis ' . $rn_bis . ' (HTTP ' . $rn_code . ').');
+        } else {
+            rn_melden_stuendlich('WARN', 'Ladehistorie ' . $rn_name . ': Renault antwortete mit HTTP '
+                . $rn_code . ' - die Ladevorgaenge liessen sich nicht holen.');
+        }
         echo $rn_name . ";OK=0;N=0\n";
         continue;
     }

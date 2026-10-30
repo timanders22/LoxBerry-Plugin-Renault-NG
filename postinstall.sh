@@ -77,11 +77,18 @@ echo "<INFO> Plugin BIN folder is: $PBIN"
 # konnte.
 PDIR="${PDIR:-renault_ng}"
 BASE="${5:-$LBHOMEDIR}"
-if [ -z "$BASE" ] || [ ! -d "$BASE/config/plugins" ] || [ ! -d "$BASE/data/plugins" ]; then
+# V7-g (Gruppe 40, T1-2): Wurzel wie preinstall.sh - auch config/system/general.json,
+# und der Ordnername ohne Pfadtrenner. Bis 2.1.19 genuegten config/plugins und
+# data/plugins; in einem fremden Baum wurde dort beiseitegelegt.
+if [ -z "$BASE" ] || [ ! -d "$BASE/config/plugins" ] || [ ! -d "$BASE/data/plugins" ] \
+   || [ ! -f "$BASE/config/system/general.json" ]; then
     echo "<WARNING> Der LoxBerry-Ordner liess sich nicht bestimmen - liegengebliebene"
     echo "<INFO> Zweitschriften einer frueheren Installation wurden nicht geprueft."
     exit 1
 fi
+case "$PDIR" in
+    ''|.|..|*/*|*..*) echo "<WARNING> Unzulaessiger Ordnername '$PDIR' - nichts beiseitegelegt."; exit 1 ;;
+esac
 rc=0
 MARKE="$BASE/data/plugins/$PDIR.upgrade_laeuft"
 if [ -f "$MARKE" ]; then
@@ -102,11 +109,13 @@ else
         fi
     done
     if [ -n "$rn_beiseite" ]; then
+        # V7-h (Gruppe 40, T1-5): gelungenes Beiseitelegen ist eine Warnung, kein
+        # Fehler - rc 0. rc 1 nur, wenn mv scheitert (oben). Bis 2.1.19 endete jede
+        # Neuinstallation ueber eine liegengebliebene Zweitschrift mit rc 1.
         echo "<WARNING> Neuinstallation: Einstellungen bzw. Ladehistorie einer frueheren Installation werden NICHT uebernommen und liegen beiseite:$rn_beiseite"
         echo "<INFO> Die Zweitschrift enthaelt das Renault-Kennwort im Klartext. Die Deinstallation"
         echo "<INFO> raeumt beides mit ab; wer die alten Einstellungen will, spielt eine Sicherung ueber"
         echo "<INFO> den Reiter Einstellungen zurueck."
-        rc=1
     fi
 fi
 

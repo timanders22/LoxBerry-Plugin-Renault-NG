@@ -13,14 +13,27 @@ fi
 
 # Dieselbe Sperrdatei wie cron.03min - der Name kommt aus dem Ordnernamen,
 # damit eine Zweitinstallation ihre eigene bekommt. Begruendung dort.
-SPERRE="/tmp/$(basename "$VERZ").lock"
+# Seit 2.1.20 im Protokollordner (F9, Begruendung in cron.03min).
+mkdir -p "REPLACELBPLOGDIR" 2>/dev/null
+SPERRE="REPLACELBPLOGDIR/abruf.lock"
 if ! exec 9>"$SPERRE"; then
     echo "$(date '+%d.%m.%Y %H:%M:%S') [ERROR] Cron: Sperrdatei $SPERRE nicht zu oeffnen - die Ladehistorie wird nicht geholt." >> "$PROT"
     exit 1
 fi
 flock -n 9 || exit 0
 
+# Fehlerausgabe nach cron.err (seit 2.1.20, V7-b/T3-3, Regeln/06 :475; Form MG
+# cron.01min): LoxBerry ruft jede Cron-Datei mit "> /dev/null 2>&1" auf, und bis
+# 2.1.19 blieb von einem Syntaxfehler in php nirgends eine Spur. Ueber 256 kB
+# bleiben die letzten 300 Zeilen. Der Reiter Logdateien zeigt die Datei, sobald
+# etwas darin steht.
+ERR="REPLACELBPLOGDIR/cron.err"
+mkdir -p "REPLACELBPLOGDIR" 2>/dev/null
+touch "$ERR" 2>/dev/null
+if [ -f "$ERR" ] && [ "$(stat -c %s "$ERR" 2>/dev/null || echo 0)" -gt 262144 ]; then
+    tail -n 300 "$ERR" > "$ERR.neu" 2>/dev/null && mv -f "$ERR.neu" "$ERR"
+fi
 cd "$VERZ" || exit 1
 # 9<&-: die Sperre bleibt bei der Schale, php erbt sie nicht (Befund C4,
 # Begruendung in cron.03min).
-php history.php 9<&-
+php history.php 9<&- 2>>"$ERR"

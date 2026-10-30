@@ -24,3 +24,7 @@
 #   php-sockets  wird nicht gebraucht - das Plugin spricht MQTT ueber die
 #                phpMQTT-Bibliothek des LoxBerry-Kerns
 php-curl
+# Seit 2.1.20 (Gruppe 40): die mosquitto-Programme fuer die Befehlsbruecke (mosquitto_sub/_pub)
+# und den abgekoppelten Leser der Haus-Themen (mosquitto_sub -F '%r %t %x' - phpMQTT gibt das
+# Retain-Bit nicht heraus). Fehlen sie, sagt es der Reiter Test, und es gilt das bisherige Verhalten.
+mosquitto-clients

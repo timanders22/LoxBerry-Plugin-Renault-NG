@@ -128,6 +128,84 @@ function rn_test_selbstpruefung($cfg, $broker, $voll = true)
         $abo_ok ? sprintf(rn_t('PRUEF.ABO_DATEI_OK'), RN_ABO_THEMA)
                 : sprintf(rn_t('PRUEF.ABO_DATEI_FEHLT'), $abo_pfad));
 
+    /* ---------------- Gruppe 40 (2.1.20) ---------------- */
+    /* Gateway V2: sind alle Datenpunkte angehakt? Liest subscriptions.json nur.
+     * Gateway V1: trifft nicht zu (Auskunft, nie rot); ohne Zugangsdaten grau. */
+    list($v2l, $v2t) = rn_v2_haken_lage($cfg);
+    $z[] = array(rn_t('PRUEF.V2'), $v2l === 1 ? true : ($v2l === 0 ? false : ($v2l === 'info' ? 'info' : null)), $v2t);
+    /* Reservierte Fahrzeugnamen (F7). */
+    $res = array();
+    foreach ($autos as $f) { if (rn_name_reserviert($f['name'])) { $res[] = $f['name']; } }
+    $z[] = array(rn_t('PRUEF.NAMEN_RESERVIERT'), !$res,
+        $res ? sprintf(rn_t('PRUEF.NAMEN_RESERVIERT_JA'), implode(', ', $res)) : rn_t('PRUEF.NAMEN_RESERVIERT_NEIN'));
+    /* Endpunkt und Abrufsperre (2.3). */
+    $z[] = array(rn_t('PRUEF.ENDPUNKT_EIN'), 'info',
+        $cfg['endpunkt_ein'] === 'Y' ? rn_t('PRUEF.ENDPUNKT_EIN_JA') : rn_t('PRUEF.ENDPUNKT_EIN_NEIN'));
+    $z[] = array(rn_t('PRUEF.SPERRE_ORT'), 'info', rn_abruf_sperre());
+    /* Befehlsbruecke: Lebenszeichen, letzte Quittung (2.2). */
+    list($bl, $bt) = rn_bruecke_lage();
+    $z[] = array(rn_t('PRUEF.BRUECKE'), $bl === null ? 'info' : $bl, $bt);
+    if ($voll && $cfg['befehle_mqtt_ein'] === 'Y') {
+        list($brc, $bz) = rn_bruecke_pruefen();
+        $fehl = array();
+        foreach ($bz as $zeile) { if (strpos($zeile, '[FEHL]') === 0) { $fehl[] = $zeile; } }
+        $z[] = array(rn_t('PRUEF.BRUECKE_PRUEFEN'), !$fehl,
+            $fehl ? implode(' / ', array_slice($fehl, 0, 3)) : sprintf(rn_t('PRUEF.N_ZEILEN'), count($bz)));
+    }
+    /* mosquitto-Programme (Leser, Bruecke, Testmeldung). */
+    $mq = rn_programm('mosquitto_sub') !== '' && rn_programm('mosquitto_pub') !== '';
+    $z[] = array(rn_t('PRUEF.MOSQUITTO'), $mq ? true : null, $mq ? rn_t('PRUEF.JA') : rn_t('PRUEF.MOSQUITTO_FEHLT'));
+    /* Haus-Quellen (2.4): je eingeschaltete Quelle frisch/schweigt - der Selbsttest liest die Ablage, nie den Broker. */
+    foreach (rn_haus_pruefzeilen($cfg) as $hz) { $z[] = $hz; }
+    /* Vorklimatisierung (3.2): Kennung, Versuche, Vorklima je gewaehltes Fahrzeug. */
+    if ($cfg['vorklima_ein'] === 'Y') {
+        $merk = rn_json_lesen($p['datadir'] . '/vorklima.json');
+        foreach (rn_vorklima_nummern($cfg) as $vnr) {
+            $f = rn_fahrzeug($vnr, $cfg);
+            if (!$f) { continue; }
+            if ($cfg['username'] === '' || $cfg['password'] === '') {
+                $z[] = array(sprintf(rn_t('PRUEF.VORKLIMA'), $f['name']), null, rn_t('PRUEF.NICHT_EINGERICHTET'));
+                continue;
+            }
+            $m = isset($merk['vorklima'][(string) $vnr]) ? $merk['vorklima'][(string) $vnr] : null;
+            $w = rn_vorklima_wert($m, time());
+            $z[] = array(sprintf(rn_t('PRUEF.VORKLIMA'), $f['name']), $w === -1 ? false : 'info',
+                sprintf(rn_t('PRUEF.VORKLIMA_STAND'), $w,
+                    is_array($m) && isset($m['kennung']) ? date('d.m. H:i', (int) $m['kennung']) : '–',
+                    is_array($m) && isset($m['versuche']) ? (int) $m['versuche'] : 0)
+                . (($cfg['steuerung_ein'] !== 'Y' || $cfg['haus_abfahrt_ein'] !== 'Y') ? ' ' . rn_t('PRUEF.VORKLIMA_WIRKT_NICHT') : ''));
+        }
+    }
+    /* Heimzone (3.1): nur gesetzt ja/nein und die letzte Aussage - nie die Koordinaten. */
+    if ($cfg['heim_ein'] === 'Y') {
+        $gesetzt = $cfg['heim_breite'] !== '' && $cfg['heim_laenge'] !== '';
+        $aussage = array();
+        foreach ($autos as $f) {
+            if ($f['vin'] === '') { continue; }
+            $s = rn_session_feld($f['nr']);
+            list($zh) = rn_zuhause($cfg, $s[17], $s[18], $s[29], $s[30], $f['zoeph']);
+            $aussage[] = $f['name'] . ': ' . ($zh === 1 ? rn_t('HEIM.ZU_HAUSE') : ($zh === 0 ? rn_t('HEIM.UNTERWEGS') : rn_t('HEIM.OHNE_AUSSAGE')));
+        }
+        $z[] = array(rn_t('PRUEF.HEIM'), $gesetzt ? true : false,
+            ($gesetzt ? rn_t('PRUEF.HEIM_GESETZT') : rn_t('PRUEF.HEIM_FEHLT')) . ($aussage ? ' - ' . implode('; ', $aussage) : ''));
+    }
+    /* Ladekosten der laufenden Ladung (E-E2): Proben bisher, Preise. */
+    if ($cfg['haus_strompreis_ein'] === 'Y') {
+        foreach ($autos as $f) {
+            $l = rn_json_lesen(rn_ladung_datei($f['nr'], 'laufend'));
+            $pr = rn_json_lesen(rn_ladung_datei($f['nr'], 'preise'));
+            if (!isset($l['beginn_t'])) { continue; }
+            $mit = 0;
+            $alle = isset($pr['proben']) && is_array($pr['proben']) ? $pr['proben'] : array();
+            foreach ($alle as $x) { if (isset($x['preis']) && is_numeric($x['preis'])) { $mit++; } }
+            $z[] = array(sprintf(rn_t('PRUEF.LADUNG'), $f['name']), 'info', sprintf(rn_t('PRUEF.LADUNG_STAND'),
+                isset($l['stand']) && is_array($l['stand']) ? count($l['stand']) : 0, $mit, count($alle)));
+        }
+    }
+    /* Vorlagen: CRLF und wohlgeformt (HTTP-Vorlage und Bruecke). */
+    list($vl, $vt) = rn_vorlagen_pruefen();
+    $z[] = array(rn_t('PRUEF.VORLAGEN'), (bool) $vl, $vt);
+
     // Alter des letzten ERFOLGREICHEN Abrufs, je Fahrzeug.
     foreach ($autos as $f) {
         if ($f['vin'] === '') { continue; }
@@ -294,7 +372,7 @@ function rn_test_selbstpruefung($cfg, $broker, $voll = true)
      * Ein Verzeichnis an dieser Stelle ist der Befund, nicht der Erfolg. */
     $cronfehlt = array();
     $croninfo  = array();
-    foreach (array('cron.03min', 'cron.10min') as $ordner) {
+    foreach (array('cron.01min', 'cron.03min', 'cron.10min') as $ordner) {
         $pfad = $p['home'] . '/system/cron/' . $ordner . '/' . $p['plugin'];
         if (is_file($pfad))      { $croninfo[] = $ordner; }
         elseif (is_dir($pfad))   { $cronfehlt[] = $ordner . ' (' . rn_t('PRUEF.IST_ORDNER') . ')'; }
@@ -304,7 +382,7 @@ function rn_test_selbstpruefung($cfg, $broker, $voll = true)
         !is_dir($p['home'] . '/system/cron') ? null : (count($cronfehlt) === 0),
         !is_dir($p['home'] . '/system/cron') ? rn_t('PRUEF.UNBEKANNT')
             : ($cronfehlt ? sprintf(rn_t('PRUEF.CRON_FEHLT'), implode(', ', $cronfehlt))
-                          : sprintf(rn_t('PRUEF.N_VON_N'), count($croninfo), 2)));
+                          : sprintf(rn_t('PRUEF.N_VON_N'), count($croninfo), 3)));
 
     /* Antwortet der eigene Endpunkt?
      *

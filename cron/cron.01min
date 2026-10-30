@@ -1,0 +1,38 @@
+#!/bin/bash
+# Renault - leichter Minutentakt (seit 2.1.20, Gruppe 40, Bauvorschrift 2.4).
+#
+# WARUM EIN MINUTENTAKT (eigener Fund F10): die Haus-Themen (Nr. 15) gelten nur
+# frisch, wenn sich ihr Zaehler binnen 120 s geaendert hat. Ein Leser, der nur
+# alle 3 min mit cron.03min startet, haette zum Zeitpunkt der Entscheidung eine
+# bis zu 180 s alte Ablage - nie frisch. Der Takt ruft KEINEN Abruf und meldet
+# sich nicht bei Renault an:
+#   1. Waechter der Befehlsbruecke (bb_waechter(), auch ohne Zugangsdaten);
+#   2. den abgekoppelten Leser der Haus-Themen starten (abruf.php --haus-lesen,
+#      bis 65 s, eigene Sperre - der Takt wartet nie);
+#   3. Vorklimatisierung, Ankunft und Preisproben aus der Ablage.
+# Ist nichts davon eingeschaltet, endet der Lauf nach dem Lesen der
+# Konfiguration (unter 0,2 s, kein Protokoll).
+#
+# DIE FEHLERAUSGABE GEHT NACH cron.err (Regeln/06 :475, Form MG 1.1.28):
+# LoxBerry ruft jede Cron-Datei mit "> /dev/null 2>&1" auf. Das Verzeichnis
+# wird vorher angelegt, touch frischt die Aenderungszeit auf; ueber 256 kB
+# bleiben die letzten 300 Zeilen (log/ ist eine Ramdisk).
+#
+# NUR EIN TAKT ZUGLEICH: holt cron nach dem Boot Minuten nach, starten zwei
+# Laeufe in derselben Sekunde (Gedaechtnis "Cron holt Minuten nach"). Die Sperre
+# steht hier in der Schale; php bekommt sie nicht (8<&-), und die Kinder, die
+# laenger leben (Leser, Bruecke, ein angestossener Abruf), schliessen jeden
+# geerbten Deskriptor ueber 2 selbst (Gedaechtnis "Sperre vererbt sich an Kinder").
+#
+# ZEILENENDEN: LF (siehe cron.03min).
+LOGV="REPLACELBPLOGDIR"
+ERR="$LOGV/cron.err"
+mkdir -p "$LOGV" 2>/dev/null
+touch "$ERR" 2>/dev/null
+if [ -f "$ERR" ] && [ "$(stat -c %s "$ERR" 2>/dev/null || echo 0)" -gt 262144 ]; then
+  tail -n 300 "$ERR" > "$ERR.neu" 2>/dev/null && mv -f "$ERR.neu" "$ERR"
+fi
+exec 8>"$LOGV/takt.lock" || exit 0
+flock -n 8 || exit 0
+cd "REPLACELBPHTMLAUTHDIR" || { echo "[$(date '+%Y-%m-%d %H:%M:%S')] cron.01min: REPLACELBPHTMLAUTHDIR fehlt - Plugin neu installieren." >> "$ERR"; exit 1; }
+php abruf.php takt 8<&- >/dev/null 2>>"$ERR"

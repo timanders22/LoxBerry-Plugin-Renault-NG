@@ -30,8 +30,19 @@
 # liest beim Broker nach (abruf.php --mqtt-leeren); bis 2.1.10 sagte sie
 # nur, dass der Broker bleibt.
 
+# V5 (Gruppe 40): die $2-Wache als erste wirksame Zeile (Gedaechtnis
+# "Uninstall-Praefix"). LoxBerry ruft beim Entfernen eines Plugins die uninstall
+# ANDERER Plugins mit, deren Name mit diesem beginnt (zigbee2mqtt riss
+# zigbee2mqttng mit). Ein Aufruf fuer einen anderen Namen tut hier nichts.
+[ "$2" = "renault_ng" ] || { echo "<INFO> Aufruf fuer ein anderes Plugin ($2) - nichts zu tun."; exit 0; }
+
 PDIR="$3"
 [ -n "$PDIR" ] || PDIR="renault_ng"
+# Der Ordnername darf keinen Pfadtrenner tragen (wie preinstall.sh) - sonst
+# griffen rm und dd daneben.
+case "$PDIR" in
+    ''|.|..|*/*|*..*) echo "<FAIL> Ungueltiger Ordnername"; exit 2 ;;
+esac
 BASE="$5"
 if [ -z "$BASE" ] || [ ! -d "$BASE" ]; then
     BASE="$LBHOMEDIR"
@@ -57,6 +68,27 @@ if [ -z "$BASE" ] || [ ! -d "$BASE/config/plugins" ] \
 fi
 
 rc=0
+
+# ---- 0a. Befehlsbruecke anhalten (seit 2.1.20, Hausform 2.2) ---------
+# VOR dem Leeren, solange bin/ noch da ist: stop beendet Dienst und
+# mosquitto_sub. Den Pfad setzt der Installer ein.
+BBSH="REPLACELBPBINDIR/befehlsbruecke.sh"
+case "$BBSH" in
+    /?*) [ -f "$BBSH" ] || BBSH="" ;;
+    *) BBSH="$BASE/bin/plugins/$PDIR/befehlsbruecke.sh"; [ -f "$BBSH" ] || BBSH="" ;;
+esac
+if [ -n "$BBSH" ]; then
+    timeout -k 5 40 bash "$BBSH" stop 2>&1 | head -n 3 | sed 's/^/<INFO> Befehlsbruecke: /'
+else
+    echo "<INFO> Befehlsbruecke: befehlsbruecke.sh fehlt - nichts anzuhalten."
+fi
+# Die Optionsdateien (Broker-Benutzer und -Kennwort) der Bruecke und des Lesers
+# werden ueberschrieben, bevor LoxBerry data/plugins/<ordner>/ abraeumt - eine
+# geloeschte Datei mit Kennwort ist auf einer SD-Karte noch eine Weile lesbar.
+for RN_F in "$BASE/data/plugins/$PDIR/befehle/mosquitto/mosquitto_sub" "$BASE/data/plugins/$PDIR/befehle/mosquitto/mosquitto_pub"             "$BASE/data/plugins/$PDIR/mosquitto/mosquitto_sub" "$BASE/data/plugins/$PDIR/mosquitto/mosquitto_pub"; do
+    [ -f "$RN_F" ] && [ ! -L "$RN_F" ] || continue
+    head -c "$(stat -c %s "$RN_F" 2>/dev/null || echo 64)" /dev/zero > "$RN_F" 2>/dev/null
+done
 
 # ---- 0. Zurueckbehaltene MQTT-Themen -----------------------------
 # VOR dem Loeschen der Zweitschrift: aus Konfiguration bzw. Zweitschrift
@@ -87,7 +119,13 @@ fi
 # Vor dem Entfernen wird sie ueberschrieben: eine geloeschte Datei mit
 # einem Kennwort darin ist auf einer SD-Karte noch eine Weile lesbar.
 SICH="$BASE/config/plugins/$PDIR.backup.config.php"
-if [ -f "$SICH" ]; then
+# V5 (T3-2/F5): ist die Zweitschrift ein VERWEIS, wird nur der Verweis entfernt -
+# dd folgte ihm bis 2.1.19 und ueberschrieb das Ziel mit 8192 Nullbytes (in WSL
+# gemessen, Pruefbericht T3-2). uninstall laeuft als root.
+if [ -L "$SICH" ]; then
+    rm -f "$SICH"
+    echo "<WARNING> $SICH war ein Verweis - nur der Verweis wurde entfernt."
+elif [ -f "$SICH" ]; then
     dd if=/dev/zero of="$SICH" bs=1024 count=8 conv=notrunc >/dev/null 2>&1
     if rm -f "$SICH"; then
         echo "<OK> Zweitschrift der Konfiguration entfernt (enthielt die Zugangsdaten)."
@@ -104,7 +142,8 @@ fi
 # den Ordner gelegt haben (<ordner>.config.php.kaputt.<zeit>, Befund I4) -
 # alle mit Zugangsdaten im Klartext, alle ebenso ueberschrieben und entfernt.
 for S in "$SICH.alt" "$BASE/config/plugins/$PDIR".config.php.kaputt.*; do
-    [ -f "$S" ] || continue
+    if [ -L "$S" ]; then rm -f "$S"; echo "<WARNING> $S war ein Verweis - nur der Verweis wurde entfernt."; continue; fi
+    [ -f "$S" ] && [ ! -L "$S" ] || continue
     dd if=/dev/zero of="$S" bs=1024 count=8 conv=notrunc >/dev/null 2>&1
     if rm -f "$S"; then
         echo "<OK> Beiseitegelegte Konfiguration entfernt ($S)."
@@ -167,8 +206,9 @@ fi
 echo "<INFO> Plugin-Ordner, Konfiguration und Zugangsdaten entfernt LoxBerry selbst."
 echo "<INFO> Mit dem Konfigurationsordner geht auch mqtt_subscriptions.cfg - das"
 echo "<INFO> MQTT-Gateway abonniert Renault/# danach nicht mehr (seit 2.1.9)."
-echo "<INFO> Einen Dienst hat das Plugin nicht; es arbeitet ueber cron.03min und"
-echo "<INFO> cron.10min, und diese Eintraege entfernt LoxBerry ebenfalls."
+echo "<INFO> Der einzige Dienst ist die Befehlsbruecke (oben angehalten); sonst arbeitet"
+echo "<INFO> das Plugin ueber cron.01min, cron.03min und cron.10min, und diese Eintraege"
+echo "<INFO> entfernt LoxBerry ebenfalls."
 echo ""
 echo "<INFO> Die zurueckbehaltenen MQTT-Themen der eingerichteten Fahrzeuge sind oben"
 echo "<INFO> geleert und beim Broker nachgelesen worden (Ergebnis in den Zeilen MQTT)."

@@ -174,7 +174,8 @@ pruefe('Retain: status/zaehler',             rn_thema_retained('status/zaehler')
  * einen leeren Zustand. Die Null als Wert ist NICHT leer (ok=0, Kabel=0). */
 pruefe('Merker: CableStatus mit Wert',       rn_retain_merker('CableStatus', '1'), 1);
 pruefe('Nutzlast: CableStatus leer -> "-"',  rn_mqtt_nutzlast('CableStatus', ''), '-');
-pruefe('Nutzlast: BattSOC leer -> nichts',   rn_mqtt_nutzlast('BattSOC', ''), null);
+// Seit 2.1.20 (Hausform -1-Regel): ein Zahlthema ohne Wert geht mit seinem Fehlwert hinaus.
+pruefe('Nutzlast: BattSOC leer -> -1',       rn_mqtt_nutzlast('BattSOC', ''), '-1');
 pruefe('Merker: ok mit 1 nicht retained',    rn_retain_merker('ok', 1), 0);
 pruefe('Merker: ok mit "0" nicht retained',  rn_retain_merker('ok', '0'), 0);
 pruefe('Merker: Kabel mit 0 bleibt retained', rn_retain_merker('CableStatus', 0), 1);
@@ -223,7 +224,11 @@ pruefe('Vorgabe: Token leer',        $v['aktionstoken'], '');
 pruefe('Vorgabe: Zieltemperatur 21', $v['ac_temp'], '21');
 // Nr. 36 b (seit 2.1.16): + 4 Anlass-Schalter + die Felder des Blocks tts (ansage_vorgaben(), Modul 1.1.1: 15).
 pruefe('Vorgabe: Sprachausgabe aus', $v['tts_mode'], 'aus');
-pruefe('Vorgabe: 32 + 4 + tts Schluessel', count($v), 36 + count(ansage_vorgaben('aus')));
+// Gruppe 40 (2.1.20): + die neuen Schluessel (rn_vorgaben_2120(), 19 + je Fahrzeug zwei). Welle Mehrfach-Ziele
+// (2.1.20): + tts_ziele (die Liste der weiteren Ausgabeziele als JSON, leer = keine).
+pruefe('Vorgabe: 32 + 4 + tts + tts_ziele + 2.1.20 Schluessel', count($v),
+    37 + count(ansage_vorgaben('aus')) + count(rn_neue_schluessel_2120()));
+pruefe('Vorgabe: tts_ziele leer', $v['tts_ziele'], '');
 
 /* 7. Jeder Vorgabewert muss die eigene Wertpruefung bestehen.
  *
@@ -257,6 +262,94 @@ foreach ($roh_namen as $sp) {
 }
 pruefe('CSV: keine Ueberschrift ist ein nackter Sprachschluessel',
     implode(', ', $schluesselhaft), '');
+
+/* 9. Gruppe 40 (2.1.20): die neuen reinen Funktionen (Bauvorschrift 7.1 Schritt 8). */
+$a0 = array('username' => 'nutzer@example.com', 'password' => 'p', 'country' => 'DE', 'ac_temp' => '21',
+            'vin' => 'BEISPIEL000000001', 'zoeph' => '2', 'zoename' => 'Zoe',
+            'vin2' => 'BEISPIEL000000002', 'zoeph2' => '2', 'zoename2' => 'Zwei',
+            'vin3' => 'BEISPIEL000000003', 'zoeph3' => '1', 'zoename3' => 'Drei', 'vin4' => '', 'zoename4' => '');
+$a1 = $a0; $a1['ac_temp'] = '22';
+pruefe('V1: nur ac_temp -> Konto gleich',        rn_konto_geaendert($a0, $a1), false);
+$a1 = $a0; $a1['username'] = 'andere@example.com';
+pruefe('V1: Benutzer geaendert',                 rn_konto_geaendert($a0, $a1), true);
+$a1 = $a0; $a1['country'] = 'AT';
+pruefe('V1: Land geaendert',                     rn_konto_geaendert($a0, $a1), true);
+list($an1, $le1) = rn_anmeldung_nach_abweisung(array('1028', 'JWT_A_0', 'KONTO_A', 'P1', '0'), 100000, 0);
+pruefe('V1: erste Abweisung leert das Konto',    $an1[2], '');
+list($an2) = rn_anmeldung_nach_abweisung(array('1028', 'JWT', 'KONTO_A', 'P1', (string) $le1), 100600, $le1);
+pruefe('V1: nach 600 s bleibt das Konto',        $an2[2], 'KONTO_A');
+list($an3) = rn_anmeldung_nach_abweisung(array('1028', 'JWT', 'KONTO_A', 'P1', (string) $le1), 103700, $le1);
+pruefe('V1: nach 3700 s leer',                   $an3[2], '');
+list($an4) = rn_anmeldung_nach_abweisung(array('1028', 'JWT', 'KONTO_A', 'P1', '200000'), 100000, 200000);
+pruefe('V1: Uhr zurueck -> leer',                $an4[2], '');
+pruefe('V1: JWT immer leer',                     $an2[1] . '|' . $an2[0], '|0000');
+$a1 = $a0; $a1['ac_temp'] = '25';
+pruefe('V2: ac_temp -> nichts verwerfen',        implode(',', rn_session_verwerfen($a0, $a1)), '');
+$a1 = $a0; $a1['vin2'] = 'BEISPIEL000000009';
+pruefe('V2: vin2 -> [2]',                        implode(',', rn_session_verwerfen($a0, $a1)), '2');
+$a1 = $a0; $a1['zoeph'] = '1';
+pruefe('V2: zoeph (Fahrzeug 1) -> [1]',          implode(',', rn_session_verwerfen($a0, $a1)), '1');
+$a1 = $a0; $a1['password'] = 'neu';
+pruefe('V2: Kennwort -> alle eingerichteten',    implode(',', rn_session_verwerfen($a0, $a1)), '1,2,3');
+$a1 = $a0; $a1['vin3'] = ''; $a1['zoename3'] = '';
+pruefe('V2: Fahrzeug 3 entfernt -> [3]',         implode(',', rn_session_verwerfen($a0, $a1)), '3');
+pruefe('V3: gleiche Zeile -> keine neue',        rn_csv_neu(array('27.10.2026', '18:02', '100', '80', '', '200', '1', '0'),
+                                                            array('27.10.2026', '18:02', '100', '80', '', '200', '1', '0')), false);
+pruefe('V3: SOC +1 -> neue Zeile',               rn_csv_neu(array('27.10.2026', '18:02', '100', '80', '', '200', '1', '0'),
+                                                            array('27.10.2026', '18:02', '100', '81', '', '200', '1', '0')), true);
+pruefe('V3: ohne letzte Zeile -> neu',           rn_csv_neu(array(), array('a')), true);
+list($rt, $rw) = rn_csv_aufraeumen("Date;Time\na;1\na;1\na;1\nb;2\na;1\n");
+pruefe('E-E3: drei gleiche -> eine, Folge bleibt', $rt . '|' . $rw, "Date;Time\na;1\nb;2\na;1\n|2");
+list($rt) = rn_csv_aufraeumen("Date;Time\r\nx;1\r\nx;1\r\n");
+pruefe('E-E3: CRLF bleibt',                      $rt, "Date;Time\r\nx;1\r\n");
+pruefe('H1: Fehlwert BattSOC',                   rn_mqtt_nutzlast('BattSOC', ''), '-1');
+pruefe('H1: Fehlwert InTemp',                    rn_mqtt_nutzlast('InTemp', ''), '-99');
+pruefe('H1: Fehlwert GPS-Latitude',              rn_mqtt_nutzlast('GPS-Latitude', ''), '-999');
+pruefe('H1: ChargingStatus ohne Wert: nichts',   rn_mqtt_nutzlast('ChargingStatus', ''), null);
+pruefe('H1: ChargeMode ohne Wert: -',            rn_mqtt_nutzlast('ChargeMode', ''), '-');
+pruefe('H1: Gateway-Name',                       rn_gateway_name('Renault/Mein Zoe/BattSOC'), 'Renault_Mein_Zoe_BattSOC');
+pruefe('F7: status reserviert',                  rn_name_reserviert('Status'), true);
+pruefe('F7: Zoe frei',                           rn_name_reserviert('Zoe'), false);
+pruefe('F7: Wertpruefung befehl',                rn_wert_pruefen('zoename2', 'Befehl'), false);
+pruefe('B: Quittung ok',                         rn_befehl_quittung(array(1, 'OK', 200, '')), array(true, ''));
+pruefe('B: Quittung abgelehnt',                  rn_befehl_quittung(array(0, 'STEUERUNG_AUS', 403, '')), array(false, 'STEUERUNG_AUS'));
+pruefe('V7-e: 404 -> INFO',                      rn_history_stufe(404, false), 'INFO');
+pruefe('V7-e: 502 -> WARN',                      rn_history_stufe(502, false), 'WARN');
+list($ms, $mt) = rn_meldewege_text(array('mail' => false, 'signal' => null, 'befehl' => null));
+pruefe('V7-i: mail false -> WARN',               $ms, 'WARN');
+pruefe('X1: Entfernung 0,009 Grad Breite',       (int) round(rn_entfernung(48.0, 11.0, 48.009, 11.0)), 1001);
+$hz = array('heim_ein' => 'Y', 'heim_breite' => '48.0000', 'heim_laenge' => '11.0000', 'heim_radius' => '150');
+pruefe('X1: innen und frisch',                   rn_zuhause($hz, '48.0005', '11.0000', 1000, 1000 + 600, '2'), array(1, 0.06));
+pruefe('X1: GPS 61 min vor Fahrzeug',            rn_zuhause($hz, '48.0005', '11.0000', 1000, 1000 + 3660, '2'), array(-1, -1));
+pruefe('X1: Generation 1',                       rn_zuhause($hz, '48.0005', '11.0000', 1000, 1000, '1'), array(-1, -1));
+$m = array();
+list($va, $m) = rn_vorklima_schritt($m, 10, 1000000, 20, null);
+pruefe('X2: Lauf 1 senden',                      $va, 'senden');
+list($va, $m) = rn_vorklima_schritt($m, 9, 1000060, 20, null);
+pruefe('X2: +60 s nichts',                       $va, 'nichts');
+list($va, $m) = rn_vorklima_schritt($m, 8, 1000130, 20, null);
+pruefe('X2: +130 s Abruf statt Senden',          $va, 'abruf_und_senden');
+pruefe('X2: Wettergrenze mild',                  rn_vorklima_wetter(array('vorklima_wetter_ein' => 'Y', 'vorklima_kalt_unter' => '5',
+                                                     'vorklima_heiss_ueber' => '25'), 12, 0, null, -1), 'mild');
+pruefe('X2: Wettergrenze ohne Aussage',          rn_vorklima_wetter(array('vorklima_wetter_ein' => 'Y'), 12, 1801, null, -1), 'ohne_aussage');
+pruefe('X4: Thema',                              rn_signal_thema('signalbot', 'renault_ng'), 'signalbot/befehl/plugin/renault_ng');
+pruefe('X4: Ordner ungueltig',                   rn_signal_thema('signalbot', 'Renault NG'), '');
+pruefe('A: Haus frisch 60 s',                    rn_haus_frisch(array('abfahrt' => array('seit' => 1000)), 'abfahrt', 1060), true);
+pruefe('A: Haus 121 s schweigt',                 rn_haus_frisch(array('abfahrt' => array('seit' => 1000)), 'abfahrt', 1121), false);
+pruefe('E-E2: Ankunft Thema tag',                rn_ankunft_thema('tag:zoe'), 'haus/tag/zoe/da');
+$lk = rn_ladung_kosten(array(array('t' => 0, 'soc' => 50, 'kwh' => 20.0), array('t' => 600, 'soc' => 60, 'kwh' => 25.0)),
+                       array(array('t' => 60, 'preis' => 30), array('t' => 120, 'preis' => 30), array('t' => 180, 'preis' => 30),
+                             array('t' => 240, 'preis' => 30), array('t' => 300, 'preis' => 30), array('t' => 360, 'preis' => 30),
+                             array('t' => 420, 'preis' => 30), array('t' => 480, 'preis' => 30), array('t' => 540, 'preis' => 30),
+                             array('t' => 600, 'preis' => 30)), '');
+pruefe('E-E2: 5 kWh zu 30 ct -> 1,50 EUR',       array($lk[0], $lk[1], $lk[2], $lk[4]), array(5.0, 1.5, 30.0, 'ok'));
+$lk = rn_ladung_kosten(array(array('t' => 0, 'soc' => 50), array('t' => 600, 'soc' => 60)), array(), '');
+pruefe('E-E2: ohne Energie und Kapazitaet -> -1', $lk[4], 'energie_fehlt');
+$vg = rn_vorgaben();
+pruefe('2.3: endpunkt_ein ab Werk aus',          $vg['endpunkt_ein'], 'N');
+pruefe('2.2: Befehle ueber MQTT ab Werk aus',    $vg['befehle_mqtt_ein'], 'N');
+pruefe('2.5: Ansage-Modi mit sonos4lox, ohne audioserver',
+    in_array('sonos4lox', rn_ansage_modi(), true) && !in_array('audioserver', rn_ansage_modi(), true), true);
 
 /* ---- Schlusszeile --------------------------------------------------
  *

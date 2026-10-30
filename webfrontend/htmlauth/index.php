@@ -63,6 +63,18 @@ function rn_eingabe_felder($formular)
      * (ansage_x2_felder() nennt sie nicht; markiert werden koennen sie). */
     $f = array_merge($f, ansage_x2_felder(rn_ansage_opt()));
     foreach (rn_ansage_anlaesse() as $a) { $f[] = $a[0]; }
+    /* Gruppe 40 (2.1.20). Die Heimkoordinaten reisen NIE mit (3.1 Datenschutz:
+     * sie stehen nur in config.php) - ihr Feld zeigt nach einer Beanstandung den
+     * gespeicherten Wert und bleibt markiert. */
+    foreach (array('endpunkt_ein', 'heim_ein', 'heim_radius', 'haus_abfahrt_ein', 'vorklima_anwesend_ein',
+                   'vorklima_ein', 'vorklima_vorlauf', 'vorklima_fahrzeuge', 'vorklima_wetter_ein',
+                   'vorklima_kalt_unter', 'vorklima_heiss_ueber', 'signal_bl', 'signal_csf', 'signal_praefix',
+                   'ankunft_ein', 'haus_strompreis_ein') as $g) { $f[] = $g; }
+    for ($i = 1; $i <= RN_MAX_FAHRZEUGE; $i++) {
+        $nr = ($i === 1) ? '' : (string) $i;
+        $f[] = 'ankunft_quelle' . $nr;
+        $f[] = 'akku_kwh' . $nr;
+    }
     return $f;
 }
 /* Geheimnisfelder: werden markiert, ihr Wert reist nie mit. */
@@ -92,6 +104,17 @@ function rn_eingaben_sammeln($formular)
             $werte[$f] = $_POST[$f];
         }
     }
+    /* Welle Mehrfach-Ziele (2.1.20): die Tabelle kommt als name[N] und reist flach als name.N (rn_ziele_x2_felder(),
+     * zurueck ueber rn_ziele_x2_post()) - nur, was gesendet wurde (ein fehlender Haken bleibt aus). */
+    if ($formular === 'einst') {
+        foreach (rn_ziele_x2_felder() as $f) {
+            $zt = explode('.', $f);
+            if (isset($_POST[$zt[0]]) && is_array($_POST[$zt[0]]) && isset($_POST[$zt[0]][$zt[1]])
+                && rn_eingabe_tauglich($_POST[$zt[0]][$zt[1]])) {
+                $werte[$f] = $_POST[$zt[0]][$zt[1]];
+            }
+        }
+    }
     return array('formular' => $formular, 'werte' => $werte, 'falsch' => rn_bean());
 }
 /* Beim GET: die Eingaben aus der Einmalmeldung pruefen und ablegen. */
@@ -103,7 +126,7 @@ function rn_eingaben($setzen = null)
         if (is_array($setzen) && isset($setzen['formular'], $setzen['werte'], $setzen['falsch'])
             && is_string($setzen['formular']) && is_array($setzen['werte'])
             && is_array($setzen['falsch']) && rn_eingabe_felder($setzen['formular'])) {
-            $erlaubt = rn_eingabe_felder($setzen['formular']);
+            $erlaubt = array_merge(rn_eingabe_felder($setzen['formular']), rn_ziele_x2_felder());     // 2.1.20: Tabelle name.N
             $werte = array();
             foreach ($setzen['werte'] as $f => $w) {
                 if (in_array((string) $f, $erlaubt, true) && rn_eingabe_tauglich($w)) {
@@ -378,6 +401,50 @@ if (isset($_POST['speichern'])) {
         }
     }
 
+    /* ---- Gruppe 40 (2.1.20): Endpunkt, Heimzone, Vorklimatisierung, Haus-Themen,
+     *      SignalBot. Die Haken nur, wenn das Formular sie traegt (Feld g40) - ein
+     *      Absenden aus einer alten Seite schaltet nichts ab. Beanstandet wird wie
+     *      oben: nichts gespeichert, Feld markiert, Eingabe zurueck (X-2). ---- */
+    if (isset($_POST['g40'])) {
+        foreach (array('endpunkt_ein', 'heim_ein', 'haus_abfahrt_ein', 'vorklima_anwesend_ein', 'vorklima_ein',
+                       'vorklima_wetter_ein', 'signal_bl', 'signal_csf', 'ankunft_ein', 'haus_strompreis_ein') as $f) {
+            $neu[$f] = isset($_POST[$f]) ? 'Y' : 'N';
+        }
+        $rn_g40 = array('heim_breite' => 'HEIM.L_BREITE', 'heim_laenge' => 'HEIM.L_LAENGE',
+                        'heim_radius' => 'HEIM.L_RADIUS', 'vorklima_vorlauf' => 'VORKLIMA.L_VORLAUF',
+                        'vorklima_fahrzeuge' => 'VORKLIMA.L_FAHRZEUGE', 'vorklima_kalt_unter' => 'VORKLIMA.L_KALT',
+                        'vorklima_heiss_ueber' => 'VORKLIMA.L_HEISS', 'signal_praefix' => 'SIGNAL.L_PRAEFIX');
+        for ($i = 1; $i <= RN_MAX_FAHRZEUGE; $i++) {
+            $nr = ($i === 1) ? '' : (string) $i;
+            $rn_g40['ankunft_quelle' . $nr] = 'HAUS.L_ANKUNFT_QUELLE';
+            $rn_g40['akku_kwh' . $nr] = 'HAUS.L_AKKU_KWH';
+        }
+        foreach ($rn_g40 as $f => $rn_lbl) {
+            if (!isset($_POST[$f])) { continue; }
+            $rn_roh = is_string($_POST[$f]) ? trim($_POST[$f], " \t\n\r") : null;
+            if ($rn_roh === null || rn_zeichen_falsch($rn_roh) || !rn_wert_pruefen($f, $rn_roh)) {
+                $rn_fnr = preg_match('/([2-4])$/', $f, $rn_m) ? ' (' . sprintf(rn_t('TEXT.H_FAHRZEUG_NR'), (int) $rn_m[1]) . ')'
+                        : ((strpos($f, 'ankunft_quelle') === 0 || strpos($f, 'akku_kwh') === 0)
+                           ? ' (' . sprintf(rn_t('TEXT.H_FAHRZEUG_NR'), 1) . ')' : '');
+                $rn_fehler[] = sprintf(rn_t('TEXT.F_WERT_FELD'), rn_e(rn_t($rn_lbl) . $rn_fnr));
+                rn_bean($f);
+                continue;
+            }
+            $neu[$f] = $rn_roh;
+        }
+        if ($neu['heim_ein'] === 'Y' && ($neu['heim_breite'] === '' || $neu['heim_laenge'] === '')) {
+            $rn_fehler[] = rn_t('HEIM.F_PUNKT_FEHLT');
+            rn_bean('heim_breite');
+            rn_bean('heim_laenge');
+        }
+        if (is_numeric($neu['vorklima_kalt_unter']) && is_numeric($neu['vorklima_heiss_ueber'])
+            && (int) $neu['vorklima_kalt_unter'] >= (int) $neu['vorklima_heiss_ueber']) {
+            $rn_fehler[] = rn_t('VORKLIMA.F_GRENZEN');
+            rn_bean('vorklima_kalt_unter');
+            rn_bean('vorklima_heiss_ueber');
+        }
+    }
+
     /* ---- Pruefungen. Beanstandungen werden GESAMMELT, nicht
      *      ueberschrieben - der Benutzer soll alle auf einmal sehen. Und
      *      eine halb ausgefuellte Zeile darf nicht das Speichern ALLER
@@ -394,6 +461,12 @@ if (isset($_POST['speichern'])) {
         if ($nm !== '' && (strpos($nm, '/') !== false || strpos($nm, '#') !== false
             || strpos($nm, '+') !== false)) {
             $rn_fehler[] = sprintf(rn_t('TEXT.F_NAME_SONDERZEICHEN'), $i);
+            rn_bean('zoename' . $nr);
+        }
+        /* Gruppe 40 (eigener Fund F7): "status" und "befehl" fielen mit
+         * Renault/status/befehle bzw. Renault/befehl/# zusammen. */
+        if ($nm !== '' && rn_name_reserviert($nm)) {
+            $rn_fehler[] = sprintf(rn_t('TEXT.F_NAME_RESERVIERT'), $i, rn_e($nm));
             rn_bean('zoename' . $nr);
         }
         if ($vn !== '' && !preg_match('/^[A-HJ-NPR-Z0-9]{17}$/i', $vn)) {
@@ -486,13 +559,14 @@ if (isset($_POST['speichern'])) {
     }
     $rn_tmangel = array();
     $rn_tbean = array();
-    $rn_tneu = ansage_formular_lesen($_POST, rn_tts($rn_cfg), $rn_tmangel, $rn_tbean, rn_ansage_opt(),
-                                     rn_ansage_k());
+    $rn_thinw = array();     // Welle Mehrfach-Ziele (Sprachmodul 1.2.1): Hinweise des Moduls, die das Speichern nicht verhindern
+    $rn_tneu = ansage_formular_lesen($_POST, rn_tts($rn_cfg), $rn_tmangel, $rn_tbean, rn_ansage_opt() + array(
+                                     'ziele' => rn_mit_zielen()), rn_ansage_k(), $rn_thinw);
     foreach ($rn_tmangel as $rn_tm) {
         $rn_fehler[] = rn_e($rn_tm['text']);
     }
     foreach ($rn_tbean as $rn_tb) {
-        rn_bean($rn_tb);     // X-2
+        rn_bean(rn_ziele_x2_name($rn_tb));     // X-2 (2.1.20: Tabelle name[N] -> name.N)
     }
     $neu = array_merge($neu, rn_tts_flach($rn_tneu));
 
@@ -512,16 +586,30 @@ if (isset($_POST['speichern'])) {
 
     if (!$rn_fehler) {
         if (rn_config_write($neu)) {
-            // Zwischenspeicher aller Fahrzeuge verwerfen - die Daten
-            // koennten zu einer anderen Fahrgestellnummer gehoeren.
-            // is_file davor: das @ unterdrueckt zwar die Ausgabe, ruft aber
-            // trotzdem einen gesetzten Fehler-Aufnehmer - und rendern.py
-            // haengt sich genau so ein.
-            foreach (rn_fahrzeuge($neu) as $rn_f) {
-                if (is_file($rn_f['session'])) { @unlink($rn_f['session']); }
+            /* Gruppe 40 (V1/V2): verworfen wird nur, was zu anderen Daten
+             * gehoert. Bis 2.1.19 loeschte JEDES Speichern alle session-Dateien
+             * - auch nach einer geaenderten Zieltemperatur - und damit die
+             * Merker "Meldung gesendet"/"laedt" (Pruefbericht T2-1); und die
+             * Anmeldung blieb nach einem Kontowechsel stehen (T2-2). Jetzt:
+             * session<n> nur bei geaenderter VIN/Phase, entferntem Fahrzeug oder
+             * geaenderten Zugangsdaten (rn_session_verwerfen()); die Anmeldung
+             * nur bei geaenderten Zugangsdaten (rn_konto_geaendert()).
+             * is_file davor: das @ ruft trotzdem einen gesetzten Fehler-Aufnehmer. */
+            $rn_verworfen = array();
+            foreach (rn_session_verwerfen($rn_cfg, $neu) as $rn_snr) {
+                $rn_sd = $rn_p['datadir'] . '/session' . ($rn_snr > 1 ? (string) $rn_snr : '');
+                if (is_file($rn_sd)) { @unlink($rn_sd); $rn_verworfen[] = sprintf(rn_t('TEXT.H_FAHRZEUG_NR'), $rn_snr); }
+            }
+            if (rn_konto_geaendert($rn_cfg, $neu)) {
+                if (is_file($rn_p['anmeldung'])) { @unlink($rn_p['anmeldung']); }
+                renault_log('INFO', 'Zugangsdaten geaendert - die Anmeldung wird beim naechsten Abruf neu geholt.');
             }
             $rn_cfg = rn_config_read();
-            $rn_meldung = rn_t('TEXT.M_GESPEICHERT');
+            $rn_meldung = rn_e(rn_t('TEXT.M_GESPEICHERT'))
+                . ($rn_verworfen ? ' ' . rn_e(sprintf(rn_t('TEXT.M_SESSION_VERWORFEN'), implode(', ', $rn_verworfen))) : '');
+            $rn_thl = array();     // Welle Mehrfach-Ziele (2.1.20): Hinweise des Moduls, maskiert an die Meldung
+            foreach ($rn_thinw as $rn_th) { $rn_thl[] = $rn_th['text']; }     // Welle Mehrfach-Ziele: erst nach dem Speichern
+            foreach ($rn_thl as $rn_th1) { $rn_meldung .= ' ' . rn_e($rn_th1); }
             /* Umbenannt oder entfernt (Befund M3): der Fahrzeugname ist der
              * Themenpraefix. Bis 2.1.12 blieben die Zustaende unter dem alten
              * Namen fuer immer retained im Broker, und das Gateway lieferte sie
@@ -622,18 +710,61 @@ if (isset($_POST['cache_leeren'])) {
  * Spricht den Pruefsatz des Moduls ueber die eingestellte Ausgabeart - unabhaengig
  * von den Anlaessen. Ins Protokoll nur die Kurzform ohne Text und Token. F5 nach dem
  * Knopf spricht nicht erneut: der PRG-Block unten leitet um (303). */
-if (isset($_POST['ansage_test'])) {
-    $rn_ak = rn_ansage_k();
-    $rn_ar = ansage_testansage(rn_tts($rn_cfg), $rn_ak);
-    renault_log($rn_ar['stand'] === 0 ? 'WARN' : 'INFO', 'Testansage: ' . ansage_kurz($rn_ar));
-    if ($rn_ar['stand'] === 1) {
+/* Welle Mehrfach-Ziele (Sprachmodul 1.2.1): die Knoepfe "Testansage an Ziel n" schicken ansage_test_ziel=n - es spricht
+ * nur dieses Ziel; der bisherige Knopf spricht an alle Ziele gleichzeitig. Eine unbrauchbare Nummer spricht nichts. */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['ansage_test']) || isset($_POST['ansage_test_ziel']))) {
+    $rn_tk = rn_ansage_k();
+    $rn_tnur = (isset($_POST['ansage_test_ziel']) && rn_mit_zielen()) ? ansage_test_ziel($_POST) : 0;
+    if (isset($_POST['ansage_test_ziel']) && $rn_tnur === 0) {
+        $rn_tr = array('stand' => 0, 'kennung' => 'ZIEL_UNBEKANNT|-', 'art' => '-', 'http' => 0, 'zeile' => '', 'zeichen' => 0);
+    } elseif ($rn_tnur >= 1) {
+        $rn_tr = ansage_testansage(rn_tts($rn_cfg), $rn_tk, $rn_tnur);
+    } else {
+        $rn_tr = ansage_testansage(rn_tts($rn_cfg), $rn_tk);
+    }
+    rn_log('Testansage' . ($rn_tnur >= 1 ? ' an Ziel ' . $rn_tnur : '') . ': ' . ansage_kurz($rn_tr));
+    if ($rn_tr['stand'] === 1) {
         $rn_meldung = rn_e(rn_t('TEXT.M_ANSAGE_TEST_OK'));
-    } elseif ($rn_ar['stand'] === -1) {
+    } elseif ($rn_tr['stand'] === -1) {
         $rn_meldung = rn_e(sprintf(rn_t('TEXT.M_ANSAGE_TEST_NICHTS'),
-                                   ansage_kennung_text($rn_ar['kennung'], $rn_ak)));
+                                   ansage_kennung_text($rn_tr['kennung'], $rn_tk)));
     } else {
         $rn_misslungen[] = rn_e(sprintf(rn_t('TEXT.M_ANSAGE_TEST_FEHL'),
-                                        ansage_kennung_text($rn_ar['kennung'], $rn_ak)));
+                                        ansage_kennung_text($rn_tr['kennung'], $rn_tk)));
+    }
+    $rn_tab = 'tab-test';
+}
+
+/* ---------------- Gruppe 40 (2.2): Befehle ueber MQTT annehmen (Reiter MQTT) ----------------
+ * Eigenes Formular, Formtoken, PRG. Danach wird die Bruecke gestartet bzw. angehalten
+ * (rn_bruecke_schalten()); der Minutentakt (Waechter) haelt sie danach am Laufen. */
+if (isset($_POST['befehle_speichern'])) {
+    $neu = $rn_cfg;
+    $neu['befehle_mqtt_ein'] = isset($_POST['befehle_mqtt_ein']) ? 'Y' : 'N';
+    if (rn_config_write($neu)) {
+        $rn_cfg = rn_config_read();
+        list($rn_brc, $rn_bwas, $rn_baus) = rn_bruecke_schalten($rn_cfg);
+        $rn_meldung = rn_e(rn_t('TEXT.M_GESPEICHERT'));
+        if ($rn_bwas !== '') {
+            $rn_meldung .= '<br>' . rn_e(sprintf(rn_t('BEFEHL.M_SCHALTEN'), $rn_bwas,
+                trim(strtok((string) $rn_baus, "\n")) !== '' ? trim(strtok((string) $rn_baus, "\n")) : (string) $rn_brc));
+        }
+        renault_log('INFO', 'Befehle ueber MQTT: Haken ' . ($neu['befehle_mqtt_ein'] === 'Y' ? 'an' : 'aus')
+            . ($rn_bwas !== '' ? ' - Bruecke ' . $rn_bwas . ' (rc ' . (string) $rn_brc . ')' : '') . '.');
+    } else {
+        $rn_fehler[] = rn_t('TEXT.F_SCHREIBEN');
+    }
+    $rn_tab = 'tab-mqtt';
+}
+
+/* ---------------- Gruppe 40 (3.3): Testmeldung an SignalBot (Reiter Test) ---------------- */
+if (isset($_POST['signal_test'])) {
+    list($rn_sl, $rn_st) = rn_signal_testmeldung($rn_cfg);
+    renault_log($rn_sl === 'angenommen' ? 'INFO' : 'WARN', 'Testmeldung an SignalBot: ' . $rn_sl . '.');
+    if ($rn_sl === 'angenommen') {
+        $rn_meldung = rn_e($rn_st);
+    } else {
+        $rn_misslungen[] = rn_e($rn_st);
     }
     $rn_tab = 'tab-test';
 }
@@ -672,6 +803,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['vorlage'])
     header('Content-Disposition: attachment; filename="' . $rn_vname . '"');
     echo $rn_vinhalt;
     exit;
+}
+/* Gruppe 40 (2.2): die Vorlage "Renault MQTT-Befehle" aus bb_vorlage() (CRLF, /dev/udp/<loxberry>/11884). */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['vorlage'])
+    && $_POST['vorlage'] === 'bb') {
+    list($rn_vname, $rn_vinhalt) = rn_vorlage_befehle();
+    if ($rn_vinhalt !== '') {
+        header('Content-Type: application/x-download');
+        header('Content-Disposition: attachment; filename="' . $rn_vname . '"');
+        echo $rn_vinhalt;
+        exit;
+    }
+    $rn_misslungen[] = rn_e(rn_t('BEFEHL.T_NICHT_DA'));
+    $rn_tab = 'tab-loxone';
 }
 
 $rn_broker  = rn_mqtt_broker();
@@ -757,11 +901,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rn_zurueck'])) {
              * und die Anmeldung zu einem anderen Konto - beides wird
              * verworfen, wie es der Speichern-Handler auch tut. Und dem
              * Anwender wird gesagt, was mit dem Abruf geschieht: einen Dienst
-             * zum Nachziehen gibt es nicht, den Takt macht der Cron. */
-            foreach (rn_fahrzeuge($rn_neu) as $rn_f2) {
-                if (is_file($rn_f2['session'])) { @unlink($rn_f2['session']); }
+             * zum Nachziehen gibt es nicht, den Takt macht der Cron.
+             * Seit 2.1.20 nur bei geaenderten Zugangsdaten bzw. Fahrzeugen
+             * (rn_konto_geaendert(), rn_session_verwerfen()). */
+            foreach (rn_session_verwerfen($rn_cfg, $rn_neu) as $rn_snr) {
+                $rn_sd = $rn_p['datadir'] . '/session' . ($rn_snr > 1 ? (string) $rn_snr : '');
+                if (is_file($rn_sd)) { @unlink($rn_sd); }
             }
-            if (is_file($rn_p['anmeldung'])) { @unlink($rn_p['anmeldung']); }
+            if (rn_konto_geaendert($rn_cfg, $rn_neu) && is_file($rn_p['anmeldung'])) {
+                @unlink($rn_p['anmeldung']);
+            }
             $rn_cfg = rn_config_read();
             /* Erfolg erst nach dem Zuruecklesen (Befund U4). Bis 2.1.12 hiess
              * es "zurueckgespielt", waehrend rn_config_read() im selben Aufruf
@@ -993,6 +1142,17 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
     <td<?php echo $rn_broker ? '' : ' class="sm-aus"'; ?>><?php echo $rn_broker
         ? '<span class="sm-mono">' . rn_e($rn_broker['host'] . ':' . $rn_broker['port']) . '</span>'
         : rn_e(rn_t('TEXT.KOPF_KEIN_BROKER')); ?></td></tr>
+<?php /* Gruppe 40 (2.1, Regeln/04 :798 Kopfkachel MQTT): Renault hat KEINEN eigenen
+   MQTT-Schalter - gesendet wird, sobald ein Broker in general.json steht. Gross
+   steht deshalb "ein", wenn ein Broker eingetragen ist, sonst "aus"; klein der
+   Autostart des Gateways und seine Fassung (Abweichung von der Form mit
+   mqtt_ein begruendet, Regeln/07 :283). */
+$rn_kfs = rn_gateway_fassung();
+$rn_kauto = $rn_broker ? rn_t($rn_broker['autostart'] ? 'ALLG.EIN' : 'ALLG.AUS') : rn_t('ALLG.NICHT_FESTSTELLBAR'); ?>
+<tr><td>MQTT</td>
+    <td><span class="<?php echo $rn_broker ? 'sm-an' : 'sm-aus'; ?>"><?php echo rn_e(rn_t($rn_broker ? 'ALLG.EIN' : 'ALLG.AUS')); ?></span><br>
+    <span class="sm-small"><?php echo rn_e(sprintf(rn_t('ALLG.KACHEL_MQTT_HILFE'), $rn_kauto,
+        $rn_kfs > 0 ? 'V' . $rn_kfs : rn_t('ALLG.NICHT_FESTSTELLBAR'))); ?></span></td></tr>
 <tr><td><?php echo rn_e(rn_t('TEXT.KOPF_SCHALTEN')); ?></td>
     <td><?php echo rn_e($rn_cfg['steuerung_ein'] === 'Y' ? rn_t('TEXT.KOPF_SCHALTEN_JA') : rn_t('TEXT.KOPF_SCHALTEN_NEIN')); ?></td></tr>
 </table>
@@ -1008,7 +1168,7 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
   <a class="sm-tab<?php echo $rn_tab === 'tab-settings' ? ' sm-active' : ''; ?>" data-ziel="tab-settings" href="index.php?form=settings"><?php echo rn_e(rn_t('REITER.EINSTELLUNGEN')); ?></a>
   <a class="sm-tab<?php echo $rn_tab === 'tab-mqtt' ? ' sm-active' : ''; ?>" data-ziel="tab-mqtt" href="index.php?form=mqtt">MQTT</a>
   <a class="sm-tab<?php echo $rn_tab === 'tab-loxone' ? ' sm-active' : ''; ?>" data-ziel="tab-loxone" href="index.php?form=loxone"><?php echo rn_e(rn_t('REITER.LOXONE')); ?></a>
-  <a class="sm-tab<?php echo $rn_tab === 'tab-test' ? ' sm-active' : ''; ?>" data-ziel="tab-test" href="index.php?form=test"><?php echo rn_e(rn_t('REITER.TEST')); ?></a>
+  <a class="sm-tab<?php echo $rn_tab === 'tab-test' ? ' sm-active' : ''; ?>" data-ziel="tab-test" data-neuladen="1" href="index.php?form=test"><?php echo rn_e(rn_t('REITER.TEST')); ?></a>
   <a class="sm-tab<?php echo $rn_tab === 'tab-verlauf' ? ' sm-active' : ''; ?>" data-ziel="tab-verlauf" href="index.php?form=verlauf"><?php echo rn_e(rn_t('REITER.VERLAUF')); ?></a>
   <a class="sm-tab<?php echo $rn_tab === 'tab-log' ? ' sm-active' : ''; ?>" data-ziel="tab-log" href="index.php?form=log"><?php echo rn_e(rn_t('REITER.LOG')); ?></a>
 </div>
@@ -1136,6 +1296,14 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
   <input data-role="none" type="number" min="16" max="30" id="ac_temp" name="ac_temp" value="<?php echo rn_e(rn_ein_w('ac_temp', $rn_cfg['ac_temp'])); ?>"<?php echo rn_ein_m('ac_temp'); ?>>
   <p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.H_AC_TEMP')); ?></p>
 </div>
+<input data-role="none" type="hidden" name="g40" value="1">
+<div class="sm-feld">
+  <label style="display:inline-flex;align-items:center;gap:8px;">
+    <input data-role="none" type="checkbox" name="endpunkt_ein" value="Y" style="width:auto" <?php echo rn_ein_h('endpunkt_ein', $rn_cfg['endpunkt_ein'] === 'Y') ? 'checked' : ''; ?><?php echo rn_ein_m('endpunkt_ein'); ?>>
+    <?php echo rn_e(rn_t('TEXT.L_ENDPUNKT_EIN')); ?>
+  </label>
+  <p class="sm-hilfe"><?php echo rn_t('TEXT.H_ENDPUNKT_EIN'); ?></p>
+</div>
 
 <h2><?php echo rn_e(rn_t('TEXT.H_MELDUNGEN')); ?></h2>
 <p class="sm-hilfe"><?php echo rn_t('TEXT.H_MELDUNGEN_TEXT'); ?></p>
@@ -1210,13 +1378,102 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
   <p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.H_ABRP')); ?></p>
 </div>
 
+<h2><?php echo rn_e(rn_t('HEIM.H')); ?></h2>
+<p class="sm-hilfe"><?php echo rn_t('HEIM.H_TEXT'); ?></p>
+<div class="sm-feld">
+  <label style="display:inline-flex;align-items:center;gap:8px;">
+    <input data-role="none" type="checkbox" name="heim_ein" value="Y" style="width:auto" <?php echo rn_ein_h('heim_ein', $rn_cfg['heim_ein'] === 'Y') ? 'checked' : ''; ?><?php echo rn_ein_m('heim_ein'); ?>>
+    <?php echo rn_e(rn_t('HEIM.L_EIN')); ?>
+  </label>
+</div>
+<div class="sm-feld">
+  <label for="heim_breite"><?php echo rn_e(rn_t('HEIM.L_BREITE')); ?></label>
+  <input data-role="none" type="text" id="heim_breite" name="heim_breite" autocomplete="off" value="<?php echo rn_e($rn_cfg['heim_breite']); ?>"<?php echo rn_ein_m('heim_breite'); ?>>
+</div>
+<div class="sm-feld">
+  <label for="heim_laenge"><?php echo rn_e(rn_t('HEIM.L_LAENGE')); ?></label>
+  <input data-role="none" type="text" id="heim_laenge" name="heim_laenge" autocomplete="off" value="<?php echo rn_e($rn_cfg['heim_laenge']); ?>"<?php echo rn_ein_m('heim_laenge'); ?>>
+  <p class="sm-hilfe"><?php echo rn_e(rn_t('HEIM.H_PUNKT')); ?></p>
+</div>
+<div class="sm-feld">
+  <label for="heim_radius"><?php echo rn_e(rn_t('HEIM.L_RADIUS')); ?></label>
+  <input data-role="none" type="number" min="20" max="20000" id="heim_radius" name="heim_radius" value="<?php echo rn_e(rn_ein_w('heim_radius', $rn_cfg['heim_radius'])); ?>"<?php echo rn_ein_m('heim_radius'); ?>>
+</div>
+
+<h2><?php echo rn_e(rn_t('VORKLIMA.H')); ?></h2>
+<div class="sm-warnung"><?php echo rn_t('VORKLIMA.H_EINE_QUELLE'); ?></div>
+<p class="sm-hilfe"><?php echo rn_t('VORKLIMA.H_TEXT'); ?></p>
+<?php foreach (array('vorklima_ein' => 'VORKLIMA.L_EIN', 'haus_abfahrt_ein' => 'HAUS.L_ABFAHRT_EIN',
+                     'vorklima_anwesend_ein' => 'HAUS.L_ANWESEND_EIN', 'vorklima_wetter_ein' => 'VORKLIMA.L_WETTER_EIN') as $rn_k => $rn_lbl) { ?>
+<div class="sm-feld">
+  <label style="display:inline-flex;align-items:center;gap:8px;">
+    <input data-role="none" type="checkbox" name="<?php echo rn_e($rn_k); ?>" value="Y" style="width:auto" <?php echo rn_ein_h($rn_k, $rn_cfg[$rn_k] === 'Y') ? 'checked' : ''; ?><?php echo rn_ein_m($rn_k); ?>>
+    <?php echo rn_e(rn_t($rn_lbl)); ?>
+  </label>
+</div>
+<?php } ?>
+<?php foreach (array('vorklima_vorlauf' => array('VORKLIMA.L_VORLAUF', 'number', 'min="5" max="60"'),
+                     'vorklima_fahrzeuge' => array('VORKLIMA.L_FAHRZEUGE', 'text', ''),
+                     'vorklima_kalt_unter' => array('VORKLIMA.L_KALT', 'number', 'min="-30" max="45"'),
+                     'vorklima_heiss_ueber' => array('VORKLIMA.L_HEISS', 'number', 'min="-30" max="45"')) as $rn_k => $rn_d) { ?>
+<div class="sm-feld">
+  <label for="<?php echo rn_e($rn_k); ?>"><?php echo rn_e(rn_t($rn_d[0])); ?></label>
+  <input data-role="none" type="<?php echo rn_e($rn_d[1]); ?>" <?php echo $rn_d[2]; ?> id="<?php echo rn_e($rn_k); ?>" name="<?php echo rn_e($rn_k); ?>" value="<?php echo rn_e(rn_ein_w($rn_k, $rn_cfg[$rn_k])); ?>"<?php echo rn_ein_m($rn_k); ?>>
+</div>
+<?php } ?>
+<p class="sm-hilfe"><?php echo rn_t('VORKLIMA.H_WETTER'); ?></p>
+
+<h2><?php echo rn_e(rn_t('HAUS.H')); ?></h2>
+<p class="sm-hilfe"><?php echo rn_t('HAUS.H_TEXT'); ?></p>
+<?php foreach (array('ankunft_ein' => 'HAUS.L_ANKUNFT_EIN', 'haus_strompreis_ein' => 'HAUS.L_STROMPREIS_EIN') as $rn_k => $rn_lbl) { ?>
+<div class="sm-feld">
+  <label style="display:inline-flex;align-items:center;gap:8px;">
+    <input data-role="none" type="checkbox" name="<?php echo rn_e($rn_k); ?>" value="Y" style="width:auto" <?php echo rn_ein_h($rn_k, $rn_cfg[$rn_k] === 'Y') ? 'checked' : ''; ?><?php echo rn_ein_m($rn_k); ?>>
+    <?php echo rn_e(rn_t($rn_lbl)); ?>
+  </label>
+</div>
+<?php } ?>
+<p class="sm-hilfe"><?php echo rn_t('HAUS.H_KOSTEN'); ?></p>
+<?php foreach ($rn_autos as $rn_f) { $rn_nr = ((int) $rn_f['nr'] === 1) ? '' : (string) (int) $rn_f['nr']; ?>
+<h3><?php echo rn_e($rn_f['name']); ?></h3>
+<div class="sm-feld">
+  <label for="ankunft_quelle<?php echo rn_e($rn_nr); ?>"><?php echo rn_e(rn_t('HAUS.L_ANKUNFT_QUELLE')); ?></label>
+  <input data-role="none" type="text" id="ankunft_quelle<?php echo rn_e($rn_nr); ?>" name="ankunft_quelle<?php echo rn_e($rn_nr); ?>" value="<?php echo rn_e(rn_ein_w('ankunft_quelle' . $rn_nr, $rn_cfg['ankunft_quelle' . $rn_nr])); ?>"<?php echo rn_ein_m('ankunft_quelle' . $rn_nr); ?>>
+  <p class="sm-hilfe"><?php echo rn_t('HAUS.H_ANKUNFT_QUELLE'); ?></p>
+</div>
+<div class="sm-feld">
+  <label for="akku_kwh<?php echo rn_e($rn_nr); ?>"><?php echo rn_e(rn_t('HAUS.L_AKKU_KWH')); ?></label>
+  <input data-role="none" type="text" id="akku_kwh<?php echo rn_e($rn_nr); ?>" name="akku_kwh<?php echo rn_e($rn_nr); ?>" value="<?php echo rn_e(rn_ein_w('akku_kwh' . $rn_nr, $rn_cfg['akku_kwh' . $rn_nr])); ?>"<?php echo rn_ein_m('akku_kwh' . $rn_nr); ?>>
+  <p class="sm-hilfe"><?php echo rn_e(rn_t('HAUS.H_AKKU_KWH')); ?></p>
+</div>
+<?php } ?>
+
+<h2><?php echo rn_e(rn_t('SIGNAL.H')); ?></h2>
+<p class="sm-hilfe"><?php echo rn_t('SIGNAL.H_TEXT'); ?></p>
+<?php foreach (array('signal_bl' => 'SIGNAL.L_BL', 'signal_csf' => 'SIGNAL.L_CSF') as $rn_k => $rn_lbl) { ?>
+<div class="sm-feld">
+  <label style="display:inline-flex;align-items:center;gap:8px;">
+    <input data-role="none" type="checkbox" name="<?php echo rn_e($rn_k); ?>" value="Y" style="width:auto" <?php echo rn_ein_h($rn_k, $rn_cfg[$rn_k] === 'Y') ? 'checked' : ''; ?><?php echo rn_ein_m($rn_k); ?>>
+    <?php echo rn_e(rn_t($rn_lbl)); ?>
+  </label>
+</div>
+<?php } ?>
+<div class="sm-feld">
+  <label for="signal_praefix"><?php echo rn_e(rn_t('SIGNAL.L_PRAEFIX')); ?></label>
+  <input data-role="none" type="text" id="signal_praefix" name="signal_praefix" value="<?php echo rn_e(rn_ein_w('signal_praefix', $rn_cfg['signal_praefix'])); ?>"<?php echo rn_ein_m('signal_praefix'); ?>>
+  <p class="sm-hilfe"><?php echo rn_e(rn_t('SIGNAL.H_PRAEFIX')); ?></p>
+</div>
+
 <h2><?php echo rn_e(rn_t('TEXT.H_ANSAGE')); ?></h2>
 <div class="sm-hinweis"><?php echo rn_t('TEXT.ANSAGE_ERKLAERUNG'); ?></div>
 <?php echo ansage_formular_html(rn_tts($rn_cfg), array(
     'w' => function ($n, $g) { return rn_ein_w($n, $g); },
-    'm' => function ($n) { return rn_ein_m($n); },
+    'm' => function ($n) { return rn_ein_m(rn_ziele_x2_name($n)); },     // 2.1.20: Tabelle name[N] -> name.N
     'c' => function ($n, $g) { return rn_ein_h($n, $g); },
-    'modi' => rn_ansage_modi()), rn_ansage_k()); ?>
+    'modi' => rn_ansage_modi(),
+    /* Welle Mehrfach-Ziele (Sprachmodul 1.2.1): Tabelle der weiteren Ausgabeziele; nach einer Beanstandung traegt sie das Eingetippte. */
+    'ziele' => rn_mit_zielen(),
+    'ziele_post' => rn_eingaben() !== null ? rn_ziele_x2_post(rn_eingaben()['werte']) : null), rn_ansage_k()); ?>
 <h3><?php echo rn_e(rn_t('TEXT.H_ANSAGE_ANLAESSE')); ?></h3>
 <?php foreach (rn_ansage_anlaesse() as $rn_a) { ?>
 <div class="sm-feld">
@@ -1286,22 +1543,67 @@ if ($rn_sich_warn) { ?>
 <?php } ?>
 
 <h2><?php echo rn_e(rn_t('TEXT.H_ABO')); ?></h2>
-<p class="sm-hilfe"><b><?php echo rn_abo_text(); ?></b> <?php echo rn_t('TEXT.H_ABO_WO'); ?></p>
-<pre class="sm-vorschau"><?php foreach ($rn_autos as $rn_f) {
-    echo 'Renault/' . rn_e($rn_f['name']) . "/#\n"; } ?></pre>
-
-<h2><?php echo rn_e(rn_t('TEXT.H_THEMEN')); ?></h2>
+<p class="sm-hilfe"><b><?php echo rn_abo_text(); ?></b></p>
+<?php /* Gruppe 40 (2.1): die Namenstabelle und Hakenliste aus rn_v2_haken() - EINE Quelle fuer
+   diesen Reiter, die Einbindung, den Selbsttest, den Healthcheck und das Messskript. Bei
+   Gateway V1 steht stattdessen das Abo Renault/# (Rueckfall). */
+$rn_v2f = rn_gateway_fassung();
+if ($rn_v2f === 1) { ?>
+<p class="sm-hilfe"><?php echo rn_t('TEXT.H_ABO_WO'); ?></p>
+<pre class="sm-vorschau"><?php echo rn_e(RN_ABO_THEMA) . "\n"; ?></pre>
+<?php } ?>
+<?php if ($rn_v2f !== 1) { ?>
+<p class="sm-hilfe"><?php echo rn_t('TEXT.H_V2_TABELLE'); ?></p>
+<p class="sm-hilfe"><?php $rn_ph = array(); foreach ($rn_autos as $rn_f) { $rn_ph[] = rn_e($rn_f['name']) . ' (' . rn_e(sprintf(rn_t('TEXT.S_PHASE'), $rn_f['zoeph'])) . ')'; } echo implode(', ', $rn_ph); ?></p>
+<div class="sm-breit"><table class="sm-tbl">
+<tr><th><?php echo rn_e(rn_t('TEXT.S_TITEL')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_THEMA')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_NONCACHED')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_RETAINED')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_FEHLWERT')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_BEDEUTUNG')); ?></th></tr>
+<?php foreach (rn_v2_haken($rn_cfg) as $rn_h) {
+    $rn_kurz = preg_replace('#^Renault/[^/]+/#', '', $rn_h['thema']);
+    $rn_fw = rn_fehlwert($rn_kurz); ?>
+<tr><td class="sm-mono"><?php echo rn_e($rn_h['name']); ?></td><td class="sm-mono"><?php echo rn_e($rn_h['thema']); ?></td>
+    <td><?php echo rn_e(rn_t($rn_h['noncached'] ? 'TEXT.O_JA' : 'TEXT.O_NEIN')); ?></td>
+    <td><?php echo rn_e(rn_t(rn_thema_retained($rn_kurz) ? 'TEXT.O_JA' : 'TEXT.O_NEIN')); ?></td>
+    <td class="sm-mono"><?php echo $rn_fw === null ? rn_e(rn_t('TEXT.S_FEHLWERT_KEINER')) : rn_e($rn_fw); ?></td>
+    <td><?php echo rn_e(rn_t($rn_h['bez'])); ?></td></tr>
+<?php } ?>
+</table></div>
+<?php } ?>
 <p class="sm-hilfe"><?php echo rn_t('TEXT.H_THEMEN_TEXT'); ?></p>
-<?php foreach ($rn_autos as $rn_f) { ?>
-<h3><?php echo rn_e($rn_f['name']); ?> <span class="sm-small">(<?php echo rn_e(sprintf(rn_t('TEXT.S_PHASE'), $rn_f['zoeph'])); ?>)</span></h3>
+
+<h2><?php echo rn_e(rn_t('BEFEHL.H')); ?></h2>
+<div class="sm-warnung"><?php echo rn_t('BEFEHL.H_UDP'); ?></div>
+<?php list($rn_bl_ok, $rn_bl_txt) = rn_bruecke_lage(); ?>
+<p class="sm-hilfe"><?php echo rn_e(rn_t('BEFEHL.S_LAGE')); ?>: <b><?php echo rn_e($rn_bl_txt); ?></b></p>
+<div class="sm-legende">
+<span><i class="sm-punkt sm-b-aktion"></i> <?php echo rn_e(rn_t('LEGENDE.AKTION')); ?></span>
+</div>
+<form method="post" action="index.php">
+  <input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
+  <input data-role="none" type="hidden" name="activetab" value="tab-mqtt">
+  <div class="sm-feld">
+    <label style="display:inline-flex;align-items:center;gap:8px;">
+      <input data-role="none" type="checkbox" name="befehle_mqtt_ein" value="Y" style="width:auto" <?php echo $rn_cfg['befehle_mqtt_ein'] === 'Y' ? 'checked' : ''; ?>>
+      <?php echo rn_e(rn_t('BEFEHL.L_EIN')); ?>
+    </label>
+  </div>
+  <div class="sm-knopfreihe">
+    <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="befehle_speichern" value="1"><?php echo rn_e(rn_t('TEXT.K_SPEICHERN')); ?></button>
+  </div>
+</form>
+<?php list($rn_bliste, $rn_bfehler) = rn_bruecke_liste(); ?>
+<?php if ($rn_bliste === null) { ?>
+<div class="sm-info"><?php echo rn_e($rn_bfehler); ?></div>
+<?php } else { ?>
 <table class="sm-tbl">
-<tr><th style="width:42%"><?php echo rn_e(rn_t('TEXT.S_THEMA')); ?></th><th style="width:10%"><?php echo rn_e(rn_t('TEXT.S_RETAINED')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_BEDEUTUNG')); ?></th></tr>
-<?php foreach (rn_themen($rn_f['zoeph']) as $rn_thema => $rn_schl) { ?>
-<tr><td class="sm-mono">Renault/<?php echo rn_e($rn_f['name'] . '/' . $rn_thema); ?></td>
-    <td><?php echo rn_e(rn_t(rn_thema_retained($rn_thema) ? 'TEXT.O_JA' : 'TEXT.O_NEIN')); ?></td>
-    <td><?php echo rn_e(rn_t($rn_schl)); ?></td></tr>
+<tr><th><?php echo rn_e(rn_t('TEXT.S_THEMA')); ?></th><th><?php echo rn_e(rn_t('BEFEHL.S_WERTE')); ?></th><th><?php echo rn_e(rn_t('BEFEHL.S_QUITTUNG')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_BEDEUTUNG')); ?></th></tr>
+<?php foreach ($rn_bliste['befehle'] as $rn_b) { ?>
+<tr><td class="sm-mono"><?php echo rn_e($rn_b['thema']); ?></td>
+    <td class="sm-mono"><?php echo rn_e($rn_b['art'] === 'zahl' ? $rn_b['min'] . ' … ' . $rn_b['max'] : ($rn_b['art'] === 'schalter' ? '1 / 0' : '1')); ?></td>
+    <td><?php echo rn_e($rn_b['quittung']); ?></td>
+    <td><?php echo rn_e(rn_t($rn_b['kachel'])); ?></td></tr>
 <?php } ?>
 </table>
+<p class="sm-hilfe"><?php echo rn_t('BEFEHL.H_QUITTUNG'); ?></p>
 <?php } ?>
 </div>
 
@@ -1310,6 +1612,10 @@ if ($rn_sich_warn) { ?>
 
 <h2><?php echo rn_e(rn_t('TEXT.H_LOXONE')); ?></h2>
 <p class="sm-hilfe"><?php echo rn_t('TEXT.H_LOXONE_TEXT'); ?></p>
+<div class="sm-legende">
+<span><i class="sm-punkt sm-b-technik"></i> <?php echo rn_e(rn_t('LEGENDE.TECHNIK')); ?></span>
+<span><i class="sm-punkt sm-b-aktion"></i> <?php echo rn_e(rn_t('LEGENDE.AKTION_TOKEN')); ?></span>
+</div>
 
 <div class="sm-step">
 <h3 class="sm-h3"><?php echo rn_e(rn_t('TEXT.SCHRITT1')); ?></h3>
@@ -1318,9 +1624,8 @@ if ($rn_sich_warn) { ?>
 
 <div class="sm-step">
 <h3 class="sm-h3"><?php echo rn_e(rn_t('TEXT.SCHRITT2')); ?></h3>
-<p class="sm-hilfe"><b><?php echo rn_abo_text(); ?></b> <?php echo rn_t('TEXT.H_ABO_WO'); ?></p>
-<pre class="sm-vorschau"><?php foreach ($rn_autos as $rn_f) {
-    echo 'Renault/' . rn_e($rn_f['name']) . "/#\n"; } ?></pre>
+<p class="sm-hilfe"><b><?php echo rn_abo_text(); ?></b></p>
+<p class="sm-hilfe"><?php echo rn_t('TEXT.SCHRITT2_V2'); ?></p>
 </div>
 
 <div class="sm-step">
@@ -1348,11 +1653,35 @@ if ($rn_sich_warn) { ?>
 </div>
 
 <div class="sm-step">
-<h3 class="sm-h3"><?php echo rn_e(rn_t('TEXT.H_VORLAGE')); ?></h3>
-<div class="sm-hinweis"><?php echo rn_t('TEXT.H_VORLAGE_TEXT'); ?></div>
-<div class="sm-legende">
-<span><i class="sm-punkt sm-b-technik"></i> <?php echo rn_e(rn_t('LEGENDE.TECHNIK')); ?></span>
+<h3 class="sm-h3"><?php echo rn_e(rn_t('BEFEHL.SCHRITT')); ?></h3>
+<p class="sm-hilfe"><?php echo rn_t('BEFEHL.SCHRITT_TEXT'); ?></p>
+<div class="sm-warnung"><?php echo rn_t('BEFEHL.H_UDP'); ?></div>
+<?php if ($rn_bliste !== null) { ?>
+<table class="sm-tbl">
+<tr><th><?php echo rn_e(rn_t('TEXT.S_TITEL')); ?></th><th><?php echo rn_e(rn_t('TEXT.S_BEFEHL_EIN')); ?></th></tr>
+<?php foreach ($rn_bliste['befehle'] as $rn_b) { ?>
+<tr><td><?php echo rn_e($rn_b['titel']); ?></td><td class="sm-mono"><?php echo rn_e(isset($rn_b['loxone']['ein']) ? $rn_b['loxone']['ein'] : ''); ?></td></tr>
+<?php } ?>
+</table>
+<?php } ?>
+<div class="sm-knopfreihe">
+<form action="index.php" method="post">
+  <input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
+  <input data-role="none" type="hidden" name="activetab" value="tab-loxone">
+  <input data-role="none" type="hidden" name="vorlage" value="bb">
+  <button data-role="none" class="sm-btn sm-b-technik" type="submit"><?php echo rn_e(rn_t('BEFEHL.K_VORLAGE')); ?></button>
+</form>
 </div>
+</div>
+
+<details class="sm-step">
+<summary><b><?php echo rn_e(rn_t('TEXT.H_HTTP_BISHER')); ?></b></summary>
+<div class="sm-hinweis"><?php echo rn_t('TEXT.H_HTTP_BISHER_TEXT'); ?></div>
+<?php if ($rn_cfg['endpunkt_ein'] !== 'Y') { ?>
+<div class="sm-warnung"><?php echo rn_t('TEXT.H_ENDPUNKT_AUS'); ?></div>
+<?php } ?>
+<h4 class="sm-h4"><?php echo rn_e(rn_t('TEXT.H_VORLAGE')); ?></h4>
+<div class="sm-hinweis"><?php echo rn_t('TEXT.H_VORLAGE_TEXT'); ?></div>
 <div class="sm-knopfreihe">
 <form action="index.php" method="post">
   <input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
@@ -1361,10 +1690,8 @@ if ($rn_sich_warn) { ?>
   <button data-role="none" class="sm-btn sm-b-technik" type="submit"><?php echo rn_e(rn_t('TEXT.K_VORLAGE_VQ')); ?></button>
 </form>
 </div>
-</div>
 
-<div class="sm-step">
-<h3 class="sm-h3"><?php echo rn_e(rn_t('TEXT.SCHRITT4')); ?></h3>
+<h4 class="sm-h4"><?php echo rn_e(rn_t('TEXT.SCHRITT4')); ?></h4>
 <?php if ($rn_cfg['steuerung_ein'] !== 'Y') { ?>
 <div class="sm-warnung"><?php echo rn_t('TEXT.H_STEUERUNG_AUS'); ?></div>
 <?php } ?>
@@ -1383,9 +1710,6 @@ if ($rn_sich_warn) { ?>
     <td class="sm-mono"><?php echo rn_e('http://' . $rn_host . rn_selbsttestadresse($rn_cfg)); ?></td></tr>
 </table>
 <p class="sm-hilfe"><?php echo rn_t('TEXT.SCHRITT4_ENDPUNKT'); ?></p>
-<div class="sm-legende">
-<span><i class="sm-punkt sm-b-aktion"></i> <?php echo rn_e(rn_t('LEGENDE.AKTION_TOKEN')); ?></span>
-</div>
 <div class="sm-knopfreihe">
   <form method="post" action="index.php">
     <input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
@@ -1393,7 +1717,7 @@ if ($rn_sich_warn) { ?>
     <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="token_neu" value="1"><?php echo rn_e(rn_t('TEXT.K_TOKEN_NEU')); ?></button>
   </form>
 </div>
-</div>
+</details>
 
 <div class="sm-step">
 <h3 class="sm-h3"><?php echo rn_e(rn_t('TEXT.SCHRITT5')); ?></h3>
@@ -1665,6 +1989,16 @@ if ($rn_striche > 0) {
 <?php } ?>
 </div>
 
+<h2><?php echo rn_e(rn_t('SIGNAL.H_TEST')); ?></h2>
+<p class="sm-hilfe"><?php echo rn_t('SIGNAL.H_TEST_TEXT'); ?></p>
+<div class="sm-knopfreihe">
+  <form method="post" action="index.php">
+    <input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
+    <input data-role="none" type="hidden" name="activetab" value="tab-test">
+    <button data-role="none" class="sm-btn sm-b-technik" type="submit" name="signal_test" value="1"><?php echo rn_e(rn_t('SIGNAL.K_TEST')); ?></button>
+  </form>
+</div>
+
 <h2><?php echo rn_e(rn_t('TEXT.H_ANSAGE_TEST')); ?></h2>
 <p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.ANSAGE_TEST_TEXT')); ?></p>
 <div class="sm-knopfreihe">
@@ -1672,6 +2006,9 @@ if ($rn_striche > 0) {
     <input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
     <input data-role="none" type="hidden" name="activetab" value="tab-test">
     <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="ansage_test" value="1"><?php echo rn_e(rn_t('TEXT.K_ANSAGE_TEST')); ?></button>
+    <?php /* Welle Mehrfach-Ziele (Sprachmodul 1.2.1): je weiteres Ziel ein Knopf "Testansage an Ziel n (Geraet (Plugin))";
+       ohne weitere Ziele nichts. */
+    if (rn_mit_zielen()) { echo ansage_testknoepfe_html(rn_tts($rn_cfg), rn_ansage_k(), array('klasse' => 'sm-btn sm-b-aktion')); } ?>
   </form>
 </div>
 
@@ -1766,15 +2103,14 @@ foreach ($rn_autos as $rn_f) {
         continue;
     }
     $rn_kopfzeile = array_shift($rn_reihen);       // Kopfzeile - wird unten gebraucht
-    $rn_punkte = array();
-    foreach (array_slice($rn_reihen, -288) as $rn_z) {   // hoechstens 24 h
-        $rn_sp = explode(';', $rn_z);
-        if (count($rn_sp) < 6) { continue; }
-        $rn_ts = strtotime(str_replace('.', '-', $rn_sp[0]) . ' ' . $rn_sp[1]);
-        if ($rn_ts === false) { continue; }
-        $rn_punkte[] = array($rn_ts, (float) $rn_sp[3], (float) $rn_sp[5]);
-    }
-    if (count($rn_punkte) < 2) {
+    /* V3 (Gruppe 40, T2-4): die letzten 24 Stunden nach den ZEITSTEMPELN der Zeilen
+     * (rn_csv_24h()), nicht mehr "die letzten 288 Zeilen" - seit 2.1.20 entsteht eine
+     * Zeile nur bei einer Aenderung, 288 Zeilen koennen Wochen sein. Gleiche Zeilen
+     * hintereinander zaehlen als ein Punkt. */
+    $rn_punkte = rn_csv_24h($rn_reihen, time());
+    if (!$rn_punkte) {
+        echo '<div class="sm-info">' . rn_e(rn_t('TEXT.H_KEINE_AENDERUNG_24H')) . '</div>';
+    } elseif (count($rn_punkte) < 2) {
         echo '<div class="sm-info">' . rn_e(rn_t('TEXT.H_ZU_WENIG_PUNKTE')) . '</div>';
     } else {
         $rn_t0 = $rn_punkte[0][0];
@@ -1831,6 +2167,32 @@ foreach ($rn_autos as $rn_f) {
     }
     echo '</table></div>';
 }
+/* E-E2 (Gruppe 40): die Ladekosten der letzten Ladungen (ladungen.json). */
+$rn_lad = rn_json_lesen($rn_p['datadir'] . '/ladungen.json');
+$rn_lad = isset($rn_lad['liste']) && is_array($rn_lad['liste']) ? array_reverse($rn_lad['liste']) : array();
+if ($rn_cfg['haus_strompreis_ein'] === 'Y' || $rn_lad) {
+    echo '<h3>' . rn_e(rn_t('HAUS.H_LADUNGEN')) . '</h3>';
+    echo '<p class="sm-hilfe">' . rn_t('HAUS.H_KOSTEN') . '</p>';
+    if (!$rn_lad) {
+        echo '<div class="sm-info">' . rn_e(rn_t('HAUS.H_KEINE_LADUNG')) . '</div>';
+    } else {
+        echo '<div class="sm-breit"><table class="sm-tbl"><tr><th>' . rn_e(rn_t('TEXT.S_FAHRZEUG')) . '</th><th>'
+            . rn_e(rn_t('HAUS.S_ENDE')) . '</th><th>' . rn_e(rn_t('HAUS.S_KWH')) . '</th><th>'
+            . rn_e(rn_t('HAUS.S_PREIS')) . '</th><th>' . rn_e(rn_t('HAUS.S_KOSTEN')) . '</th><th>'
+            . rn_e(rn_t('HAUS.S_GRUND')) . '</th></tr>';
+        foreach (array_slice($rn_lad, 0, 20) as $rn_l) {
+            if (!is_array($rn_l)) { continue; }
+            $rn_zahl = function ($w, $st) { return (is_numeric($w) && (float) $w >= 0) ? number_format((float) $w, $st, ',', '') : '–'; };
+            echo '<tr><td>' . (int) (isset($rn_l['fz']) ? $rn_l['fz'] : 0) . '</td><td class="sm-mono">'
+                . rn_e(isset($rn_l['ende']) ? date('d.m.Y H:i', (int) $rn_l['ende']) : '–') . '</td><td>'
+                . rn_e($rn_zahl(isset($rn_l['kwh']) ? $rn_l['kwh'] : -1, 2)) . '</td><td>'
+                . rn_e($rn_zahl(isset($rn_l['preis_ct']) ? $rn_l['preis_ct'] : -1, 1)) . '</td><td>'
+                . rn_e($rn_zahl(isset($rn_l['kosten_eur']) ? $rn_l['kosten_eur'] : -1, 2)) . '</td><td>'
+                . rn_e(isset($rn_l['kosten_grund']) ? (string) $rn_l['kosten_grund'] : '') . '</td></tr>';
+        }
+        echo '</table></div>';
+    }
+}
 ?>
 </div>
 
@@ -1844,6 +2206,15 @@ foreach ($rn_autos as $rn_f) {
 <div class="sm-info"><?php echo rn_e(rn_t('TEXT.H_LOG_LEER')); ?></div>
 <?php } else { ?>
 <div class="sm-log"><?php foreach ($rn_zeilen as $rn_z) { echo rn_e($rn_z) . "\n"; } ?></div>
+<?php } ?>
+<?php /* Gruppe 40 (V7-b, 2.2): cron.err (Fehlerausgabe der Cron-Laeufe) und befehle_start.log
+   (Start der Befehlsbruecke) - nur, wenn etwas darin steht. */
+foreach (array('cron.err', 'befehle_start.log') as $rn_ld) {
+    $rn_lf = $rn_p['logdir'] . '/' . $rn_ld;
+    $rn_lt = (is_file($rn_lf) && filesize($rn_lf) > 0) ? (string) @file_get_contents($rn_lf, false, null, max(0, filesize($rn_lf) - 16384)) : '';
+    if (trim($rn_lt) === '') { continue; } ?>
+<h3><span class="sm-mono"><?php echo rn_e($rn_ld); ?></span></h3>
+<div class="sm-log"><?php echo rn_e($rn_lt); ?></div>
 <?php } ?>
 
 <div class="sm-legende">
@@ -1879,6 +2250,10 @@ foreach ($rn_autos as $rn_f) {
     }
     for (var m = 0; m < reiter.length; m++) {
         reiter[m].addEventListener('click', function (e) {
+            /* V7-a (Gruppe 40, Regeln/04 :189): nur der Reiter Test laedt die
+             * Seite neu - seine Pruefzeilen sollen frisch sein. */
+            var r = this;
+            if (r.getAttribute('data-neuladen') === '1') { return; }
             e.preventDefault();
             zeige(this.getAttribute('data-ziel'));
         });

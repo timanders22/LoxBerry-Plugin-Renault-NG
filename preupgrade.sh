@@ -121,6 +121,53 @@ rn_hat_inhalt() {
 SICH="${KONF}.backup.config.php"
 RETTUNG="${DATEN}.rettung"
 
+# V4 (Gruppe 40, T1-3/F2): eine Datei UNTEILBAR sichern - Wortlaut in preupgrade.sh
+# und postupgrade.sh gleich. Bis 2.1.19 stand hier "cp -f": cp kuerzt das Ziel zuerst,
+# und bei voller Karte (in WSL gemessen mit ulimit -f 2) blieb eine Zweitschrift von
+# 2048 statt 4075 Byte - die heile war fort. Jetzt: gleiche Datei -> nichts tun;
+# sonst Nebendatei mit umask 077 (Rechte 600 schon vor dem mv, kein 0644-Fenster),
+# Vergleich, dann mv. rm -f trifft nur die eigene Nebendatei, nie Bestand.
+rn_sicher_kopieren() {
+    [ -f "$2" ] && cmp -s "$1" "$2" && return 0          # gleich: nichts kopieren
+    ( umask 077 && cp -p "$1" "$2.tmp.$$" ) 2>/dev/null \
+      && chmod 600 "$2.tmp.$$" 2>/dev/null \
+      && cmp -s "$1" "$2.tmp.$$" \
+      && mv -f "$2.tmp.$$" "$2" && return 0
+    rm -f "$2.tmp.$$" 2>/dev/null
+    return 1
+}
+
+# Scheitert die Sicherung, entscheidet die vorhandene Zweitschrift: hat sie Inhalt,
+# wird sie nach dem Update zurueckgespielt (<ERROR>, rc 1); hat sie keinen, bricht
+# das Update hier ab (exit 2, VOR purge_installation - master :888-891), damit die
+# Einstellungen nicht verloren gehen.
+rn_sicherung_gescheitert() {
+    if rn_hat_inhalt "$SICH"; then
+        echo "<ERROR> Konfiguration konnte nicht nach $SICH gesichert werden - die vorhandene"
+        echo "<ERROR> Zweitschrift ist heil und wird nach dem Update zurueckgespielt."
+        rc=1
+        return 0
+    fi
+    echo "<FAIL> Die Konfiguration liess sich nicht sichern, und es gibt keine heile Zweitschrift - das Update wird abgebrochen, damit die Einstellungen nicht verloren gehen. Platz auf der Karte pruefen."
+    [ "$RN_MARKE_VORHER" = 1 ] || rm -f "$MARKE" 2>/dev/null
+    exit 2
+}
+
+# ===================================================================
+# 0b. BEFEHLSBRUECKE ANHALTEN (Gruppe 40, 2.2)
+# ===================================================================
+# Vor dem Austausch der Dateien; die Marke liegt schon - der Waechter im
+# Minutentakt startet sie bis zum Ende des Updates nicht neu. Bis 2.1.19 gab es
+# keine Bruecke (dann fehlt die Datei).
+BBSH="REPLACELBPBINDIR/befehlsbruecke.sh"
+case "$BBSH" in
+    /?*) if [ -f "$BBSH" ]; then
+             echo "<INFO> Befehlsbruecke: $(timeout 40 bash "$BBSH" stop 2>&1 | head -n 1)"
+         else
+             echo "<INFO> Befehlsbruecke: noch nicht installiert - nichts anzuhalten."
+         fi ;;
+esac
+
 mkdir -p "$KONF" 2>/dev/null
 
 # ===================================================================
@@ -161,12 +208,10 @@ if [ -f "$KONF/config.php" ]; then
         rc=1
     else
         [ "$rn_k" = 2 ] && echo "<INFO> Der Inhalt der Konfiguration liess sich nicht pruefen (php) - sie wird gesichert wie vorgefunden."
-        if cp -f "$KONF/config.php" "$SICH"; then
-            chmod 600 "$SICH" 2>/dev/null || echo "<WARNING> chmod 600 auf $SICH fehlgeschlagen."
+        if rn_sicher_kopieren "$KONF/config.php" "$SICH"; then
             echo "<OK> Konfiguration gesichert nach $SICH."
         else
-            echo "<ERROR> Konfiguration konnte nicht nach $SICH gesichert werden."
-            rc=1
+            rn_sicherung_gescheitert
         fi
     fi
 elif [ -f "$ALT/config.php" ]; then
@@ -175,21 +220,18 @@ elif [ -f "$ALT/config.php" ]; then
     # ist nur fuer den Fall, dass postupgrade.sh nicht laeuft - der Ordner
     # selbst wird gleich ebenfalls geloescht.
     cp -f "$ALT/config.php" "$KONF/config.php" 2>/dev/null
-    if cp -f "$ALT/config.php" "$SICH"; then
-        chmod 600 "$KONF/config.php" "$SICH" 2>/dev/null
+    chmod 600 "$KONF/config.php" 2>/dev/null
+    if rn_sicher_kopieren "$ALT/config.php" "$SICH"; then
         echo "<OK> Konfiguration aus dem Programmordner gesichert nach $SICH."
     else
-        echo "<ERROR> Konfiguration aus dem Programmordner konnte nicht gesichert werden."
-        rc=1
+        rn_sicherung_gescheitert
     fi
 elif [ -f "$KONF/config.php.backup" ]; then
     # Fall C: nur die alte Zweitschrift ist noch da (Update von 2.0.x).
-    if cp -f "$KONF/config.php.backup" "$SICH"; then
-        chmod 600 "$SICH" 2>/dev/null
+    if rn_sicher_kopieren "$KONF/config.php.backup" "$SICH"; then
         echo "<OK> Alte Zweitschrift aus dem Konfigordner herausgeholt."
     else
-        echo "<ERROR> Alte Zweitschrift konnte nicht herausgeholt werden."
-        rc=1
+        rn_sicherung_gescheitert
     fi
 else
     # Dieses Skript laeuft nur bei einem Update - "Erstinstallation" war hier
@@ -198,12 +240,14 @@ else
 fi
 
 # ===================================================================
-# 2. AUFZEICHNUNG (database*.csv)
+# 2. AUFZEICHNUNG (database*.csv) UND MERKER (session*)
 # ===================================================================
-# Das ist die einzige Datei des Plugins, die sich nicht neu beschaffen
-# laesst: der Zwischenspeicher wird beim naechsten Abruf neu geschrieben,
-# die Anmeldung neu geholt, das Protokoll ist ohnehin fluechtig. Die
-# Ladehistorie waechst ueber Monate und ist danach fort.
+# Die Ladehistorie waechst ueber Monate und laesst sich nicht neu beschaffen.
+# Seit 2.1.20 (V2, T1-1) gehen auch die Zwischenspeicher session, session2..4
+# mit: sie tragen die Merker "Meldung bei Akkustand gesendet" und "laedt" -
+# bis 2.1.19 waren sie nach jedem Update fort, und eine laufende Ladung meldete
+# sich danach noch einmal. Die Anmeldung (Datei anmeldung) wird NICHT gerettet:
+# sie wird neu geholt (Pruefbericht "Nicht tun").
 #
 # Der Rettungsordner wird NEBEN seinem Platz gebaut (<rettung>.neu), jede
 # Datei byteweise verglichen, und erst dann an seine Stelle gesetzt (Regeln/06,
@@ -230,6 +274,9 @@ fi
 NEU="${RETTUNG}.neu"
 zu_retten=0
 ls "$DATEN"/database*.csv >/dev/null 2>&1 && zu_retten=1
+for f in session session2 session3 session4; do
+    [ -f "$DATEN/$f" ] && zu_retten=1
+done
 for f in session database.csv; do
     [ -f "$ALT/$f" ] && zu_retten=1
 done
@@ -260,6 +307,16 @@ if [ "$zu_retten" = 1 ]; then
                 fehler=1
             fi
         done
+        # V2: die Zwischenspeicher aus data/ (je Datei verglichen, wie die CSV).
+        for f in session session2 session3 session4; do
+            [ -f "$DATEN/$f" ] || continue
+            if cp -p "$DATEN/$f" "$NEU/$f" && cmp -s "$DATEN/$f" "$NEU/$f"; then
+                gerettet=$((gerettet + 1))
+            else
+                echo "<ERROR> $f konnte nicht gesichert werden."
+                fehler=1
+            fi
+        done
         for f in session database.csv; do
             [ -f "$ALT/$f" ] || continue
             # Was schon aus data/ kam, ist der juengere Stand.
@@ -277,7 +334,7 @@ if [ "$zu_retten" = 1 ]; then
             # der Name des bei einer Neuinstallation beiseitegelegten Bestands
             # (postinstall.sh), und der darf hier nicht verschwinden.
             if mv "$NEU" "$RETTUNG"; then
-                echo "<OK> $gerettet Datei(en) der Ladehistorie gesichert nach $RETTUNG."
+                echo "<OK> $gerettet Datei(en) der Ladehistorie und Zwischenspeicher gesichert nach $RETTUNG."
             else
                 echo "<ERROR> Der Rettungsordner liess sich nicht an seinen Platz setzen - die"
                 echo "<ERROR> Kopie liegt unter $NEU."

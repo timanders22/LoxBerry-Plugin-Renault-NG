@@ -91,6 +91,22 @@ rn_hat_inhalt() {
 
 mkdir -p "$KONF" 2>/dev/null
 
+# V4 (Gruppe 40, T1-3/F2): eine Datei UNTEILBAR sichern - Wortlaut in preupgrade.sh
+# und postupgrade.sh gleich. Bis 2.1.19 stand hier "cp -f": cp kuerzt das Ziel zuerst,
+# und bei voller Karte (in WSL gemessen mit ulimit -f 2) blieb eine Zweitschrift von
+# 2048 statt 4075 Byte - die heile war fort. Jetzt: gleiche Datei -> nichts tun;
+# sonst Nebendatei mit umask 077 (Rechte 600 schon vor dem mv, kein 0644-Fenster),
+# Vergleich, dann mv. rm -f trifft nur die eigene Nebendatei, nie Bestand.
+rn_sicher_kopieren() {
+    [ -f "$2" ] && cmp -s "$1" "$2" && return 0          # gleich: nichts kopieren
+    ( umask 077 && cp -p "$1" "$2.tmp.$$" ) 2>/dev/null \
+      && chmod 600 "$2.tmp.$$" 2>/dev/null \
+      && cmp -s "$1" "$2.tmp.$$" \
+      && mv -f "$2.tmp.$$" "$2" && return 0
+    rm -f "$2.tmp.$$" 2>/dev/null
+    return 1
+}
+
 # ===================================================================
 # 1. KONFIGURATION
 # ===================================================================
@@ -135,7 +151,8 @@ for SICH in "${KONF}.backup.config.php" "$KONF/config.php.backup"; do
             echo "<WARNING> $RN_KAPUTT daneben."
         fi
     fi
-    if cp -f "$SICH" "$KONF/config.php"; then
+    # V4: dieselbe unteilbare Kopie wie beim Sichern (bis 2.1.19 cp -f).
+    if rn_sicher_kopieren "$SICH" "$KONF/config.php"; then
         chmod 600 "$KONF/config.php" 2>/dev/null \
             || echo "<WARNING> chmod 600 auf die Konfiguration fehlgeschlagen."
         echo "<OK> Konfiguration aus der Zweitschrift wiederhergestellt ($SICH)."
@@ -212,10 +229,22 @@ if [ -d "$RETTUNG" ]; then
             fi
         done
         gesamt=$(ls "$RETTUNG"/database*.csv 2>/dev/null | wc -l)
-        for f in "$RETTUNG/session"; do
+        # V2 (Gruppe 40): jede session* zurueck, wenn am Ziel keine liegt (eine Datei
+        # aus der Luecke ist der juengere Stand). "Alles zurueck" zaehlt sie mit.
+        for f in "$RETTUNG"/session "$RETTUNG"/session2 "$RETTUNG"/session3 "$RETTUNG"/session4; do
             [ -f "$f" ] || continue
-            [ -f "$DATEN/session" ] && continue
-            cp -f "$f" "$DATEN/session" 2>/dev/null
+            gesamt=$((gesamt + 1))
+            ziel="$DATEN/$(basename "$f")"
+            if [ ! -f "$ziel" ]; then
+                if cp -p "$f" "$ziel" 2>/dev/null; then
+                    chmod 644 "$ziel" 2>/dev/null
+                    zurueck=$((zurueck + 1))
+                else
+                    echo "<ERROR> $(basename "$f") liess sich nicht zurueckholen."
+                    rc=1
+                fi
+            fi
+            [ -f "$ziel" ] && belegt=$((belegt + 1))
         done
         if [ "$zurueck" -gt 0 ] || [ "$zusammen" -gt 0 ]; then
             echo "<OK> Ladehistorie: $zurueck Datei(en) zurueckgeholt, $zusammen mit den Zeilen aus der Zeit des Updates zusammengefuehrt."
@@ -234,6 +263,76 @@ else
     # Befund I3: dieses Skript laeuft nur bei einem Update.
     echo "<INFO> Kein Rettungsordner vorhanden - nichts zurueckzuholen."
 fi
+
+# ===================================================================
+# 3. E-E3 (Hausherr 29.10.2026, abweichend): alte Duplikate der Aufzeichnung
+# ===================================================================
+# Bis 2.1.19 entstand bei jedem gelungenen Abruf eine Zeile, auch mit denselben
+# Werten (T2-4). Einmal beim Update auf 2.1.20: aufeinanderfolgende gleiche Zeilen
+# (gleicher Zeitstempel und gleiche Werte) werden zusammengefasst. Vorher liegt die
+# Datei als database*.csv.vor_2120 (0600) daneben; die Kopfzeile bleibt; keine
+# andere Zeile aendert sich. Liegt die Sicherung schon da, ist es geschehen.
+RN_BESTAND="REPLACELBPBINDIR/rn_bestand.php"
+case "$RN_BESTAND" in
+    /?*) [ -f "$RN_BESTAND" ] || RN_BESTAND="" ;;
+    *) RN_BESTAND="" ;;
+esac
+[ -n "$RN_BESTAND" ] || RN_BESTAND="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/bin/rn_bestand.php"
+for f in "$DATEN"/database*.csv; do
+    [ -f "$f" ] || continue
+    if [ -e "$f.vor_2120" ]; then
+        echo "<INFO> $(basename "$f"): schon aufgeraeumt ($(basename "$f").vor_2120 liegt daneben)."
+        continue
+    fi
+    if ! command -v php >/dev/null 2>&1 || [ ! -f "$RN_BESTAND" ]; then
+        echo "<WARNING> $(basename "$f"): php oder rn_bestand.php fehlt - Duplikate nicht aufgeraeumt."
+        rc=1
+        continue
+    fi
+    RN_AUS=$(php "$RN_BESTAND" --csv-aufraeumen "$f" 2>&1)
+    case "$?" in
+        0) echo "<OK> $RN_AUS" ;;
+        *) echo "<WARNING> $RN_AUS"; rc=1 ;;
+    esac
+done
+
+# ===================================================================
+# 4. endpunkt_ein IM BESTAND (Gruppe 40, 2.3)
+# ===================================================================
+# Eine Neuinstallation hat den HTTP-Endpunkt aus (Vorgabe N). Ein Update von 2.1.19
+# oder aelter darf ihn nicht stumm abschalten - wer die HTTP-Vorlage nutzt, aendert
+# nichts. Fehlt der Schluessel in der zurueckgespielten config.php, setzt
+# bin/rn_bestand.php ihn auf Y (nur einen FEHLENDEN Schluessel, ueber rn_config_write()
+# samt Zweitschrift, 0600). Ein vorhandener Wert bleibt.
+if [ -f "$KONF/config.php" ] && command -v php >/dev/null 2>&1 && [ -f "$RN_BESTAND" ]; then
+    RN_AUS=$(env LBHOMEDIR="$(dirname "$(dirname "$(dirname "$KONF")")")" LBPPLUGINDIR="$(basename "$KONF")" \
+             php "$RN_BESTAND" --endpunkt-ein 2>&1)
+    case "$?" in
+        0) echo "<OK> $RN_AUS" ;;
+        3) echo "<INFO> $RN_AUS" ;;
+        *) echo "<WARNING> $RN_AUS"; rc=1 ;;
+    esac
+fi
+
+# ===================================================================
+# 5. BEFEHLSBRUECKE STARTEN (Gruppe 40, 2.2)
+# ===================================================================
+# Als Letztes, nach dem Zurueckholen der Konfiguration. befehlsbruecke.sh startet
+# nur mit dem Haken "Befehle ueber MQTT annehmen" (ab Werk aus, auch beim Update)
+# und misst danach, ob sie laeuft. Die Marke (bb_pfade()['marke'] = diese Marke)
+# raeumt der trap am Ende ab; bis dahin startet der Waechter nichts.
+BBSH="REPLACELBPBINDIR/befehlsbruecke.sh"
+case "$BBSH" in
+    /?*) if [ -f "$BBSH" ]; then
+             rn_marke_weg
+             BB_AUS=$(timeout 40 bash "$BBSH" start 2>&1 | head -n 1)
+             case "$BB_AUS" in
+                 *gestartet*|*laeuft*) echo "<OK> Befehlsbruecke: $BB_AUS" ;;
+                 "Haken aus - kein Start.") echo "<INFO> Befehlsbruecke: aus (Reiter MQTT, Haken 'Befehle ueber MQTT annehmen')." ;;
+                 *) echo "<WARNING> Befehlsbruecke: $BB_AUS - der Minutentakt versucht es erneut." ;;
+             esac
+         fi ;;
+esac
 
 echo "<INFO> Konfiguration und Ladehistorie werden NEBEN ihren Ordnern gesichert,"
 echo "<INFO> weil der Installer config/plugins/<ordner>/ und data/plugins/<ordner>/"

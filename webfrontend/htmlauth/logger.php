@@ -145,13 +145,19 @@ function renault_log_taeglich($level, $msg)
  * Bei HTTP < 400 wird bewusst NUR der Statuscode geschrieben - eine
  * erfolgreiche Gigya-Antwort enthaelt den Sitzungswert, und der gehoert
  * nicht in eine Datei, die die Oberflaeche anzeigt.
+ *
+ * Seit 2.1.20 (Gruppe 40, Nahtstelle 1.0) bekommt die Funktion das Ergebnis
+ * von rn_http_senden() statt des curl-Griffs: array(HTTP-Code, Antwort oder
+ * false, curl-Fehlertext, Dauer s). Die Zeilen sind dieselben.
  */
-function renault_log_api($name, $ch, $response)
+function renault_log_api($name, array $erg)
 {
-    $http = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $erg += array(0, false, '', 0.0);
+    $http = (int) $erg[0];
+    $response = $erg[1];
     if ($response === FALSE) {
-        renault_log('ERROR', $name . ': cURL-Fehler: ' . curl_error($ch)
-            . ' (nach ' . round(curl_getinfo($ch, CURLINFO_TOTAL_TIME), 1) . ' s)');
+        renault_log('ERROR', $name . ': cURL-Fehler: ' . (string) $erg[2]
+            . ' (nach ' . round((float) $erg[3], 1) . ' s)');
         return;
     }
     if ($http >= 400) {
