@@ -127,6 +127,8 @@ $rn_bis = date('Ymd');
 foreach (rn_fahrzeuge($rn_cfg) as $rn_f) {
     if ($rn_f['vin'] === '') { continue; }
     $rn_name = $rn_f['name'];
+    /* 2.1.23: im Zustand "keine Fahrzeugdaten" ruht die Ladehistorie; sie holt beim Wiederkommen den ganzen Zeitraum. */
+    if (rn_keine_daten_aktiv($rn_f)) { echo $rn_name . ";SKIP\n"; continue; }
 
     $rn_url = 'https://api-wired-prod-1-euw1.wrd-aws.com/commerce/v1/accounts/'
             . rawurlencode($rn_konto) . '/kamereon/kca/car-adapter/v1/cars/'

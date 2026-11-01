@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.22 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.23 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,49 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Neu in 2.1.23
+
+Eine zweite Liste aus derselben Durchsicht, wieder jede Aussage nachgemessen; was stimmt, ist behoben. Renault-seitig
+weiter nur mit Attrappen geprüft – das Plugin bleibt **BETA**.
+
+Aus der Einrichtung am Gerät kam dazu: Wies das Speichern ein anderes Feld ab, standen Breiten- und Längengrad danach
+leer da, und ein eingetipptes Sprechtoken war ohne Hinweis weg. Jetzt bleiben die Koordinaten stehen; bei Kennwort,
+Schlüssel und Sprechtoken sagt die Meldung, dass sie neu einzutragen sind, und das Feld ist markiert. Jede Abweisung
+steht mit den Feldnamen im Protokoll. Gerätenamen mit Apostroph werden angenommen. Die Felder heißen jetzt
+„Breitengrad des Hauses“ und „Längengrad des Hauses“.
+
+Antwortet Renault für ein Fahrzeug wiederholt mit HTTP 404 (`err.func.wired.notFound`, häufig: Online-Abo ausgelaufen,
+belegt ist das nicht), führt das Plugin den Zustand „keine Fahrzeugdaten“: Nach drei gleichen Antworten über mindestens
+10 Minuten steht eine WARN-Zeile im Protokoll, danach höchstens eine Zeile je Tag. Abgefragt wird alle 30 Minuten statt
+alle 5, die Ladehistorie ruht, und sobald wieder Daten kommen, schaltet es mit einer Zeile von selbst zurück. Kopf und
+Reiter Test zeigen einen Hinweis, der Healthcheck ebenso. `ok` bleibt 0, denn es kommen ja keine Daten. Mail, SignalBot
+und Ansage gibt es dafür nicht. Andere Fehler (401, 5xx, Netz, falsche Fahrgestellnummer) melden sich unverändert.
+
+* **Hinweis-Befehl:** Der Text an den eingetragenen Befehl behält Umlaute und andere Sonderzeichen. Bisher fielen sie unter
+  PHP 7.4 ohne jede Meldung weg.
+* **Leser der Haus-Themen:** Reagiert `mosquitto_sub` nicht auf das Beenden, wird es nach höchstens 2 Sekunden hart
+  beendet. Bisher konnte der Leser daran stehen bleiben und hielt so lange seine Sperre. Bei MGiSmart ist das am Gerät
+  passiert, hier nur mit Attrappe nachgestellt.
+* **Endpunkt:** Eine Variable in `index.php` ist umbenannt, damit das LoxBerry-SDK sie nicht überschreiben kann. Mit
+  dem Sprachmodul dieser Fassung trat das nicht auf; nachgestellt brach der Aufruf ab.
+* **`?selftest=0` und `?selftest=`** lösen keinen Selbsttest mehr aus. `?selftest=0&aktion=abruf&token=…` ruft jetzt
+  wirklich ab; `?selftest=1` antwortet wie bisher.
+* **Reiter Test, Zeile Endpunkt:** Ist die Oberfläche über https offen, zeigte die Zeile ein Kreuz, obwohl der
+  Endpunkt heil ist – gefragt wurde per http auf dem SSL-Port. Jetzt gilt dort der eingetragene Webport.
+* **Cron:** Ist `cron.err` nicht schreibbar, laufen die Abrufe trotzdem. Bisher brach schon die Umleitung den Aufruf
+  ab, bevor php startete, ohne jede Spur. `cron.01min` meldet das und eine nicht zu öffnende Sperrdatei einmal je
+  Stunde im Protokoll.
+* **„Vorklimatisierung gescheitert“ an SignalBot** geht jetzt im nächsten Takt hinaus, wenn der Broker im Moment des
+  Aufgebens nicht erreichbar war. Bisher wartete die Meldung auf den nächsten Wechsel von `Vorklima`, meist bis nach
+  der Abfahrt.
+* **Deinstallation:** Eine überschrittene Zeitschranke beim Leeren der MQTT-Themen gibt eine `<WARNING>`; bisher endete
+  das Skript still mit 0 und nannte die Themen geleert. Der Aufruf von Hand ohne Argumente (mit `LBHOMEDIR`) räumt
+  jetzt auf, statt sich für ein anderes Plugin zu halten.
+* **Befehlsbrücke:** `bin/befehle_zuordnung.php` lädt `rn_lib.php` nur noch aus dem eigenen Plugin.
+
+Nachgemessen und nicht geändert: `Vorklima` ist nicht retained und kommt bei jedem gelungenen Abruf, ein abgeschalteter
+Haken hinterlässt also nichts im Broker; `befehlsbruecke.sh stop` findet die Wurzel beim Deinstallieren selbst.
 
 ## Neu in 2.1.22
 

@@ -31,17 +31,17 @@
  * rn_config_read(false) gelesen (legt nichts an, wie der unangemeldete Endpunkt).
  */
 if (!function_exists('rn_befehl_annehmen')) {
-    $rn_kand = array();
-    $rn_kand[] = 'REPLACELBPHTMLAUTHDIR/rn_lib.php';
-    $rn_kand[] = dirname(__DIR__) . '/webfrontend/htmlauth/rn_lib.php';
+    /* 2.1.23 (Fremdpruefung E, wie MGiSmart 1.1.30 und bin/healthcheck): welche Lage gilt, entscheidet der eigene
+     * Ablageort. Bis 2.1.22 stand eine Kandidatenliste da: installiert gewann zwar der vom Installer eingesetzte Pfad
+     * (am Geraet 01.11.2026 nachgesehen), fehlte er aber, waere als Naechstes
+     * <home>/bin/plugins/webfrontend/htmlauth/rn_lib.php geladen worden - ein Ort ausserhalb des Plugins. */
     if (basename(dirname(__DIR__)) === 'plugins') {
-        $rn_kand[] = dirname(dirname(dirname(__DIR__))) . '/webfrontend/htmlauth/plugins/' . basename(__DIR__) . '/rn_lib.php';
+        $rn_bib = dirname(dirname(dirname(__DIR__))) . '/webfrontend/htmlauth/plugins/' . basename(__DIR__) . '/rn_lib.php';
+    } else {
+        $rn_bib = dirname(__DIR__) . '/webfrontend/htmlauth/rn_lib.php';
     }
-    foreach ($rn_kand as $rn_k) {
-        if (strpos($rn_k, 'REPLACE') !== 0 && is_file($rn_k)) {
-            require_once $rn_k;
-            break;
-        }
+    if (is_file($rn_bib)) {
+        require_once $rn_bib;
     }
 }
 $rn_grund_soll = 'Die 60-s-Gleichwert-Bremse X-7 des Plugins bleibt die eine Pruefung; sie antwortet UNVERAENDERT, '

@@ -394,6 +394,8 @@ foreach ($rn_mit_vin as $rn_f) {
         $rn_takt = ($rn_s[10] == 1 || $rn_s[6] === 'Y')
             ? max(1, (int) $rn_cfg['cron_acs'])
             : max(1, (int) $rn_cfg['cron_ncs']);
+        /* 2.1.23: im Zustand "keine Fahrzeugdaten" seltener (rn_kd_schritt()). */
+        if (rn_keine_daten_aktiv($rn_f)) { $rn_takt = max($rn_takt, RN_KD_TAKT_MIN); }
         $rn_d = date_create_from_format('YmdHi', $rn_s[4] !== '' ? $rn_s[4] : '202001010000');
         if ($rn_d === false) { $rn_d = date_create('2020-01-01'); }
         date_add($rn_d, date_interval_create_from_date_string($rn_takt . ' minutes'));
@@ -428,13 +430,22 @@ foreach ($rn_mit_vin as $rn_f) {
     $rn_wetter_temp = '';        // Aussentemperatur des Wetterdienstes aus DIESEM Lauf
 
     /* ---- Batterie- und Ladestatus ---- */
+    /* 2.1.23: Zustand "keine Fahrzeugdaten" (rn_kd_schritt() in rn_lib.php). Nur das 404 notFound wird still. */
+    $rn_kd = rn_kd_lesen($rn_f);
+    rn_antwort_leise(!empty($rn_kd['aktiv']));
     list($rn_code, $rn_d, $rn_rohantwort) = rn_get(
         rn_kca($rn_konto, $rn_vin, 'battery-status', $rn_land, 'v2'),
         $kamereon_api, $rn_jwt, 'Batterie-Status ' . $rn_name . ' (battery-status)');
+    rn_antwort_leise(false);
+    $rn_kd_art = isset($rn_d['data']['attributes']) ? 'daten'
+        : (rn_ist_keine_daten($rn_code, $rn_rohantwort) ? 'notfound' : 'anders');
+    $rn_kd_leise = !empty($rn_kd['aktiv']) && $rn_kd_art === 'notfound';
 
     if (!isset($rn_d['data']['attributes'])) {
-        renault_log('ERROR', 'Batterie-Status ' . $rn_name . ': keine Daten (HTTP ' . $rn_code
-            . '). Antwort: ' . substr(preg_replace('/\s+/', ' ', $rn_rohantwort), 0, 400));
+        if (!$rn_kd_leise) {
+            renault_log('ERROR', 'Batterie-Status ' . $rn_name . ': keine Daten (HTTP ' . $rn_code
+                . '). Antwort: ' . substr(preg_replace('/\s+/', ' ', $rn_rohantwort), 0, 400));
+        }
         /* 401/403: das Token ist ungueltig geworden (etwa nach einem
          * Passwortwechsel bei Renault). Bis 2.0.6 wurde erst um Mitternacht
          * neu angemeldet - das Plugin stand also bis zum Tageswechsel. */
@@ -449,7 +460,7 @@ foreach ($rn_mit_vin as $rn_f) {
             rn_anmeldung_schreiben($rn_anm_neu);
         }
         // Diagnose bei 404 "no data for this vin and uid".
-        if (strpos($rn_rohantwort, 'notFound') !== FALSE) {
+        if (!$rn_kd_leise && strpos($rn_rohantwort, 'notFound') !== FALSE) {
             list($rn_c2, $rn_d2) = rn_get(RN_BASIS . '/accounts/' . rawurlencode($rn_konto)
                 . '/vehicles?country=' . rawurlencode($rn_land), $kamereon_api, $rn_jwt);
             if (isset($rn_d2['vehicleLinks'])) {
@@ -458,6 +469,7 @@ foreach ($rn_mit_vin as $rn_f) {
                     if (!empty($rn_vl['vin'])) { $rn_vins[] = $rn_vl['vin']; }
                 }
                 if (!$rn_vins) {
+                    $rn_kd_art = 'anders';     // kein Fahrzeug im Konto: Einrichtungsfehler, bleibt laut
                     renault_log('ERROR', 'Diagnose: In Konto ' . $rn_konto . ' ist KEIN Fahrzeug '
                         . 'verknuepft. Fahrzeug in der My-Renault-App diesem Konto hinzufuegen, oder '
                         . 'es wird das falsche Konto verwendet (Zwischenspeicher im Reiter Test leeren).');
@@ -465,6 +477,7 @@ foreach ($rn_mit_vin as $rn_f) {
                     renault_log('WARN', 'Diagnose: Im Konto verknuepfte Fahrgestellnummern: '
                         . implode(', ', $rn_vins) . ' - eingetragen: ' . $rn_vin);
                     if (!in_array($rn_vin, $rn_vins, true)) {
+                        $rn_kd_art = 'anders';     // falsche Fahrgestellnummer: Einrichtungsfehler, bleibt laut
                         renault_log('ERROR', 'Diagnose: Die eingetragene Fahrgestellnummer stimmt mit '
                             . 'KEINER im Konto ueberein. Bitte in den Einstellungen berichtigen.');
                     }
@@ -601,6 +614,29 @@ foreach ($rn_mit_vin as $rn_f) {
             }
         }
         $rn_s[3] = $rn_md5;
+    }
+
+    /* ---- 2.1.23: Zustand "keine Fahrzeugdaten" fortschreiben ----
+     * Beim Wechsel und einmal am Tag zwei Nachfragen, die den Hinweis belegen: steht das Fahrzeug im Konto, antwortet
+     * der Kilometerstand? Beides ohne eigene Protokollzeile. */
+    $rn_kd_alt = $rn_kd;
+    list($rn_kd, $rn_kd_ereignis) = rn_kd_schritt($rn_kd, $rn_kd_art, time());
+    if ($rn_kd != $rn_kd_alt) { rn_kd_schreiben($rn_f, $rn_kd); }
+    if ($rn_kd_ereignis === 'wechsel' || $rn_kd_ereignis === 'tag') {
+        list(, $rn_d3) = rn_get(RN_BASIS . '/accounts/' . rawurlencode($rn_konto) . '/vehicles?country=' . rawurlencode($rn_land),
+            $kamereon_api, $rn_jwt);
+        $rn_kd_konto = 'unbekannt';
+        if (isset($rn_d3['vehicleLinks']) && is_array($rn_d3['vehicleLinks'])) {
+            $rn_kd_konto = 'nein';
+            foreach ($rn_d3['vehicleLinks'] as $rn_vl) {
+                if (isset($rn_vl['vin']) && $rn_vl['vin'] === $rn_vin) { $rn_kd_konto = 'ja'; }
+            }
+        }
+        list($rn_kd_c) = rn_get(rn_kca($rn_konto, $rn_vin, 'cockpit', $rn_land), $kamereon_api, $rn_jwt);
+        renault_log($rn_kd_ereignis === 'wechsel' ? 'WARN' : 'INFO', rn_kd_satz($rn_name, $rn_kd, $rn_kd_konto, $rn_kd_c));
+    } elseif ($rn_kd_ereignis === 'zurueck') {
+        renault_log('INFO', 'Renault liefert fuer ' . $rn_name . ' wieder Batteriedaten (ohne Daten seit '
+            . date('d.m. H:i', (int) $rn_kd_alt['seit']) . '). Abruf und Ladehistorie wieder im normalen Takt.');
     }
 
     /* ---- Vorklimatisierung: Zustand und Temperaturen ----
@@ -742,7 +778,8 @@ foreach ($rn_mit_vin as $rn_f) {
      * des Ergebnisses - nie der Text, nie ein Token. Ein Fehler hier haelt den Abruf
      * nicht auf. */
     try {
-        foreach (rn_ansage_lauf($rn_cfg, $rn_f, $rn_erfolg, $rn_s) as $rn_an) {
+        /* 2.1.23: das 404 notFound zaehlt nicht als Ausfall - keine Ansage dafuer (rn_kd_schritt()). */
+        foreach (($rn_kd_art === 'notfound' ? array() : rn_ansage_lauf($rn_cfg, $rn_f, $rn_erfolg, $rn_s)) as $rn_an) {
             renault_log($rn_an['stufe'], 'Ansage ' . $rn_an['anlass'] . ' (Fahrzeug ' . (int) $rn_f['nr']
                 . '): ' . $rn_an['kurz']);
         }

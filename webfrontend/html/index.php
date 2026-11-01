@@ -178,8 +178,9 @@ register_shutdown_function(function () {
  * data/plugins/<ordner>, log/plugins, log/plugins/<ordner>, mit 0775. Der
  * Hausstandard sagt: der unangemeldete Endpunkt legt nichts an, und was ein
  * Endpunkt anlegt, legt er nach der Tokenpruefung an. */
-$cfg  = rn_config_read(false);
-$soll = (string) $cfg['aktionstoken'];
+/* bis 2.1.22 hiess dieses Feld $cfg: das LoxBerry-SDK ueberschreibt ein globales $cfg beim ersten Lesen von general.json (Ausfall MGiSmart 01.11.2026). */
+$rn_lauf_cfg  = rn_config_read(false);
+$soll = (string) $rn_lauf_cfg['aktionstoken'];
 /* is_string() vor der Umwandlung: ?token[]=x ist ein Feld, und (string) auf
  * ein Feld ergibt "Array" - unter PHP 8 mit einer Warnung, die vor
  * http_response_code() hinausginge. */
@@ -199,7 +200,9 @@ $ist  = (isset($_GET['token']) && is_string($_GET['token'])) ? $_GET['token'] : 
  * Schreibzugriff. Und er ist keine Abkuerzung an der Sicherheit vorbei -
  * ein falsches Token bekommt dieselbe Abweisung wie sonst auch.
  */
-if (isset($_GET['selftest'])) {
+/* 2.1.23 (Fremdpruefung A1): !empty statt isset - bis 2.1.22 griff der Zweig auch bei ?selftest=0 und ?selftest=,
+ * und ?selftest=0&aktion=abruf&token=... antwortete SELFTEST, statt abzurufen. */
+if (!empty($_GET['selftest'])) {
     if ($soll === '') {
         rn_ende(403, 'SELFTEST;OK=0;ERR=KEIN_TOKEN_EINGERICHTET', 'WARN',
                 'Selbsttest abgewiesen - kein Aktionstoken eingerichtet');
@@ -210,9 +213,9 @@ if (isset($_GET['selftest'])) {
     }
     $rn_ausgewiesen = true;
     rn_ende(200, 'SELFTEST;OK=1;TOKEN=OK;STEUERUNG='
-       . ($cfg['steuerung_ein'] === 'Y' ? 'EIN' : 'AUS')
-       . ';FAHRZEUGE=' . count(rn_fahrzeuge($cfg))
-       . ';ENDPUNKT=' . ((string) $cfg['endpunkt_ein'] === 'Y' ? 'EIN' : 'AUS'), 'INFO', 'Selbsttest beantwortet');
+       . ($rn_lauf_cfg['steuerung_ein'] === 'Y' ? 'EIN' : 'AUS')
+       . ';FAHRZEUGE=' . count(rn_fahrzeuge($rn_lauf_cfg))
+       . ';ENDPUNKT=' . ((string) $rn_lauf_cfg['endpunkt_ein'] === 'Y' ? 'EIN' : 'AUS'), 'INFO', 'Selbsttest beantwortet');
 }
 
 /* ---------------------------- Token ---------------------------- */
@@ -240,7 +243,7 @@ $rn_ausgewiesen = true;
  * Loxone-Vorlage nicht stumm wird. Aus heisst: jeder Aufruf ausser ?selftest
  * bekommt nach der Tokenpruefung 403. Neue Anlagen nehmen Gateway V2 und die
  * Befehlsbruecke. */
-if ((string) $cfg['endpunkt_ein'] !== 'Y') {
+if ((string) $rn_lauf_cfg['endpunkt_ein'] !== 'Y') {
     rn_ende(403, 'RENAULT;OK=0;ERR=ENDPUNKT_AUS', 'WARN',
             'abgewiesen - der Endpunkt ist ausgeschaltet (Reiter Einbindung in Loxone, Bisheriger Weg ueber HTTP)');
 }
@@ -258,7 +261,7 @@ if (!array_key_exists($aktion, $befehle)) {
  * dem Stand heraus die Vorklimatisierung starten koennen. Die Abweisung
  * sagt ausdruecklich, wo der Schalter sitzt; eine Abweisung, die den
  * Grund verschweigt, kostet eine Stunde Suchen. */
-if (rn_befehl_schaltet($aktion) && $cfg['steuerung_ein'] !== 'Y') {
+if (rn_befehl_schaltet($aktion) && $rn_lauf_cfg['steuerung_ein'] !== 'Y') {
     rn_ende(403, 'Die Steuerung ist ausgeschaltet (Vorgabe). Im Plugin unter '
                . 'Einstellungen, Abschnitt Schalten, einschalten. '
                . 'Lesende Aufrufe (aktion=abruf) sind davon nicht betroffen.',
@@ -283,13 +286,13 @@ if ($fahrzeug < 1 || $fahrzeug > RN_MAX_FAHRZEUGE) {
     rn_ende(400, 'Ungueltige Fahrzeugnummer. Erlaubt: 1 bis ' . RN_MAX_FAHRZEUGE . '.',
             'WARN', 'abgewiesen - Fahrzeugnummer ausserhalb 1 bis ' . RN_MAX_FAHRZEUGE);
 }
-$ziel = rn_fahrzeug($fahrzeug, $cfg);
+$ziel = rn_fahrzeug($fahrzeug, $rn_lauf_cfg);
 if (!$ziel) {
     rn_ende(400, 'Fahrzeug ' . $fahrzeug . ' ist nicht eingerichtet.', 'WARN',
             'abgewiesen - Fahrzeug ' . $fahrzeug . ' nicht eingerichtet');
 }
 
-if ($cfg['username'] === '' || $cfg['password'] === '' || $ziel['vin'] === '') {
+if ($rn_lauf_cfg['username'] === '' || $rn_lauf_cfg['password'] === '' || $ziel['vin'] === '') {
     rn_ende(503, 'Zugangsdaten oder Fahrgestellnummer unvollstaendig - bitte im '
                . 'Plugin die Einstellungen ausfuellen.', 'ERROR',
                'abgewiesen - Zugangsdaten oder Fahrgestellnummer unvollstaendig');
@@ -318,7 +321,7 @@ $_GET = array();                 // nichts Fremdes durchreichen
 $rn_zeilen = array();
 $rn_befehl = null;
 if ($aktion !== 'abruf') {
-    $rn_be = rn_befehl_annehmen($aktion, $fahrzeug, 'http', $cfg);
+    $rn_be = rn_befehl_annehmen($aktion, $fahrzeug, 'http', $rn_lauf_cfg);
     if ($rn_be[1] === 'UNVERAENDERT') {
         rn_ende(200, $rn_be[3], 'INFO', 'Aktion ' . $aktion . ' fuer Fahrzeug ' . $fahrzeug . ': derselbe Befehl ging '
             . 'vor kurzem hinaus - nichts gesendet (gleiche Sollwerte innerhalb von ' . RN_GLEICHWERT_S

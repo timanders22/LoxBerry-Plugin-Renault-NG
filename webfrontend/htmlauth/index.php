@@ -63,10 +63,11 @@ function rn_eingabe_felder($formular)
      * (ansage_x2_felder() nennt sie nicht; markiert werden koennen sie). */
     $f = array_merge($f, ansage_x2_felder(rn_ansage_opt()));
     foreach (rn_ansage_anlaesse() as $a) { $f[] = $a[0]; }
-    /* Gruppe 40 (2.1.20). Die Heimkoordinaten reisen NIE mit (3.1 Datenschutz:
-     * sie stehen nur in config.php) - ihr Feld zeigt nach einer Beanstandung den
-     * gespeicherten Wert und bleibt markiert. */
-    foreach (array('endpunkt_ein', 'heim_ein', 'heim_radius', 'haus_abfahrt_ein', 'vorklima_anwesend_ein',
+    /* Gruppe 40 (2.1.20). Seit 2.1.23 (Meldung des Hausherrn) reisen auch die Heimkoordinaten mit, wie in Audi, BYD,
+     * Skoda, VW, MGiSmart und Raumklima: bis 2.1.22 standen sie nach JEDER Beanstandung eines anderen Felds wieder
+     * leer da. Sie liegen dafuer kurz in einmalmeldung.json (0600, beim naechsten Laden geloescht), nie in Adresse
+     * oder Protokoll. */
+    foreach (array('heim_breite', 'heim_laenge', 'endpunkt_ein', 'heim_ein', 'heim_radius', 'haus_abfahrt_ein', 'vorklima_anwesend_ein',
                    'vorklima_ein', 'vorklima_vorlauf', 'vorklima_fahrzeuge', 'vorklima_wetter_ein',
                    'vorklima_kalt_unter', 'vorklima_heiss_ueber', 'signal_bl', 'signal_csf', 'signal_praefix',
                    'ankunft_ein', 'haus_strompreis_ein') as $g) { $f[] = $g; }
@@ -629,6 +630,22 @@ if (isset($_POST['speichern'])) {
     /* X-2: nur nach einer Beanstandung (dann ist nichts gespeichert) reisen
      * die eingetippten Werte zurueck - nie die Geheimnisse. */
     if ($rn_fehler) {
+        /* 2.1.23: ein eingetipptes Kennwort, ein Schluessel oder ein Sprechtoken reist nie mit. Bis 2.1.22 war es nach
+         * einer Beanstandung ohne ein Wort weg, das Feld sah aus wie vorher. Jetzt: Feld markiert (die Ansage-Kaesten
+         * bleiben dadurch sichtbar), ein Satz dazu. */
+        $rn_geheim_neu = false;
+        foreach (rn_eingabe_geheim() as $rn_gf) {
+            if (isset($_POST[$rn_gf]) && is_string($_POST[$rn_gf]) && trim($_POST[$rn_gf]) !== '') {
+                rn_bean($rn_gf);
+                $rn_geheim_neu = true;
+            }
+        }
+        if ($rn_geheim_neu) {
+            $rn_fehler[] = rn_e(rn_t('TEXT.F_GEHEIM_NEU'));
+        }
+        /* Nur Feldnamen, nie Werte: bis 2.1.22 hinterliess ein abgewiesenes Speichern keine Spur. */
+        renault_log('WARN', 'Einstellungen nicht gespeichert (' . count($rn_fehler) . ' Beanstandungen). Felder: '
+            . (rn_bean() ? implode(', ', rn_bean()) : '-'));
         $rn_eingaben_post = rn_eingaben_sammeln('einst');
     }
     $rn_tab = 'tab-settings';
@@ -1146,6 +1163,10 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
     } ?>
 <tr><td><?php echo rn_e(sprintf(rn_t('TEXT.KOPF_LETZTER_ERFOLG'), $rn_kf['name'])); ?></td>
     <td><?php echo $rn_kz !== '' ? rn_e($rn_kz) : rn_e(rn_t('TEXT.KOPF_NOCH_KEIN')); ?></td></tr>
+<?php if ((string) $rn_kf['vin'] !== '' && rn_keine_daten_aktiv($rn_kf)) { ?>
+<tr><td><?php echo rn_e(sprintf(rn_t('TEXT.KOPF_KEINE_DATEN'), $rn_kf['name'])); ?></td>
+    <td><?php echo rn_e(sprintf(rn_t('TEXT.KEINE_DATEN_HINWEIS'), RN_KD_TAKT_MIN)); ?></td></tr>
+<?php } ?>
 <?php } ?>
 <tr><td><?php echo rn_e(rn_t('TEXT.KOPF_BROKER')); ?></td>
     <td<?php echo $rn_broker ? '' : ' class="sm-aus"'; ?>><?php echo $rn_broker
@@ -1397,11 +1418,11 @@ $rn_kauto = $rn_broker ? rn_t($rn_broker['autostart'] ? 'ALLG.EIN' : 'ALLG.AUS')
 </div>
 <div class="sm-feld">
   <label for="heim_breite"><?php echo rn_e(rn_t('HEIM.L_BREITE')); ?></label>
-  <input data-role="none" type="text" id="heim_breite" name="heim_breite" autocomplete="off" value="<?php echo rn_e($rn_cfg['heim_breite']); ?>"<?php echo rn_ein_m('heim_breite'); ?>>
+  <input data-role="none" type="text" id="heim_breite" name="heim_breite" autocomplete="off" value="<?php echo rn_e(rn_ein_w('heim_breite', $rn_cfg['heim_breite'])); ?>"<?php echo rn_ein_m('heim_breite'); ?>>
 </div>
 <div class="sm-feld">
   <label for="heim_laenge"><?php echo rn_e(rn_t('HEIM.L_LAENGE')); ?></label>
-  <input data-role="none" type="text" id="heim_laenge" name="heim_laenge" autocomplete="off" value="<?php echo rn_e($rn_cfg['heim_laenge']); ?>"<?php echo rn_ein_m('heim_laenge'); ?>>
+  <input data-role="none" type="text" id="heim_laenge" name="heim_laenge" autocomplete="off" value="<?php echo rn_e(rn_ein_w('heim_laenge', $rn_cfg['heim_laenge'])); ?>"<?php echo rn_ein_m('heim_laenge'); ?>>
   <p class="sm-hilfe"><?php echo rn_e(rn_t('HEIM.H_PUNKT')); ?></p>
 </div>
 <div class="sm-feld">

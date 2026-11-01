@@ -142,6 +142,12 @@ function rn_test_selbstpruefung($cfg, $broker, $voll = true)
     $z[] = array(rn_t('PRUEF.ENDPUNKT_EIN'), 'info',
         $cfg['endpunkt_ein'] === 'Y' ? rn_t('PRUEF.ENDPUNKT_EIN_JA') : rn_t('PRUEF.ENDPUNKT_EIN_NEIN'));
     $z[] = array(rn_t('PRUEF.SPERRE_ORT'), 'info', rn_abruf_sperre());
+    /* 2.1.23: Zustand "keine Fahrzeugdaten" - ein Hinweis, kein Fehler. */
+    foreach ($autos as $f) {
+        if ((string) $f['vin'] !== '' && rn_keine_daten_aktiv($f)) {
+            $z[] = array(sprintf(rn_t('TEXT.KOPF_KEINE_DATEN'), $f['name']), 'info', sprintf(rn_t('TEXT.KEINE_DATEN_HINWEIS'), RN_KD_TAKT_MIN));
+        }
+    }
     /* Befehlsbruecke: Lebenszeichen, letzte Quittung (2.2). */
     list($bl, $bt) = rn_bruecke_lage();
     $z[] = array(rn_t('PRUEF.BRUECKE'), $bl === null ? 'info' : $bl, $bt);
@@ -471,7 +477,12 @@ function rn_test_endpunkt($cfg)
         return array(null, rn_t('PRUEF.EP_KEIN_TOKEN'));
     }
     $p = rn_paths(false);
-    $port = isset($_SERVER['SERVER_PORT']) ? (int) $_SERVER['SERVER_PORT'] : 80;
+    /* 2.1.23 (Fremdpruefung A2): gefragt wird per http. Ist die Seite ueber https offen, nennt SERVER_PORT den
+     * SSL-Port (am Geraet 443, general.json Sslenabled; Apache antwortet dort auf http mit einem Fehlercode) - der
+     * Reiter zeigte dann ein Kreuz bei heilem Endpunkt. Ohne SERVER_PORT (Befehlszeile) stand hier fest 80. In
+     * beiden Faellen gilt der eingetragene Webport. */
+    $port = (isset($_SERVER['SERVER_PORT']) && empty($_SERVER['HTTPS']))
+        ? (int) $_SERVER['SERVER_PORT'] : ansage_webport((string) $p['general']);
     $url  = 'http://127.0.0.1' . ($port && $port !== 80 ? ':' . $port : '')
           . '/plugins/' . $p['plugin'] . '/index.php?selftest=1&token='
           . rawurlencode($cfg['aktionstoken']);

@@ -34,7 +34,13 @@
 # "Uninstall-Praefix"). LoxBerry ruft beim Entfernen eines Plugins die uninstall
 # ANDERER Plugins mit, deren Name mit diesem beginnt (zigbee2mqtt riss
 # zigbee2mqttng mit). Ein Aufruf fuer einen anderen Namen tut hier nichts.
-[ "$2" = "renault_ng" ] || { echo "<INFO> Aufruf fuer ein anderes Plugin ($2) - nichts zu tun."; exit 0; }
+# 2.1.23 (Fremdpruefung B1, Form wie die uebrigen Linien, etwa Bewaesserung): ein LEERES $2 gehoert keinem fremden
+# Plugin - plugininstall.pl ruft nur mit gesetztem $pname (am Geraet gelesen, :1568 und :1577). Das ist der
+# Handaufruf; er endete bis 2.1.22 mit "anderes Plugin ()" und raeumte nichts ab. Ohne Wurzel bleibt er unten stehen.
+if [ -n "$2" ] && [ "$2" != "renault_ng" ]; then
+    echo "<INFO> Aufruf fuer ein anderes Plugin ($2) - nichts zu tun."
+    exit 0
+fi
 
 PDIR="$3"
 [ -n "$PDIR" ] || PDIR="renault_ng"
@@ -103,13 +109,21 @@ done
 HTMLAUTH="$BASE/webfrontend/htmlauth/plugins/$PDIR"
 if command -v php >/dev/null 2>&1 && [ -f "$HTMLAUTH/abruf.php" ]; then
     if [ "$(id -u)" = "0" ] && id loxberry >/dev/null 2>&1; then
-        su -s /bin/bash loxberry -c "cd $(printf '%q' "$HTMLAUTH") && $(printf '%q ' env "LBHOMEDIR=$BASE" "LBPPLUGINDIR=$PDIR" timeout 60 php abruf.php --mqtt-leeren)" < /dev/null 2>&1
+        su -s /bin/bash loxberry -c "cd $(printf '%q' "$HTMLAUTH") && $(printf '%q ' env "LBHOMEDIR=$BASE" "LBPPLUGINDIR=$PDIR" timeout -k 5 60 php abruf.php --mqtt-leeren)" < /dev/null 2>&1
         mrc=$?
     else
-        ( cd "$HTMLAUTH" && env "LBHOMEDIR=$BASE" "LBPPLUGINDIR=$PDIR" timeout 60 php abruf.php --mqtt-leeren ) < /dev/null 2>&1
+        ( cd "$HTMLAUTH" && env "LBHOMEDIR=$BASE" "LBPPLUGINDIR=$PDIR" timeout -k 5 60 php abruf.php --mqtt-leeren ) < /dev/null 2>&1
         mrc=$?
     fi
-    [ "$mrc" = 1 ] && rc=1
+    # 2.1.23 (Fremdpruefung B3): 0, 1 und 2 melden sich selbst (rn_mqtt_leeren()). Alles andere - 124/137 die
+    # Zeitschranke, 255 ein Absturz - hat keine Zeile geschrieben; bis 2.1.22 blieb das still, und das Skript
+    # endete mit 0.
+    case "$mrc" in
+        0|2) ;;
+        1) rc=1 ;;
+        *) echo "<WARNING> MQTT: das Leeren endete mit Rueckgabe $mrc (124/137 = Zeitschranke) - zurueckbehaltene Themen unter Renault/ koennen stehen geblieben sein."
+           rc=1 ;;
+    esac
 else
     echo "<INFO> PHP oder abruf.php fehlt - zurueckbehaltene MQTT-Themen unter Renault/ wurden nicht geleert."
 fi
@@ -210,8 +224,8 @@ echo "<INFO> Der einzige Dienst ist die Befehlsbruecke (oben angehalten); sonst 
 echo "<INFO> das Plugin ueber cron.01min, cron.03min und cron.10min, und diese Eintraege"
 echo "<INFO> entfernt LoxBerry ebenfalls."
 echo ""
-echo "<INFO> Die zurueckbehaltenen MQTT-Themen der eingerichteten Fahrzeuge sind oben"
-echo "<INFO> geleert und beim Broker nachgelesen worden (Ergebnis in den Zeilen MQTT)."
+echo "<INFO> Die zurueckbehaltenen MQTT-Themen der eingerichteten Fahrzeuge: das Ergebnis"
+echo "<INFO> steht oben in den Zeilen MQTT."
 echo "<INFO> Themen eines Fahrzeugs, das schon vorher aus den Einstellungen entfernt"
 echo "<INFO> oder umbenannt wurde, kennt die Deinstallation nicht mehr. Seit 2.1.13 raeumt"
 echo "<INFO> das Speichern der Einstellungen sie beim Umbenennen oder Entfernen ab; aeltere"

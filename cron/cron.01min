@@ -25,14 +25,27 @@
 # geerbten Deskriptor ueber 2 selbst (Gedaechtnis "Sperre vererbt sich an Kinder").
 #
 # ZEILENENDEN: LF (siehe cron.03min).
+#
+# 2.1.23 (Fremdpruefung C1/C2, in WSL gemessen, vb_g53r_skripte/g53r_probe.sh): ist cron.err nicht schreibbar, brach
+# die Umlenkung 2>>"$ERR" den Befehl ab, BEVOR php startete - kein Takt, keine Spur. Dann geht die Fehlerausgabe
+# nach /dev/null, und der Takt laeuft. Dieser Lauf meldet das und die nicht zu oeffnende Sperre (die bis 2.1.22 still
+# endete) im Protokoll, aber nur in Minute 00: je Minute eine Zeile waeren 1440 am Tag auf der Ramdisk.
 LOGV="REPLACELBPLOGDIR"
 ERR="$LOGV/cron.err"
+PROT="$LOGV/renault.log"
 mkdir -p "$LOGV" 2>/dev/null
 touch "$ERR" 2>/dev/null
+if [ ! -f "$ERR" ] || [ ! -w "$ERR" ]; then
+  [ "$(date +%M)" = 00 ] && echo "$(date '+%d.%m.%Y %H:%M:%S') [WARN] Cron: $ERR nicht schreibbar - Fehlerausgaben der Cron-Laeufe gehen verloren. Rechte pruefen." >> "$PROT"
+  ERR=/dev/null
+fi
 if [ -f "$ERR" ] && [ "$(stat -c %s "$ERR" 2>/dev/null || echo 0)" -gt 262144 ]; then
   tail -n 300 "$ERR" > "$ERR.neu" 2>/dev/null && mv -f "$ERR.neu" "$ERR"
 fi
-exec 8>"$LOGV/takt.lock" || exit 0
+if ! exec 8>"$LOGV/takt.lock"; then
+  [ "$(date +%M)" = 00 ] && echo "$(date '+%d.%m.%Y %H:%M:%S') [ERROR] Cron: Sperrdatei $LOGV/takt.lock nicht zu oeffnen - der Minutentakt laeuft nicht. Rechte und freien Platz auf der Ramdisk pruefen." >> "$PROT"
+  exit 1
+fi
 flock -n 8 || exit 0
 cd "REPLACELBPHTMLAUTHDIR" || { echo "[$(date '+%Y-%m-%d %H:%M:%S')] cron.01min: REPLACELBPHTMLAUTHDIR fehlt - Plugin neu installieren." >> "$ERR"; exit 1; }
 php abruf.php takt 8<&- >/dev/null 2>>"$ERR"

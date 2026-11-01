@@ -682,8 +682,15 @@ function rn_hook_ausfuehren($roh, $text, $welche)
     }
     // Die Meldung kommt aus Werten der Renault-Schnittstelle - sie war schon
     // vorher maskiert und bleibt es.
-    shell_exec($zeile . escapeshellarg((string) $text));
+    shell_exec($zeile . rn_shell_arg((string) $text));
     return true;
+}
+
+function rn_shell_arg($s)
+{
+    /* Bis 2.1.22 escapeshellarg(): verwirft unter PHP 7.4 mit LC_CTYPE=C jedes Nicht-ASCII-Byte, aus "Kueche" mit Umlaut wurde "Kche", ohne Fehler (am Geraet
+     * gemessen 01.11.2026, MGiSmart). setlocale() fehlt, wo keine UTF-8-Locale erzeugt ist, und aendert basename() und PCRE. Fuer Texte, nicht fuer Pfade. */
+    return "'" . str_replace("'", "'\\''", str_replace("\0", '', (string) $s)) . "'";
 }
 
 /** Die Adresse, die in Loxone einzutragen ist. */
@@ -3416,7 +3423,10 @@ function rn_wert_pruefen($k, $w)
     /* Die Felder, aus denen das Formular Anfuehrungszeichen entfernt,
      * duerfen auch aus der Sicherung keine tragen. Das Kennwort ist
      * ausgenommen - es wird im Formular ebenfalls nicht beschnitten. */
-    if ($k !== 'password' && preg_match('/["\']/', $w)) {
+    /* 2.1.23: Geraete, Zonen und Raeume heissen, wie das andere Plugin sie nennt ("Max's Echo") - das Sprachmodul nimmt
+     * sie an (ansage_geraet_ok()); bis 2.1.22 wies das Sicherheitsnetz sie danach ab und alles andere blieb ungespeichert. */
+    if ($k !== 'password' && !in_array($k, array('tts_alexa_geraet', 'tts_google_geraet', 'tts_sonos_zone', 'tts_sonox_raum'), true)
+        && preg_match('/["\']/', $w)) {
         return false;
     }
 
@@ -3570,6 +3580,7 @@ function rn_api_schluessel()
 function rn_antwort_protokoll($name, array $erg)
 {
     if ($name === '') { return; }
+    if (rn_antwort_leise() && rn_ist_keine_daten($erg[0], $erg[1])) { return; }     // 2.1.23: Zustand keine Fahrzeugdaten
     if (function_exists('renault_log_api')) {
         renault_log_api($name, $erg);
         return;
@@ -4666,6 +4677,25 @@ function rn_haus_zeilen_deuten(array $zeilen, array $soll)
 }
 
 /**
+ * Ein Kind beenden, ohne dass proc_close() haengen kann: SIGTERM, hoechstens $frist Sekunden warten, dann SIGKILL.
+ * Bis 2.1.22 stand hier SIGTERM allein. Am Geraet (MGiSmart, 01.11.2026) reagierte mosquitto_sub nicht darauf
+ * (futex_do_wait), proc_close() wartete 5 Stunden, und der Leser hielt so lange seine Sperre.
+ */
+function rn_proc_beenden($pr, $frist = 2.0)
+{
+    $s = @proc_get_status($pr);
+    if (!is_array($s) || !$s['running']) { return; }
+    @proc_terminate($pr, 15);
+    $bis = microtime(true) + (float) $frist;
+    while (microtime(true) < $bis) {
+        usleep(50000);
+        $s = @proc_get_status($pr);
+        if (!is_array($s) || !$s['running']) { return; }
+    }
+    @proc_terminate($pr, 9);
+}
+
+/**
  * Eine Lesesitzung am Broker: mosquitto_sub mit der Optionsdatei des Plugins,
  * Ausgabe '%r %t %x' (Retain-Bit, Thema, Nutzlast hex). Gelesen wird, bis
  * jedes Thema aus $warten einmal LIVE (Retain-Bit 0) kam oder $fenster
@@ -4735,7 +4765,7 @@ function rn_haus_sitzung(array $lesen, array $warten, $fenster)
     }
     $s = proc_get_status($pr);
     if ($s['running']) {
-        @proc_terminate($pr, 15);
+        rn_proc_beenden($pr);
     }
     @fclose($rohr[1]);
     @fclose($rohr[2]);
@@ -5613,6 +5643,106 @@ function rn_history_stufe($code, $hat_charges)
     return 'WARN';
 }
 
+/* ---------------- 2.1.23: Zustand "keine Fahrzeugdaten" ----------------
+ *
+ * Am Geraet (Twingo, 01.11.2026): battery-status und charges antworten mit HTTP 404, err.func.wired.notFound; jede
+ * Abfrage schrieb zwei ERROR und eine Diagnosezeile. Was das heisst, belegt die Antwort NICHT: haeufig ein ausgelaufenes
+ * Online-Abo, es kann auch ein Modell ohne diesen Endpunkt sein. Darum sagt das Plugin nur, was feststeht.
+ *
+ * Die Regel, je Fahrzeug, nach battery-status (der Endpunkt jedes Abrufs):
+ *   - RN_KD_SCHWELLE gleiche Antworten in Folge ueber mindestens RN_KD_SPANNE_S: Zustand an, einmal WARN. Drei, weil
+ *     ein oder zwei Aussetzer der Gegenstelle noch nichts sagen; die Spanne, weil ein Nutzer mit Takt 1 min oder
+ *     Knopfdruecken sonst in zwei Minuten dort waere. Im Werkstakt 5 min sind das 10 bis 15 Minuten.
+ *   - Im Zustand: keine ERROR-Zeilen, keine Diagnose je Abruf, hoechstens eine INFO-Zeile je Kalendertag; Cron-Abruf
+ *     alle RN_KD_TAKT_MIN Minuten statt alle 5. Ladehistorie ruht (sie holt beim Wiederkommen den ganzen Monat; ihr
+ *     Zeitraum kennt keine Luecke). Ein Abruf per Endpunkt oder Befehl geht weiter sofort.
+ *     Verloren geht nichts: Renault liefert den aktuellen Stand, keine Zwischenwerte, und 48 statt 288 Anfragen am Tag
+ *     schonen das Tageskontingent des Kontos.
+ *   - Daten da: Zustand aus, eine Zeile, normaler Takt.
+ *   - Alles andere (401/403, 5xx, Netz, VIN nicht im Konto) ist kein Teil des Zustands und bleibt laut. Es schaltet
+ *     ihn nicht ab - nur Daten sagen, dass wieder Daten kommen.
+ *   - ok bleibt 0: es kamen keine Daten, das ist wahr. Keine Mail, kein SignalBot, keine Ansage. */
+if (!defined('RN_KD_SCHWELLE')) { define('RN_KD_SCHWELLE', 3); }
+if (!defined('RN_KD_SPANNE_S')) { define('RN_KD_SPANNE_S', 600); }
+if (!defined('RN_KD_TAKT_MIN')) { define('RN_KD_TAKT_MIN', 30); }
+
+/** Ist diese Antwort das "keine Daten fuer dieses Fahrzeug" von Renault? Rein. */
+function rn_ist_keine_daten($code, $roh)
+{
+    return (int) $code === 404 && is_string($roh) && stripos($roh, 'notFound') !== false;
+}
+
+/**
+ * Ein Schritt der Regel. Rein. $art: 'daten' | 'notfound' | 'anders'.
+ * Rueckgabe array(neuer Stand, Ereignis): '' | 'wechsel' | 'tag' | 'zurueck'.
+ */
+function rn_kd_schritt(array $z, $art, $jetzt)
+{
+    $z += array('aktiv' => 0, 'zaehler' => 0, 'seit' => 0, 'zeile' => 0);
+    $leer = array('aktiv' => 0, 'zaehler' => 0, 'seit' => 0, 'zeile' => 0);
+    if ($art === 'daten') {
+        return array($leer, $z['aktiv'] ? 'zurueck' : '');
+    }
+    if ($art !== 'notfound') {
+        return array($z['aktiv'] ? $z : $leer, '');
+    }
+    $z['zaehler'] = (int) $z['zaehler'] + 1;
+    if (!(int) $z['seit']) { $z['seit'] = (int) $jetzt; }
+    if (!$z['aktiv']) {
+        if ($z['zaehler'] >= RN_KD_SCHWELLE && (int) $jetzt - (int) $z['seit'] >= RN_KD_SPANNE_S) {
+            $z['aktiv'] = 1;
+            $z['zeile'] = (int) $jetzt;
+            return array($z, 'wechsel');
+        }
+        return array($z, '');
+    }
+    if (date('Ymd', (int) $z['zeile']) !== date('Ymd', (int) $jetzt)) {
+        $z['zeile'] = (int) $jetzt;
+        return array($z, 'tag');
+    }
+    return array($z, '');
+}
+
+/** Der Stand eines Fahrzeugs; gehoert er zu einer anderen Fahrgestellnummer, gilt er nicht. Liest nur. */
+function rn_kd_lesen(array $f)
+{
+    $d = is_file(dirname($f['session']) . '/keine_daten' . (int) $f['nr'] . '.json')
+        ? rn_json_lesen(dirname($f['session']) . '/keine_daten' . (int) $f['nr'] . '.json') : array();
+    if (!isset($d['vin']) || $d['vin'] !== substr(md5((string) $f['vin']), 0, 12)) { return array(); }
+    unset($d['vin']);
+    return $d;
+}
+
+function rn_kd_schreiben(array $f, array $z)
+{
+    $z['vin'] = substr(md5((string) $f['vin']), 0, 12);
+    return rn_json_schreiben(dirname($f['session']) . '/keine_daten' . (int) $f['nr'] . '.json', $z);
+}
+
+/** Steht das Fahrzeug im Zustand? */
+function rn_keine_daten_aktiv(array $f)
+{
+    $z = rn_kd_lesen($f);
+    return !empty($z['aktiv']);
+}
+
+/** Schalter fuer rn_antwort_protokoll(): im Zustand schreibt das 404 notFound keine Zeile. */
+function rn_antwort_leise($setzen = null)
+{
+    static $an = false;
+    if ($setzen !== null) { $an = (bool) $setzen; }
+    return $an;
+}
+
+/** Die Zeile beim Wechsel und einmal am Tag. Keine Fahrgestellnummer, keine Konto-Kennung. Rein. */
+function rn_kd_satz($name, array $z, $im_konto, $cockpit)
+{
+    return 'Renault liefert fuer ' . $name . ' keine Batteriedaten (HTTP 404, ' . (int) $z['zaehler'] . ' Abfragen seit '
+        . date('d.m. H:i', (int) $z['seit']) . '). Haeufig: Online-Abo ausgelaufen - in der My-Renault-App pruefen. '
+        . 'Fahrzeug im Konto: ' . $im_konto . '; Kilometerabfrage (cockpit): HTTP ' . (int) $cockpit . '. '
+        . 'Abruf laeuft alle ' . RN_KD_TAKT_MIN . ' min weiter, Ladehistorie ruht; hoechstens eine Zeile je Tag.';
+}
+
 /* ---------------- 2.6: Healthcheck ---------------- */
 
 /**
@@ -5626,14 +5756,20 @@ function rn_history_stufe($code, $hat_charges)
 function rn_gesund_urteil(array $f)
 {
     $f += array('eingerichtet' => false, 'rechte' => '', 'zaehler_alter_s' => -1, 'erfolg_alter_s' => array(),
-                'takt_min' => 5, 'v2' => array(null, ''), 'bruecke_soll' => false, 'bruecke_laeuft' => null);
+                'takt_min' => 5, 'v2' => array(null, ''), 'bruecke_soll' => false, 'bruecke_laeuft' => null,
+                'keine_daten' => array());
     if (!$f['eingerichtet']) {
         return array(6, 'nicht eingerichtet - Zugangsdaten im Reiter Einstellungen eintragen');
     }
     $befunde = array();
     $status = 5;
     $setze = function ($s, $t) use (&$status, &$befunde) {
-        if ($s < $status) { $status = $s; }
+        /* 6 (Hinweis) ist die groessere Zahl: er verdraengt nur "in Ordnung", nie eine Warnung (2.1.23). */
+        if ($s === 6) {
+            if ($status === 5) { $status = 6; }
+        } elseif ($s < $status) {
+            $status = $s;
+        }
         $befunde[] = $t;
     };
     if ($f['rechte'] !== '' && $f['rechte'] !== '0600') {
@@ -5645,6 +5781,10 @@ function rn_gesund_urteil(array $f)
     }
     $grenze = max(15, 3 * max(1, (int) $f['takt_min'])) * 60;
     foreach ($f['erfolg_alter_s'] as $name => $a) {
+        if (isset($f['keine_daten'][$name])) {
+            $setze(6, $name . ': Renault liefert keine Batteriedaten (HTTP 404) - haeufig: Online-Abo ausgelaufen, in der My-Renault-App pruefen');
+            continue;
+        }
         if ((int) $a < 0) {
             $setze(4, $name . ': noch kein gelungener Abruf');
         } elseif ((int) $a > 3600) {
@@ -5672,8 +5812,10 @@ function rn_gesund_fakten(array $cfg)
     $z = $p['datadir'] . '/zaehler';
     $f['zaehler_alter_s'] = is_file($z) ? max(0, time() - (int) filemtime($z)) : -1;
     $f['erfolg_alter_s'] = array();
+    $f['keine_daten'] = array();
     foreach (rn_fahrzeuge($cfg) as $fz) {
         if ($fz['vin'] === '') { continue; }
+        if (rn_keine_daten_aktiv($fz)) { $f['keine_daten'][$fz['name']] = true; }
         $s = is_readable($fz['session']) ? explode('|', (string) @file_get_contents($fz['session'])) : array();
         $st = isset($s[25]) ? trim($s[25]) : '';
         $d = preg_match('/^[0-9]{12}$/', $st) ? date_create_from_format('YmdHi', $st) : false;
@@ -5882,8 +6024,15 @@ function rn_takt_lauf($skript)
     if ($vorklima) {
         rn_json_schreiben(rn_vorklima_datei(), $merk);
     }
-    /* Vorklima bei jedem Wechsel senden - eine Sitzung je Takt hoechstens, nur mit Broker. */
-    if ($senden && class_exists('Bluerhinos\\phpMQTT') && function_exists('mqtt_connectiondetails')) {
+    /* Vorklima bei jedem Wechsel senden - eine Sitzung je Takt hoechstens, nur mit Broker.
+     * 2.1.23 (Fremdpruefung D2): auch fuer eine noch offene SignalBot-Meldung. Scheiterte die Verbindung genau im
+     * Takt des Aufgebens, blieb signal_offen stehen, und $senden war im naechsten Takt leer: die Meldung ging erst mit
+     * dem naechsten Wechsel von Vorklima hinaus, also meist nach der Abfahrt. */
+    $signal_offen = false;
+    foreach (rn_fahrzeuge($cfg) as $f) {
+        if (!empty($merk['vorklima'][(string) (int) $f['nr']]['signal_offen'])) { $signal_offen = true; }
+    }
+    if (($senden || $signal_offen) && class_exists('Bluerhinos\\phpMQTT') && function_exists('mqtt_connectiondetails')) {
         $b = mqtt_connectiondetails();
         if (is_array($b) && !empty($b['brokerhost'])) {
             $mq = new Bluerhinos\phpMQTT($b['brokerhost'], $b['brokerport'], uniqid('rn_takt_'));
