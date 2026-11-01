@@ -668,8 +668,13 @@ function rn_test_ausfuehren($was, $cfg)
         case 'vorlage':
             $z = array();
             $gesendet = rn_test_gesendete_themen();
-            foreach (array('rn_vorlage_vo') as $fn) {
+            /* 2.1.22 (Fremdpruefung 2D): auch die Vorlage der Befehlsbruecke (bis 2.1.21 nur die HTTP-Vorlage). */
+            foreach (array('rn_vorlage_vo', 'rn_vorlage_befehle') as $fn) {
                 list($name, $inhalt) = $fn();
+                if ($inhalt === '') {
+                    $z[] = $name . ': ' . rn_t('BEFEHL.T_NICHT_DA');
+                    continue;
+                }
                 $vorher = libxml_use_internal_errors(true);
                 $xml = simplexml_load_string($inhalt);
                 $fehler = libxml_get_errors();

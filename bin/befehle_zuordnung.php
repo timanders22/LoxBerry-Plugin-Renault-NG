@@ -117,7 +117,8 @@ return array(
                      'mqtt_ein'    => rn_mqtt_zugang() !== null);
     },
     'protokoll' => function ($stufe, $text) {
-        rn_melden($stufe === 'FEHL' ? 'ERROR' : $stufe, 'Befehlsbruecke: ' . $text);
+        // 2.1.22: bb_log() setzt "Befehlsbruecke: " schon vor den Text - bis 2.1.21 stand es doppelt (Nachzug 01.11.2026, wie MGiSmart 1.1.30).
+        rn_melden($stufe === 'FEHL' ? 'ERROR' : $stufe, $text);
     },
     'teile' => array('nr' => '[2-4]'),
     'befehle' => $rn_befehle_mqtt,

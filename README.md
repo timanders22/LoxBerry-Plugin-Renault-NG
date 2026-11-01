@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.21 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.22 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,30 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Neu in 2.1.22
+
+Ein zweiter Programmierer hat das Plugin durchgesehen. Jede seiner Aussagen ist am Code nachgemessen; die
+zutreffenden sind behoben. Renault-seitig weiter nur mit Attrappen geprüft (im Haus kein Konto) – das Plugin bleibt
+**BETA**.
+
+* **Ein Update verliert die Ladehistorie nicht mehr still.** Lässt sich die Aufzeichnung beim Update nicht sichern
+  (etwa bei voller Karte), bricht das Update ab, und die bisherige Fassung bleibt installiert. Bisher lief es mit
+  einer Warnung weiter, und die Aufzeichnung war danach fort. Ein Rettungsordner aus einem früheren Update wird erst
+  ersetzt, wenn der neue vollständig ist.
+* **Die Ladekosten überstehen ein Update.** Die Liste der Ladungen, eine gerade laufende Ladung und die Sicherung
+  `database*.csv.vor_2120` gehen beim Update mit. Bisher waren sie danach fort, und das einmalige Zusammenfassen
+  gleicher Zeilen lief bei jedem Update erneut (das Update auf 2.1.22 legt die Sicherung deshalb noch einmal an).
+* **`LadungKosten`, `LadungEnergie` und `LadungPreis`** kommen jetzt bei jedem gelungenen Abruf – die letzte Ladung,
+  ohne Ladung je -1 –, nicht nur am Ende einer Ladung. So erscheinen die drei Datenpunkte im Gateway V2 und lassen
+  sich anhaken; der Selbsttest nennt sie nicht mehr dauerhaft als fehlend.
+* **Einstellungen zurückspielen** startet oder hält die Befehlsbrücke sofort passend zum Haken „Befehle über MQTT
+  annehmen“ (bisher erst der Minutentakt). Die Meldung danach sagt nicht mehr, das Plugin habe keinen Dienst.
+* **Reiter Test:** Die Gateway-Fassung wird auch ohne die Umgebungsvariable `LBHOMEDIR` erkannt; „Importdatei prüfen“
+  prüft jetzt auch die Vorlage der Befehlsbrücke.
+* **Installationsprotokoll:** Die Zeilen „Plugin CGI folder“ und „SBIN folder“ nannten `/renault_ng`; jetzt steht dort
+  der Ordner `htmlauth`.
+* **Protokoll:** „Befehlsbruecke:“ steht nur noch einmal vor jeder Zeile der Befehlsbrücke (bisher doppelt).
 
 ## Neu in 2.1.21
 

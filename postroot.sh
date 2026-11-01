@@ -3,6 +3,7 @@
 # Bashscript which is executed by bash *AFTER* complete installation is done
 # (*AFTER* postinstall but *BEFORE* postupdate). Use with caution and remember,
 # that all systems may be different!
+# (2.1.22: am Geraet gelesen, LoxBerry 4.0.0.15 - postroot laeuft NACH postupgrade.)
 #
 # Exit code must be 0 if executed successfull. 
 # Exit code 1 gives a warning but continues installation.
@@ -34,25 +35,25 @@ PDIR=$3       # Third argument is Plugin installation folder
               # Base folder of LoxBerry
 
 # Combine them with /etc/environment
-PCGI=$LBPCGI/$PDIR
+# 2.1.22: LBPCGI und LBPSBIN stehen nicht in /etc/environment (am Geraet gelesen, LoxBerry 4.0.0.15);
+# die Zeilen nannten "/renault_ng". Der Ordner heisst seit LoxBerry 1.0 htmlauth, sbin gibt es nicht.
+PCGI=$LBPHTMLAUTH/$PDIR
 PHTML=$LBPHTML/$PDIR
 PTEMPL=$LBPTEMPL/$PDIR
 PDATA=$LBPDATA/$PDIR
 PLOG=$LBPLOG/$PDIR # Note! This is stored on a Ramdisk now!
 PCONFIG=$LBPCONFIG/$PDIR
-PSBIN=$LBPSBIN/$PDIR
 PBIN=$LBPBIN/$PDIR
 
 echo "<INFO> Command is: $COMMAND"
 echo "<INFO> (Short) Name is: $PSHNAME"
 echo "<INFO> Installation folder is: $PDIR"
-echo "<INFO> Plugin CGI folder is: $PCGI"
+echo "<INFO> Plugin HTMLAUTH folder is: $PCGI"
 echo "<INFO> Plugin HTML folder is: $PHTML"
 echo "<INFO> Plugin Template folder is: $PTEMPL"
 echo "<INFO> Plugin Data folder is: $PDATA"
 echo "<INFO> Plugin Log folder (on RAMDISK!) is: $PLOG"
 echo "<INFO> Plugin CONFIG folder is: $PCONFIG"
-echo "<INFO> Plugin SBIN folder is: $PSBIN"
 echo "<INFO> Plugin BIN folder is: $PBIN"
 
 # Exit with Status 0

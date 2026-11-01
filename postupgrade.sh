@@ -246,6 +246,24 @@ if [ -d "$RETTUNG" ]; then
             fi
             [ -f "$ziel" ] && belegt=$((belegt + 1))
         done
+        # 2.1.22 (Fremdpruefung 1B/2A): Ladekosten (ladungen.json, ladung_*.json) und die Sicherung der
+        # Aufraeumung (database*.csv.vor_2120, 0600 - cp -p behaelt die Rechte). Zurueck nur, wenn am Ziel
+        # keine liegt; liegt dort eine ANDERE (aus der Luecke des Updates), ist die gerettete nicht belegt,
+        # und der Rettungsordner bleibt liegen - eine JSON-Liste wird hier nicht zusammengefuehrt.
+        for f in "$RETTUNG"/ladungen.json "$RETTUNG"/ladung_*.json "$RETTUNG"/database*.csv.vor_2120; do
+            [ -f "$f" ] || continue
+            gesamt=$((gesamt + 1))
+            ziel="$DATEN/$(basename "$f")"
+            if [ ! -f "$ziel" ]; then
+                if cp -p "$f" "$ziel" 2>/dev/null; then
+                    zurueck=$((zurueck + 1))
+                else
+                    echo "<ERROR> $(basename "$f") liess sich nicht zurueckholen."
+                    rc=1
+                fi
+            fi
+            cmp -s "$f" "$ziel" && belegt=$((belegt + 1))
+        done
         if [ "$zurueck" -gt 0 ] || [ "$zusammen" -gt 0 ]; then
             echo "<OK> Ladehistorie: $zurueck Datei(en) zurueckgeholt, $zusammen mit den Zeilen aus der Zeit des Updates zusammengefuehrt."
         else
@@ -272,6 +290,10 @@ fi
 # (gleicher Zeitstempel und gleiche Werte) werden zusammengefasst. Vorher liegt die
 # Datei als database*.csv.vor_2120 (0600) daneben; die Kopfzeile bleibt; keine
 # andere Zeile aendert sich. Liegt die Sicherung schon da, ist es geschehen.
+# Seit 2.1.22 (Fremdpruefung 1B) rettet preupgrade.sh die .vor_2120 mit, und Abschnitt 2 holt sie
+# zurueck. Bis 2.1.21 nahm purge_installation sie bei jedem Update mit: die Aufraeumung lief bei
+# jedem Update erneut und legte jedesmal eine neue Sicherung an (die erste, echte war beim
+# naechsten Update fort). Ein Update von 2.1.20/2.1.21 legt sie deshalb noch einmal an.
 RN_BESTAND="REPLACELBPBINDIR/rn_bestand.php"
 case "$RN_BESTAND" in
     /?*) [ -f "$RN_BESTAND" ] || RN_BESTAND="" ;;

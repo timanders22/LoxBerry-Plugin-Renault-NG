@@ -853,11 +853,15 @@ foreach ($rn_mit_vin as $rn_f) {
         rn_sende($rn_mqtt, $rn_name, 'Zuhause',    $rn_zh);
         rn_sende($rn_mqtt, $rn_name, 'Entfernung', $rn_ent);
         rn_sende($rn_mqtt, $rn_name, 'Vorklima',   rn_vorklima_feld($rn_cfg, (int) $rn_f['nr']));
-        if (is_array($rn_ladung)) {
-            rn_sende($rn_mqtt, $rn_name, 'LadungKosten',  $rn_ladung['kosten_eur']);
-            rn_sende($rn_mqtt, $rn_name, 'LadungEnergie', $rn_ladung['kwh']);
-            rn_sende($rn_mqtt, $rn_name, 'LadungPreis',   $rn_ladung['preis_ct']);
-        }
+        /* 2.1.22 (Fremdpruefung 2A): die letzte Ladung geht bei JEDEM gelungenen Abruf hinaus, ohne
+         * eingetragene Ladung je -1 (rn_ladung_letzte(); wie MGiSmart 1.1.28 ladung_kosten/kwh/preis).
+         * Bis 2.1.21 nur im Abruf, in dem eine Ladung endete - ohne Strompreis-Haken nie: die drei
+         * Datenpunkte erschienen im Gateway V2 nicht, und der Selbsttest nannte sie als fehlende Haken.
+         * Retained bleibt (Zustand, rn_thema_retained()); -1 ist kein leerer Wert. */
+        $rn_lz = is_array($rn_ladung) ? $rn_ladung : rn_ladung_letzte((int) $rn_f['nr']);
+        rn_sende($rn_mqtt, $rn_name, 'LadungKosten',  $rn_lz['kosten_eur']);
+        rn_sende($rn_mqtt, $rn_name, 'LadungEnergie', $rn_lz['kwh']);
+        rn_sende($rn_mqtt, $rn_name, 'LadungPreis',   $rn_lz['preis_ct']);
         rn_sende($rn_mqtt, $rn_name, 'InTemp',  $rn_s[27]);
         // Aussentemperatur: die des Fahrzeugs hat Vorrang vor der des
         // Wetterdienstes - beide nur aus diesem Lauf (Befund M5).

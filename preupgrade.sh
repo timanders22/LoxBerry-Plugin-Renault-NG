@@ -32,7 +32,9 @@
 # Deshalb retten Konfiguration UND Aufzeichnung jetzt auf dieselbe Weise:
 # NEBEN den Ordner, der geloescht wird. postupgrade.sh holt beides zurueck.
 #
-# Rueckgabewert: 0 in Ordnung, 1 Warnung (die Installation laeuft weiter).
+# Rueckgabewert: 0 in Ordnung, 1 Warnung (die Installation laeuft weiter), 2 Abbruch VOR
+# purge_installation (Marke nicht anlegbar, Konfiguration ohne heile Zweitschrift oder - seit
+# 2.1.22 - Ladehistorie nicht zu retten).
 # Auf jedes Kopieren folgt die Pruefung, ob es geklappt hat - ein <OK> fuer
 # etwas, das nicht geschehen ist, ist schlechter als gar keine Meldung.
 
@@ -271,17 +273,41 @@ fi
 # lagen im Programmordner, den der Installer gleich ebenfalls loescht. Sie
 # gehoeren in den Rettungsordner, NICHT nach data/ (das wird mit
 # abgeraeumt); bis 2.1.5 gingen sie genau dorthin.
+#
+# 2.1.22 (Fremdpruefung 1B/2A): mit gehen auch die Liste der Ladungen (ladungen.json), die
+# Mitschriften einer laufenden Ladung (ladung_*.json) und die Sicherung der einmaligen Aufraeumung
+# (database*.csv.vor_2120). Bis 2.1.21 lagen sie nur im Datenordner und waren nach jedem Update fort:
+# die Aufraeumung lief deshalb bei JEDEM Update erneut und legte jedesmal eine neue .vor_2120 an
+# (in WSL gemessen, g52r_probe_haken.sh Fall B1).
+#
+# 2.1.22 (Fremdpruefung 1A): ein alter Rettungsordner faellt erst unmittelbar vor dem mv, und
+# scheitert das Retten, bricht das Update ab (exit 2). Bis 2.1.21 wurde er schon VOR dem Fuellen
+# entfernt (die Meldung "bleibt unberuehrt" stimmte dann nicht), und ein Fehlschlag endete mit
+# rc 1: plugininstall.pl bricht nur bei einem Rueckgabewert ueber 1 ab (am Geraet gelesen,
+# LoxBerry 4.0.0.15, Zweig PREUPGRADE: "elsif ($exitcode > 1) ... &fail"), sonst folgt
+# purge_installation, und die Ladehistorie war endgueltig weg (in WSL gemessen, Fall A2).
 NEU="${RETTUNG}.neu"
 zu_retten=0
 ls "$DATEN"/database*.csv >/dev/null 2>&1 && zu_retten=1
-for f in session session2 session3 session4; do
+for f in session session2 session3 session4 ladungen.json; do
     [ -f "$DATEN/$f" ] && zu_retten=1
 done
+ls "$DATEN"/ladung_*.json "$DATEN"/database*.csv.vor_2120 >/dev/null 2>&1 && zu_retten=1
 for f in session database.csv; do
     [ -f "$ALT/$f" ] && zu_retten=1
 done
-if [ -d "$RETTUNG" ]; then
-    if [ "$RN_MARKE_VORHER" = 1 ] && [ "$zu_retten" = 0 ]; then
+
+# Wie rn_sicherung_gescheitert(): Marke wieder weg (nur die eigene), Abbruch VOR purge_installation.
+rn_rettung_gescheitert() {
+    echo "<FAIL> $1"
+    echo "<FAIL> Die Aktualisierung wird abgebrochen, damit die Ladehistorie nicht verloren geht; die"
+    echo "<FAIL> bisherige Fassung bleibt installiert. Platz auf der Karte pruefen."
+    [ "$RN_MARKE_VORHER" = 1 ] || rm -f "$MARKE" 2>/dev/null
+    exit 2
+}
+
+if [ -d "$RETTUNG" ] && [ "$zu_retten" = 0 ]; then
+    if [ "$RN_MARKE_VORHER" = 1 ]; then
         echo "<INFO> Der Rettungsordner $RETTUNG stammt aus einem abgebrochenen Versuch dieses"
         echo "<INFO> Updates und bleibt fuer postupgrade.sh liegen."
     elif rm -rf "$RETTUNG"; then
@@ -317,6 +343,16 @@ if [ "$zu_retten" = 1 ]; then
                 fehler=1
             fi
         done
+        # 2.1.22: Ladekosten und die Sicherung der Aufraeumung (je Datei verglichen, wie die CSV).
+        for z in "$DATEN/ladungen.json" "$DATEN"/ladung_*.json "$DATEN"/database*.csv.vor_2120; do
+            [ -f "$z" ] || continue
+            if cp -p "$z" "$NEU/$(basename "$z")" && cmp -s "$z" "$NEU/$(basename "$z")"; then
+                gerettet=$((gerettet + 1))
+            else
+                echo "<ERROR> $(basename "$z") konnte nicht gesichert werden."
+                fehler=1
+            fi
+        done
         for f in session database.csv; do
             [ -f "$ALT/$f" ] || continue
             # Was schon aus data/ kam, ist der juengere Stand.
@@ -329,26 +365,27 @@ if [ "$zu_retten" = 1 ]; then
             fi
         done
         if [ "$fehler" = 0 ]; then
-            # Ein alter Rettungsordner ist oben schon weggeraeumt. Die
+            # Ein alter Rettungsordner faellt erst hier (2.1.22, 1A). Die
             # Baustelle heisst nicht mehr "${RETTUNG}.alt": .alt ist seit 2.1.13
             # der Name des bei einer Neuinstallation beiseitegelegten Bestands
             # (postinstall.sh), und der darf hier nicht verschwinden.
+            if [ -d "$RETTUNG" ]; then
+                if rm -rf "$RETTUNG"; then
+                    echo "<INFO> Ein Rettungsordner aus einem frueheren Vorgang lag noch da; er ist durch den neuen ersetzt."
+                else
+                    rn_rettung_gescheitert "Der alte Rettungsordner $RETTUNG liess sich nicht entfernen; die neue Kopie liegt unter $NEU."
+                fi
+            fi
             if mv "$NEU" "$RETTUNG"; then
                 echo "<OK> $gerettet Datei(en) der Ladehistorie und Zwischenspeicher gesichert nach $RETTUNG."
             else
-                echo "<ERROR> Der Rettungsordner liess sich nicht an seinen Platz setzen - die"
-                echo "<ERROR> Kopie liegt unter $NEU."
-                rc=1
+                rn_rettung_gescheitert "Der Rettungsordner liess sich nicht an seinen Platz setzen - die Kopie liegt unter $NEU."
             fi
         else
-            echo "<ERROR> Die Ladehistorie liess sich nicht vollstaendig sichern. Ein vorhandener"
-            echo "<ERROR> Rettungsordner bleibt unberuehrt; die Teilkopie liegt unter $NEU."
-            rc=1
+            rn_rettung_gescheitert "Die Ladehistorie liess sich nicht vollstaendig sichern; ein vorhandener Rettungsordner bleibt unberuehrt, die Teilkopie liegt unter $NEU."
         fi
     else
-        echo "<ERROR> Rettungsordner $NEU liess sich nicht anlegen - die"
-        echo "<ERROR> Ladehistorie geht bei diesem Update verloren."
-        rc=1
+        rn_rettung_gescheitert "Rettungsordner $NEU liess sich nicht anlegen."
     fi
 else
     echo "<INFO> Keine Ladehistorie vorhanden - nichts zu sichern."

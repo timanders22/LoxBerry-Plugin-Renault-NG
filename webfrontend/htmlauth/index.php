@@ -942,6 +942,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rn_zurueck'])) {
                 $rn_alt = rn_mqtt_altnamen_abraeumen($rn_namen_vorher, $rn_namen_nachher);
                 $rn_meldung .= $rn_alt['meldung'];
                 $rn_misslungen = array_merge($rn_misslungen, $rn_alt['misslungen']);
+                /* 2.1.22 (Fremdpruefung 2B): die Befehlsbruecke dem zurueckgespielten Haken sofort
+                 * nachfuehren, wie beim Speichern im Reiter MQTT (Bauart BatterieBMS 0.9.38). Bis 2.1.21
+                 * erst der Waechter im Minutentakt. */
+                list($rn_brc, $rn_bwas, $rn_baus) = rn_bruecke_schalten($rn_cfg);
+                if ($rn_bwas !== '') {
+                    $rn_meldung .= '<br>' . rn_e(sprintf(rn_t('BEFEHL.M_SCHALTEN'), $rn_bwas,
+                        trim(strtok((string) $rn_baus, "\n")) !== '' ? trim(strtok((string) $rn_baus, "\n")) : (string) $rn_brc));
+                    renault_log('INFO', 'Sicherung zurueckgespielt: Bruecke ' . $rn_bwas . ' (rc ' . (string) $rn_brc . ').');
+                }
             }
         } else {
             $rn_fehler[] = rn_t('TEXT.SICH_SCHREIBFEHLER');

@@ -3,6 +3,7 @@
 # Bash script which is executed by bash *BEFORE* installation is started
 # (*BEFORE* preinstall but *AFTER* preupdate). Use with caution and remember,
 # that all systems may be different!
+# (2.1.22: am Geraet gelesen, LoxBerry 4.0.0.15 - preroot laeuft VOR preupgrade, nicht danach.)
 #
 # Exit code must be 0 if executed successfull. 
 # Exit code 1 gives a warning but continues installation.
@@ -34,7 +35,9 @@ PDIR=$3       # Third argument is Plugin installation folder
               # Base folder of LoxBerry
 
 # Combine them with /etc/environment
-PCGI=$LBPCGI/$PDIR
+# 2.1.22: LBPCGI und LBPSBIN stehen nicht in /etc/environment (am Geraet gelesen, LoxBerry 4.0.0.15);
+# die Zeile nannte "/renault_ng". Der Ordner heisst seit LoxBerry 1.0 htmlauth.
+PCGI=$LBPHTMLAUTH/$PDIR
 PHTML=$LBPHTML/$PDIR
 PTEMPL=$LBPTEMPL/$PDIR
 PDATA=$LBPDATA/$PDIR
@@ -44,7 +47,7 @@ PCONFIG=$LBPCONFIG/$PDIR
 echo "<INFO> Command is: $COMMAND"
 echo "<INFO> (Short) Name is: $PSHNAME"
 echo "<INFO> Installation folder is: $PDIR"
-echo "<INFO> Plugin CGI folder is: $PCGI"
+echo "<INFO> Plugin HTMLAUTH folder is: $PCGI"
 echo "<INFO> Plugin HTML folder is: $PHTML"
 echo "<INFO> Plugin Template folder is: $PTEMPL"
 echo "<INFO> Plugin Data folder is: $PDATA"

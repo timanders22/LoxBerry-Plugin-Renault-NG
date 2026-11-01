@@ -2684,15 +2684,21 @@ function rn_vorlage_vo()
  */
 function rn_gateway_fassung()
 {
-    $home = getenv('LBHOMEDIR');
-    if (!$home && defined('LBHOMEDIR')) {
-        $home = LBHOMEDIR;
+    /* 2.1.22 (Fremdpruefung 2C): zuerst die Wurzel aus rn_paths(false) - dieselbe, aus der
+     * rn_v2_haken_lage() subscriptions.json liest; sie gilt auch ohne LBHOMEDIR in der Umgebung.
+     * Erst ohne sie (Archivmodus) wie bis 2.1.21 LBHOMEDIR. */
+    $gj = (string) rn_paths(false)['general'];
+    if ($gj === '') {
+        $home = getenv('LBHOMEDIR');
+        if (!$home && defined('LBHOMEDIR')) {
+            $home = LBHOMEDIR;
+        }
+        if (!$home || !is_dir($home)) {
+            return 0;
+        }
+        $gj = $home . '/config/system/general.json';
     }
-    if (!$home || !is_dir($home)) {
-        return 0;
-    }
-    $d = @json_decode((string) @file_get_contents(
-        $home . '/config/system/general.json'), true);
+    $d = @json_decode((string) @file_get_contents($gj), true);
     if (!is_array($d)) {
         return 0;
     }
