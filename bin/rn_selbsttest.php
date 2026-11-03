@@ -248,11 +248,11 @@ pruefe('Vorgabe: Mail aus',          $v['mail_bl'], 'N');
 pruefe('Vorgabe: Token leer',        $v['aktionstoken'], '');
 pruefe('Vorgabe: Zieltemperatur 21', $v['ac_temp'], '21');
 // Nr. 36 b (seit 2.1.16): + 4 Anlass-Schalter + die Felder des Blocks tts (ansage_vorgaben(), Modul 1.1.1: 15).
-pruefe('Vorgabe: Sprachausgabe aus', $v['tts_mode'], 'aus');
+pruefe('Vorgabe: Sprachausgabe ab Werk an (2.1.24)', $v['tts_mode'], 'musicserver');
 // Gruppe 40 (2.1.20): + die neuen Schluessel (rn_vorgaben_2120(), 19 + je Fahrzeug zwei). Welle Mehrfach-Ziele
 // (2.1.20): + tts_ziele (die Liste der weiteren Ausgabeziele als JSON, leer = keine).
 pruefe('Vorgabe: 32 + 4 + tts + tts_ziele + 2.1.20 Schluessel', count($v),
-    37 + count(ansage_vorgaben('aus')) + count(rn_neue_schluessel_2120()));
+    38 + 5 + count(ansage_vorgaben('aus')) + count(rn_neue_schluessel_2120()));     // 2.1.24: + 5 Schluessel der Regeln
 pruefe('Vorgabe: tts_ziele leer', $v['tts_ziele'], '');
 
 /* 7. Jeder Vorgabewert muss die eigene Wertpruefung bestehen.

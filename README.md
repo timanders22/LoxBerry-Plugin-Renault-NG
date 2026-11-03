@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.23 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.25 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,27 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Neu in 2.1.25
+
+Diese Fassung baut auf 2.1.24 auf, die als Probe am Gerät lief, aber nie veröffentlicht wurde; **sie bringt also auch alles aus 2.1.24 mit** (Sprachansagen ab Werk an, Abschnitt darunter).
+
+* **Sammelthemen, ab Werk an:** `haus/fahrzeug/<name>/soc`, `reichweite_km`, `kabel`, `laedt`, `zuhause` (retained, ohne Aussage `-`) und `zaehler` (je Minute, nie retained), damit andere Plugins und Loxone ein Fahrzeug lesen können, gleich welcher Marke. `<name>` kommt aus dem Fahrzeugnamen. Kein Standort, keine Fahrgestellnummer. Die Zustände kommen aus dem Abruf, der Zähler aus dem Minutentakt. **Liefert Renault keine Fahrzeugdaten (`battery-status` 404, zum Beispiel ohne Online-Abo), steht überall der Strich, nie ein alter Wert;** ein Stand, der älter als 6 Stunden ist, ebenso. Nicht eingerichtet: nichts, auch kein Zähler. Ausschalten: Reiter *MQTT*; das räumt die Themen ab, die Deinstallation ebenfalls. Sendet unter demselben Namen noch eine andere Linie (fremder Zähler), warnt der Reiter *Test*, und die Themen dort bleiben stehen.
+* **Kabel vergessen:** Steht das Auto zu Hause ohne Kabel und liegt der Akku unter 30 %, meldet es sich ab 20 Uhr, am Morgen nach der Nachtruhe oder vor einer Abfahrt über Ansage und (ab Werk aus) SignalBot. In der Nachtruhe wartet es. Braucht die Heimzone. Unbekannte Werte warnen nie, ohne Fahrzeugdaten also nie.
+* **Vorklimatisierung mit Mindest-Akku:** Unter 20 % (einstellbar) unterbleibt sie, ohne einen Versuch zu verbrauchen; `Vorklima` zeigt 5. Wahlweise nur mit gestecktem Kabel (ab Werk aus, Stand 6). Ist der Stand unbekannt, klimatisiert das Plugin wie bisher: Die Vorklimatisierung geht ohne Online-Abo also weiter, wenn Renault den Befehl annimmt.
+
+Geprüft mit echtem SDK im Minutenlauf, Fahrzeug- und Broker-Attrappe; an einem Fahrzeug und am Gerät nicht gemessen.
+
+## Neu in 2.1.24
+
+**Ab dieser Fassung sind die Sprachansagen ab Werk an, auch nach einem Update, wenn Sie die Ausgabeart nie gespeichert haben.** Eine gespeicherte Einstellung bleibt, wie sie ist, auch „aus“. **Ausschalten:** Reiter *Einstellungen*, Abschnitt Sprachausgabe, Ausgabeart **„aus“** wählen und speichern; das bleibt auch nach jedem weiteren Update aus.
+
+* **Was angesagt wird:** Laden fertig, Laden abgebrochen, Akku niedrig und Ausfall des Abrufs, je Anlass mit eigenem Haken. Bisher galt „höchstens eine je Stunde“, jetzt einstellbar, ab Werk 30 Minuten.
+* **Wohin:** ab Werk zugleich Loxone Music Server (braucht seine Adresse), Google-Lautsprecher über Chromecast4lox (braucht dort ein Standardgerät oder hier den Namen) und Amazon Echo über Alexa-NG. Ein Ziel, das nicht bereitsteht, wird ohne Fehler übergangen; der Reiter *Test* sagt, was ihm fehlt. Das Sprechtoken der beiden Plugins müssen Sie nicht abschreiben: Es wird übernommen, in der Konfiguration gespeichert und nachgezogen; ein von Hand eingetragenes bleibt.
+* **Wann nicht:** Nachtruhe 22 bis 7 Uhr (einstellbar, wird nicht nachgeholt; Dringendes spricht trotzdem), dieselbe Ansage höchstens einmal in 30 Minuten (einstellbar) und solange Loxone das retained MQTT-Thema `haus/ansage/ruhe` auf 1 setzt (das gilt auch für Dringendes). Die Testansage im Reiter *Test* spricht immer.
+* **Der Minutenlauf wartet nicht auf Lautsprecher:** Gesprochen wird in einem eigenen Vorgang.
+* **Berichtigt:** Ein Hilfsprogramm, das nicht mehr reagiert, wird in der SignalBot-Probe und beim Melden nach einer festen Frist hart beendet. Der Leser der Haus-Themen hat jetzt auch beim Lesen eines Pakets eine feste Frist.
+
 
 ## Neu in 2.1.23
 

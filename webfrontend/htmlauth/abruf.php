@@ -77,7 +77,7 @@ require_once __DIR__ . '/rn_lib.php';
  * Aktionsname in die Befehlspruefung - "--mqt-leeren" (ein Tippfehler) meldete
  * sich an und rief Renault, statt nichts zu tun. Steht vor allem anderen. */
 if (!isset($rn_auftrag)) {
-    $rn_erlaubt = array_merge(array('cron', 'takt', 'abruf', '--haus-lesen', '--mqtt-leeren'),
+    $rn_erlaubt = array_merge(array('cron', 'takt', 'abruf', '--haus-lesen', '--mqtt-leeren', '--hf-lauschen'),
                               array_keys(rn_befehle()));
     $rn_a1 = isset($argv[1]) ? (string) $argv[1] : '';
     $rn_a2_ok = !isset($argv[2]) || preg_match('/^[1-' . RN_MAX_FAHRZEUGE . ']$/', (string) $argv[2]) === 1;
@@ -114,7 +114,7 @@ if ($rn_ohne !== '') {
  * rn_lib.php). Steht vor logger.php, damit auch kein Protokollordner
  * entsteht. */
 if (!isset($rn_auftrag) && isset($argv[1]) && $argv[1] === '--mqtt-leeren') {
-    exit(rn_mqtt_leeren());
+    exit(max(rn_mqtt_leeren(), rn_hf_leeren()));     // 2.1.25: auch haus/fahrzeug/<name>/
 }
 
 /* Der Minutentakt (2.4, cron.01min): Waechter der Befehlsbruecke, Leser der
@@ -123,6 +123,11 @@ if (!isset($rn_auftrag) && isset($argv[1]) && $argv[1] === '--mqtt-leeren') {
  * Protokoll (logger.php wird erst geladen, wenn eine Zeile faellig ist). */
 if (!isset($rn_auftrag) && isset($argv[1]) && $argv[1] === 'takt') {
     rn_takt_lauf(__FILE__);
+    exit(0);
+}
+/* 2.1.25: einmal je Stunde auf fremde Zaehler unter den eigenen haus/fahrzeug-Staemmen hoeren (aus dem Takt gestartet, bis 65 s). */
+if (!isset($rn_auftrag) && isset($argv[1]) && $argv[1] === '--hf-lauschen') {
+    rn_hf_lausch_lauf();
     exit(0);
 }
 /* Der abgekoppelte Leser (aus dem Takt gestartet, eigene Sperre, bis 65 s). */

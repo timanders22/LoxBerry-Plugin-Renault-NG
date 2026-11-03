@@ -163,6 +163,7 @@ function rn_test_selbstpruefung($cfg, $broker, $voll = true)
     $z[] = array(rn_t('PRUEF.MOSQUITTO'), $mq ? true : null, $mq ? rn_t('PRUEF.JA') : rn_t('PRUEF.MOSQUITTO_FEHLT'));
     /* Haus-Quellen (2.4): je eingeschaltete Quelle frisch/schweigt - der Selbsttest liest die Ablage, nie den Broker. */
     foreach (rn_haus_pruefzeilen($cfg) as $hz) { $z[] = $hz; }
+    $z[] = rn_hf_lage($cfg);     // 2.1.25
     /* Vorklimatisierung (3.2): Kennung, Versuche, Vorklima je gewaehltes Fahrzeug. */
     if ($cfg['vorklima_ein'] === 'Y') {
         $merk = rn_json_lesen($p['datadir'] . '/vorklima.json');

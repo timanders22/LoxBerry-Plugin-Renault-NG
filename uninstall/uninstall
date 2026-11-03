@@ -109,10 +109,10 @@ done
 HTMLAUTH="$BASE/webfrontend/htmlauth/plugins/$PDIR"
 if command -v php >/dev/null 2>&1 && [ -f "$HTMLAUTH/abruf.php" ]; then
     if [ "$(id -u)" = "0" ] && id loxberry >/dev/null 2>&1; then
-        su -s /bin/bash loxberry -c "cd $(printf '%q' "$HTMLAUTH") && $(printf '%q ' env "LBHOMEDIR=$BASE" "LBPPLUGINDIR=$PDIR" timeout -k 5 60 php abruf.php --mqtt-leeren)" < /dev/null 2>&1
+        su -s /bin/bash loxberry -c "cd $(printf '%q' "$HTMLAUTH") && $(printf '%q ' env "LBHOMEDIR=$BASE" "LBPPLUGINDIR=$PDIR" timeout -k 5 120 php abruf.php --mqtt-leeren)" < /dev/null 2>&1
         mrc=$?
     else
-        ( cd "$HTMLAUTH" && env "LBHOMEDIR=$BASE" "LBPPLUGINDIR=$PDIR" timeout -k 5 60 php abruf.php --mqtt-leeren ) < /dev/null 2>&1
+        ( cd "$HTMLAUTH" && env "LBHOMEDIR=$BASE" "LBPPLUGINDIR=$PDIR" timeout -k 5 120 php abruf.php --mqtt-leeren ) < /dev/null 2>&1
         mrc=$?
     fi
     # 2.1.23 (Fremdpruefung B3): 0, 1 und 2 melden sich selbst (rn_mqtt_leeren()). Alles andere - 124/137 die

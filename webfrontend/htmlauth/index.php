@@ -61,7 +61,7 @@ function rn_eingabe_felder($formular)
     }
     /* Nr. 36 b (seit 2.1.16): die Sprachausgabe und die Anlass-Schalter - nie die Sprechtoken
      * (ansage_x2_felder() nennt sie nicht; markiert werden koennen sie). */
-    $f = array_merge($f, ansage_x2_felder(rn_ansage_opt()));
+    $f = array_merge($f, ansage_x2_felder(rn_ansage_opt()), ansage_regeln_x2_felder());
     foreach (rn_ansage_anlaesse() as $a) { $f[] = $a[0]; }
     /* Gruppe 40 (2.1.20). Seit 2.1.23 (Meldung des Hausherrn) reisen auch die Heimkoordinaten mit, wie in Audi, BYD,
      * Skoda, VW, MGiSmart und Raumklima: bis 2.1.22 standen sie nach JEDER Beanstandung eines anderen Felds wieder
@@ -70,7 +70,8 @@ function rn_eingabe_felder($formular)
     foreach (array('heim_breite', 'heim_laenge', 'endpunkt_ein', 'heim_ein', 'heim_radius', 'haus_abfahrt_ein', 'vorklima_anwesend_ein',
                    'vorklima_ein', 'vorklima_vorlauf', 'vorklima_fahrzeuge', 'vorklima_wetter_ein',
                    'vorklima_kalt_unter', 'vorklima_heiss_ueber', 'signal_bl', 'signal_csf', 'signal_praefix',
-                   'ankunft_ein', 'haus_strompreis_ein') as $g) { $f[] = $g; }
+                   'ankunft_ein', 'haus_strompreis_ein',
+                   'kabel_soc', 'kabel_uhr', 'kabel_abfahrt_min', 'signal_kabel', 'vorklima_min_soc', 'vorklima_nur_kabel') as $g) { $f[] = $g; }
     for ($i = 1; $i <= RN_MAX_FAHRZEUGE; $i++) {
         $nr = ($i === 1) ? '' : (string) $i;
         $f[] = 'ankunft_quelle' . $nr;
@@ -408,13 +409,16 @@ if (isset($_POST['speichern'])) {
      *      oben: nichts gespeichert, Feld markiert, Eingabe zurueck (X-2). ---- */
     if (isset($_POST['g40'])) {
         foreach (array('endpunkt_ein', 'heim_ein', 'haus_abfahrt_ein', 'vorklima_anwesend_ein', 'vorklima_ein',
-                       'vorklima_wetter_ein', 'signal_bl', 'signal_csf', 'ankunft_ein', 'haus_strompreis_ein') as $f) {
+                       'vorklima_wetter_ein', 'signal_bl', 'signal_csf', 'ankunft_ein', 'haus_strompreis_ein',
+                       'signal_kabel', 'vorklima_nur_kabel') as $f) {
             $neu[$f] = isset($_POST[$f]) ? 'Y' : 'N';
         }
         $rn_g40 = array('heim_breite' => 'HEIM.L_BREITE', 'heim_laenge' => 'HEIM.L_LAENGE',
                         'heim_radius' => 'HEIM.L_RADIUS', 'vorklima_vorlauf' => 'VORKLIMA.L_VORLAUF',
                         'vorklima_fahrzeuge' => 'VORKLIMA.L_FAHRZEUGE', 'vorklima_kalt_unter' => 'VORKLIMA.L_KALT',
-                        'vorklima_heiss_ueber' => 'VORKLIMA.L_HEISS', 'signal_praefix' => 'SIGNAL.L_PRAEFIX');
+                        'vorklima_heiss_ueber' => 'VORKLIMA.L_HEISS', 'signal_praefix' => 'SIGNAL.L_PRAEFIX',
+                        'kabel_soc' => 'TEXT.L_KABEL_SOC', 'kabel_uhr' => 'TEXT.L_KABEL_UHR', 'kabel_abfahrt_min' => 'TEXT.L_KABEL_ABFAHRT_MIN',
+                        'vorklima_min_soc' => 'TEXT.L_VORKLIMA_MIN_SOC');
         for ($i = 1; $i <= RN_MAX_FAHRZEUGE; $i++) {
             $nr = ($i === 1) ? '' : (string) $i;
             $rn_g40['ankunft_quelle' . $nr] = 'HAUS.L_ANKUNFT_QUELLE';
@@ -562,7 +566,8 @@ if (isset($_POST['speichern'])) {
     $rn_tbean = array();
     $rn_thinw = array();     // Welle Mehrfach-Ziele (Sprachmodul 1.2.1): Hinweise des Moduls, die das Speichern nicht verhindern
     $rn_tneu = ansage_formular_lesen($_POST, rn_tts($rn_cfg), $rn_tmangel, $rn_tbean, rn_ansage_opt() + array(
-                                     'ziele' => rn_mit_zielen()), rn_ansage_k(), $rn_thinw);
+                                     'ziele' => rn_mit_zielen(), 'token_vor_ort' => true, 'aus_gewinnt' => true), rn_ansage_k(), $rn_thinw);
+    list($rn_rneu) = ansage_regeln_formular($_POST, rn_ansage_regeln($rn_cfg), array(), $rn_tmangel, $rn_tbean, rn_ansage_k());     // 2.1.24: Wann gesprochen wird (Stamm)
     foreach ($rn_tmangel as $rn_tm) {
         $rn_fehler[] = rn_e($rn_tm['text']);
     }
@@ -570,6 +575,10 @@ if (isset($_POST['speichern'])) {
         rn_bean(rn_ziele_x2_name($rn_tb));     // X-2 (2.1.20: Tabelle name[N] -> name.N)
     }
     $neu = array_merge($neu, rn_tts_flach($rn_tneu));
+    $neu['ansage_ruhe_ein'] = !empty($rn_rneu['nachtruhe']) ? '1' : '0';
+    $neu['ansage_ruhe_von'] = (string) $rn_rneu['von'];
+    $neu['ansage_ruhe_bis'] = (string) $rn_rneu['bis'];
+    $neu['ansage_sperre_min'] = (string) (int) $rn_rneu['sperre_min'];
 
     /* Sicherheitsnetz: jeder in DIESEM Speichern geaenderte Wert muss die
      * Pruefung bestehen, die beim Zurueckspielen gilt - sonst waere die
@@ -735,9 +744,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['ansage_test']) || is
     if (isset($_POST['ansage_test_ziel']) && $rn_tnur === 0) {
         $rn_tr = array('stand' => 0, 'kennung' => 'ZIEL_UNBEKANNT|-', 'art' => '-', 'http' => 0, 'zeile' => '', 'zeichen' => 0);
     } elseif ($rn_tnur >= 1) {
-        $rn_tr = ansage_testansage(rn_tts($rn_cfg), $rn_tk, $rn_tnur);
+        $rn_tr = ansage_testansage(rn_ansage_vor_ort(), $rn_tk, $rn_tnur);
     } else {
-        $rn_tr = ansage_testansage(rn_tts($rn_cfg), $rn_tk);
+        $rn_tr = ansage_testansage(rn_ansage_vor_ort(), $rn_tk);
     }
     rn_log('Testansage' . ($rn_tnur >= 1 ? ' an Ziel ' . $rn_tnur : '') . ': ' . ansage_kurz($rn_tr));
     if ($rn_tr['stand'] === 1) {
@@ -750,6 +759,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['ansage_test']) || is
                                         ansage_kennung_text($rn_tr['kennung'], $rn_tk)));
     }
     $rn_tab = 'tab-test';
+}
+
+/* ---------------- 2.1.25: Sammelthemen haus/fahrzeug (Reiter MQTT, eigenes Formular, PRG). Haken aus: der Minutentakt raeumt ab. ---------------- */
+if (isset($_POST['haus_fahrzeug_speichern'])) {
+    $neu = $rn_cfg;
+    $neu['haus_fahrzeug_ein'] = isset($_POST['haus_fahrzeug_ein']) ? 'Y' : 'N';
+    if (rn_config_write($neu)) {
+        $rn_cfg = rn_config_read();
+        $rn_meldung = rn_e(rn_t('TEXT.M_GESPEICHERT'));
+        renault_log('INFO', 'Sammelthemen haus/fahrzeug: Haken ' . ($neu['haus_fahrzeug_ein'] === 'Y' ? 'an' : 'aus') . '.');
+    } else {
+        $rn_fehler[] = rn_t('TEXT.F_SCHREIBEN');
+    }
+    $rn_tab = 'tab-mqtt';
 }
 
 /* ---------------- Gruppe 40 (2.2): Befehle ueber MQTT annehmen (Reiter MQTT) ----------------
@@ -1033,6 +1056,7 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 .sm-feld { margin: 14px 0; }
 .sm-feld > label { display: block; font-weight: 600; font-size: 0.9em; color: #555; margin: 0 0 4px; }
 .sm-feld input, .sm-feld select { width: 100%; max-width: 420px; padding: 7px; box-sizing: border-box; }
+.sm-feld input[type=checkbox] { width: auto; }
 .sm-feld .ui-input-text, .sm-feld .ui-select, .sm-feld .ui-textinput { max-width: 520px; }
 .sm-hilfe { font-size: 0.85em; color: #555; margin: 4px 0 0; max-width: 720px; }
 .sm-small { font-size: 0.88em; color: #555; }
@@ -1452,6 +1476,38 @@ $rn_kauto = $rn_broker ? rn_t($rn_broker['autostart'] ? 'ALLG.EIN' : 'ALLG.AUS')
 </div>
 <?php } ?>
 <p class="sm-hilfe"><?php echo rn_t('VORKLIMA.H_WETTER'); ?></p>
+<div class="sm-feld">
+  <label for="vorklima_min_soc"><?php echo rn_e(rn_t('TEXT.L_VORKLIMA_MIN_SOC')); ?></label>
+  <input data-role="none" type="number" min="0" max="100" id="vorklima_min_soc" name="vorklima_min_soc" value="<?php echo rn_e(rn_ein_w('vorklima_min_soc', $rn_cfg['vorklima_min_soc'])); ?>"<?php echo rn_ein_m('vorklima_min_soc'); ?>>
+</div>
+<div class="sm-feld">
+  <label style="display:inline-flex;align-items:center;gap:8px;">
+    <input data-role="none" type="checkbox" name="vorklima_nur_kabel" value="Y" style="width:auto" <?php echo rn_ein_h('vorklima_nur_kabel', $rn_cfg['vorklima_nur_kabel'] === 'Y') ? 'checked' : ''; ?><?php echo rn_ein_m('vorklima_nur_kabel'); ?>>
+    <?php echo rn_e(rn_t('TEXT.L_VORKLIMA_NUR_KABEL')); ?>
+  </label>
+</div>
+<p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.H_VORKLIMA_GRENZEN')); ?></p>
+<h3><?php echo rn_e(rn_t('TEXT.H_KABEL')); ?></h3>
+<p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.KABEL_HILFE')); ?></p>
+<div class="sm-feld">
+  <label for="kabel_soc"><?php echo rn_e(rn_t('TEXT.L_KABEL_SOC')); ?></label>
+  <input data-role="none" type="number" min="1" max="100" id="kabel_soc" name="kabel_soc" value="<?php echo rn_e(rn_ein_w('kabel_soc', $rn_cfg['kabel_soc'])); ?>"<?php echo rn_ein_m('kabel_soc'); ?>>
+</div>
+<div class="sm-feld">
+  <label for="kabel_uhr"><?php echo rn_e(rn_t('TEXT.L_KABEL_UHR')); ?></label>
+  <input data-role="none" type="time" id="kabel_uhr" name="kabel_uhr" value="<?php echo rn_e(rn_ein_w('kabel_uhr', $rn_cfg['kabel_uhr'])); ?>"<?php echo rn_ein_m('kabel_uhr'); ?>>
+</div>
+<div class="sm-feld">
+  <label for="kabel_abfahrt_min"><?php echo rn_e(rn_t('TEXT.L_KABEL_ABFAHRT_MIN')); ?></label>
+  <input data-role="none" type="number" min="0" max="720" id="kabel_abfahrt_min" name="kabel_abfahrt_min" value="<?php echo rn_e(rn_ein_w('kabel_abfahrt_min', $rn_cfg['kabel_abfahrt_min'])); ?>"<?php echo rn_ein_m('kabel_abfahrt_min'); ?>>
+  <p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.H_KABEL_ABFAHRT_MIN')); ?></p>
+</div>
+<div class="sm-feld">
+  <label style="display:inline-flex;align-items:center;gap:8px;">
+    <input data-role="none" type="checkbox" name="signal_kabel" value="Y" style="width:auto" <?php echo rn_ein_h('signal_kabel', $rn_cfg['signal_kabel'] === 'Y') ? 'checked' : ''; ?><?php echo rn_ein_m('signal_kabel'); ?>>
+    <?php echo rn_e(rn_t('TEXT.L_SIGNAL_KABEL')); ?>
+  </label>
+</div>
 
 <h2><?php echo rn_e(rn_t('HAUS.H')); ?></h2>
 <p class="sm-hilfe"><?php echo rn_t('HAUS.H_TEXT'); ?></p>
@@ -1503,7 +1559,12 @@ $rn_kauto = $rn_broker ? rn_t($rn_broker['autostart'] ? 'ALLG.EIN' : 'ALLG.AUS')
     'modi' => rn_ansage_modi(),
     /* Welle Mehrfach-Ziele (Sprachmodul 1.2.1): Tabelle der weiteren Ausgabeziele; nach einer Beanstandung traegt sie das Eingetippte. */
     'ziele' => rn_mit_zielen(),
-    'ziele_post' => rn_eingaben() !== null ? rn_ziele_x2_post(rn_eingaben()['werte']) : null), rn_ansage_k()); ?>
+    'ziele_post' => rn_eingaben() !== null ? rn_ziele_x2_post(rn_eingaben()['werte']) : null), rn_ansage_k());
+echo ansage_regeln_html(rn_ansage_regeln($rn_cfg), array(), array(), array(
+    'w' => function ($n, $g) { return rn_ein_w($n, $g); },
+    'm' => function ($n) { return rn_ein_m(rn_ziele_x2_name($n)); },
+    'c' => function ($n, $g) { return rn_ein_h($n, $g); },
+    'token_vor_ort' => true), rn_ansage_k()); ?>
 <h3><?php echo rn_e(rn_t('TEXT.H_ANSAGE_ANLAESSE')); ?></h3>
 <?php foreach (rn_ansage_anlaesse() as $rn_a) { ?>
 <div class="sm-feld">
@@ -1600,6 +1661,21 @@ if ($rn_v2f === 1) { ?>
 <?php } ?>
 <p class="sm-hilfe"><?php echo rn_t('TEXT.H_THEMEN_TEXT'); ?></p>
 
+<h2><?php echo rn_e(rn_t('TEXT.H_HAUS_FAHRZEUG')); ?></h2>
+<form method="post" action="index.php">
+  <input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
+  <input data-role="none" type="hidden" name="activetab" value="tab-mqtt">
+  <div class="sm-feld">
+    <label style="display:inline-flex;align-items:center;gap:8px;">
+      <input data-role="none" type="checkbox" name="haus_fahrzeug_ein" value="Y" style="width:auto" <?php echo $rn_cfg['haus_fahrzeug_ein'] === 'Y' ? 'checked' : ''; ?>>
+      <?php echo rn_e(rn_t('TEXT.L_HAUS_FAHRZEUG_EIN')); ?>
+    </label>
+    <p class="sm-hilfe"><?php echo rn_t('TEXT.H_HAUS_FAHRZEUG_EIN'); ?></p>
+  </div>
+  <div class="sm-knopfreihe">
+    <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="haus_fahrzeug_speichern" value="1"><?php echo rn_e(rn_t('TEXT.K_SPEICHERN')); ?></button>
+  </div>
+</form>
 <h2><?php echo rn_e(rn_t('BEFEHL.H')); ?></h2>
 <div class="sm-warnung"><?php echo rn_t('BEFEHL.H_UDP'); ?></div>
 <?php list($rn_bl_ok, $rn_bl_txt) = rn_bruecke_lage(); ?>
@@ -2040,6 +2116,7 @@ if ($rn_striche > 0) {
        ohne weitere Ziele nichts. */
     if (rn_mit_zielen()) { echo ansage_testknoepfe_html(rn_tts($rn_cfg), rn_ansage_k(), array('klasse' => 'sm-btn sm-b-aktion')); } ?>
   </form>
+<?= rn_ansage_lage_html() ?>
 </div>
 
 <h2><?php echo rn_e(rn_t('TEXT.H_TECHNIK')); ?></h2>
