@@ -521,6 +521,8 @@ function rn_vorgaben()
     /* 2.1.24: ab Werk EIN (nie gesetzt). Die weiteren Ziele setzt rn_tts_aus(), sie bleiben hier leer, damit eine alte Datei mit Ausgabeart keine erbt. */
     $v['tts_mode'] = ansage_werk_modus();
     $v['ansage_ruhe_ein'] = '1';
+    $v['ansage_tafel_ein'] = '1';
+    $v['ansage_tafel_namen'] = '';
     $v['ansage_ruhe_von'] = '22:00';
     $v['ansage_ruhe_bis'] = '07:00';
     $v['ansage_sperre_min'] = '30';
@@ -3058,7 +3060,7 @@ function rn_ansage_neue_schluessel()
     foreach (array_keys(ansage_vorgaben('aus')) as $k) {
         $s[] = 'tts_' . $k;
     }
-    foreach (array('ansage_ruhe_ein', 'ansage_ruhe_von', 'ansage_ruhe_bis', 'ansage_sperre_min', 'ansage_token_herkunft') as $k) { $s[] = $k; }     // 2.1.24
+    foreach (array('ansage_tafel_ein', 'ansage_tafel_namen', 'ansage_ruhe_ein', 'ansage_ruhe_von', 'ansage_ruhe_bis', 'ansage_sperre_min', 'ansage_token_herkunft') as $k) { $s[] = $k; }     // 2.1.24
     return $s;
 }
 
@@ -3143,6 +3145,9 @@ function rn_ansage_regeln($cfg = null)
     if (isset($cfg['ansage_ruhe_von'], $cfg['ansage_ruhe_bis'], $cfg['ansage_sperre_min'])) {
         $r = array('nachtruhe' => (string) (isset($cfg['ansage_ruhe_ein']) ? $cfg['ansage_ruhe_ein'] : '1') === '0' ? 0 : 1, 'von' => (string) $cfg['ansage_ruhe_von'],
                    'bis' => (string) $cfg['ansage_ruhe_bis'], 'sperre_min' => (int) $cfg['ansage_sperre_min']);
+        // Stamm 1.4.0: die Tafel. Fehlt der Schluessel, gilt die Vorgabe des Stamms (an).
+        if (isset($cfg['ansage_tafel_ein']) && (string) $cfg['ansage_tafel_ein'] === '0') { $r['tafel'] = 0; }
+        if (isset($cfg['ansage_tafel_namen'])) { $r['tafel_namen'] = (string) $cfg['ansage_tafel_namen']; }
     }
     $p = ansage_regeln_wert($r, $g);
     return $p === null ? ansage_regeln_vorgaben() : $p;
@@ -3208,7 +3213,7 @@ function rn_ansage_token_pflegen($cfg = null)
 function rn_ansage_vor_ort($cfg = null)
 {
     if ($cfg === null) { $cfg = rn_config_read(); }
-    return ansage_token_fuer_lauf(rn_tts($cfg), rn_ansage_her($cfg), rn_ansage_k());
+    return ansage_tafel_einreihen(ansage_token_fuer_lauf(rn_tts($cfg), rn_ansage_her($cfg), rn_ansage_k()), rn_ansage_regeln($cfg), rn_ansage_k(), true);     // Stamm 1.4.0: die Tafel, wenn sie bereitsteht
 }
 
 /** Der Block fuer die Pruefzeile: nur die eingerichteten Ziele; ist keines eingerichtet, sagt die Zeile "aus" statt eines Kreuzes. */
@@ -3668,6 +3673,8 @@ function rn_wert_pruefen($k, $w)
      * Ohne diesen Zweig wies die Zeichenpruefung darunter jede Liste ab - beim Speichern (Sicherheitsnetz im Handler)
      * und beim Zurueckspielen. Eine zuerst geladene aeltere Abschrift kennt die Liste nicht. */
     if ($k === 'ansage_token_herkunft') { return $w === '' || is_array(json_decode($w, true)); }     // 2.1.24
+    if ($k === 'ansage_tafel_ein') { return $w === '0' || $w === '1'; }
+    if ($k === 'ansage_tafel_namen') { return ansage_tafel_namen_ok($w); }
     if ($k === 'ansage_ruhe_ein') { return $w === '0' || $w === '1'; }
     if ($k === 'ansage_ruhe_von' || $k === 'ansage_ruhe_bis') { return is_string($w) && (bool) preg_match('/^([01][0-9]|2[0-3]):[0-5][0-9]\z/', $w); }
     if ($k === 'ansage_sperre_min') { return is_string($w) && (bool) preg_match('/^[0-9]{1,3}\z/', $w) && (int) $w >= 5 && (int) $w <= 240; }

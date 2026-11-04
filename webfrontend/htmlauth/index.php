@@ -576,6 +576,8 @@ if (isset($_POST['speichern'])) {
     }
     $neu = array_merge($neu, rn_tts_flach($rn_tneu));
     $neu['ansage_ruhe_ein'] = !empty($rn_rneu['nachtruhe']) ? '1' : '0';
+    $neu['ansage_tafel_ein'] = !empty($rn_rneu['tafel']) ? '1' : '0';
+    $neu['ansage_tafel_namen'] = (string) $rn_rneu['tafel_namen'];
     $neu['ansage_ruhe_von'] = (string) $rn_rneu['von'];
     $neu['ansage_ruhe_bis'] = (string) $rn_rneu['bis'];
     $neu['ansage_sperre_min'] = (string) (int) $rn_rneu['sperre_min'];
