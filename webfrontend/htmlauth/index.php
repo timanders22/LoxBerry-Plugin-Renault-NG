@@ -841,6 +841,7 @@ if (isset($_POST['test'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['vorlage'])
     && $_POST['vorlage'] === 'vo') {
     list($rn_vname, $rn_vinhalt) = rn_vorlage_vo();
+    while (ob_get_level() > 0) { @ob_end_clean(); }
     header('Content-Type: application/x-download');
     header('Content-Disposition: attachment; filename="' . $rn_vname . '"');
     echo $rn_vinhalt;
@@ -851,6 +852,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['vorlage'])
     && $_POST['vorlage'] === 'bb') {
     list($rn_vname, $rn_vinhalt) = rn_vorlage_befehle();
     if ($rn_vinhalt !== '') {
+        while (ob_get_level() > 0) { @ob_end_clean(); }
         header('Content-Type: application/x-download');
         header('Content-Disposition: attachment; filename="' . $rn_vname . '"');
         echo $rn_vinhalt;
@@ -896,6 +898,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rn_sichern'])) {
     if ($rn_js !== false) {
         renault_log('INFO', 'Einstellungen gesichert (Datei enthaelt Zugangsdaten '
             . 'und das Aktionstoken).');
+        while (ob_get_level() > 0) { @ob_end_clean(); }
         header('Content-Type: application/json; charset=utf-8');
         header('Content-Disposition: attachment; filename="renault_einstellungen_'
                . date('Ymd_His') . '.json"');
