@@ -413,6 +413,15 @@ if (isset($_POST['speichern'])) {
                        'signal_kabel', 'vorklima_nur_kabel') as $f) {
             $neu[$f] = isset($_POST[$f]) ? 'Y' : 'N';
         }
+        // 2.1.29: beide Zahlen aus der Karte zusammen ins Feld Breitengrad kopiert ("50.123, 8.456") - hier aufteilen,
+        // wenn Laengengrad leer ist oder schon die zweite Zahl traegt. Eine Kommazahl allein ("51,3") bleibt eine Zahl.
+        if (isset($_POST['heim_breite']) && is_string($_POST['heim_breite'])
+            && !preg_match('/^\s*-?\d+,\d+\s*\z/', $_POST['heim_breite'])
+            && preg_match('/^\s*(-?\d{1,3}(?:\.\d+)?)\s*[,;\/ ]\s*(-?\d{1,3}(?:\.\d+)?)\s*\z/', $_POST['heim_breite'], $rn_pm)
+            && (!isset($_POST['heim_laenge']) || !is_string($_POST['heim_laenge']) || trim($_POST['heim_laenge']) === ''
+                || str_replace(',', '.', trim($_POST['heim_laenge'])) === $rn_pm[2])) {
+            $_POST['heim_breite'] = $rn_pm[1]; $_POST['heim_laenge'] = $rn_pm[2];
+        }
         $rn_g40 = array('heim_breite' => 'HEIM.L_BREITE', 'heim_laenge' => 'HEIM.L_LAENGE',
                         'heim_radius' => 'HEIM.L_RADIUS', 'vorklima_vorlauf' => 'VORKLIMA.L_VORLAUF',
                         'vorklima_fahrzeuge' => 'VORKLIMA.L_FAHRZEUGE', 'vorklima_kalt_unter' => 'VORKLIMA.L_KALT',
@@ -1452,6 +1461,7 @@ $rn_kauto = $rn_broker ? rn_t($rn_broker['autostart'] ? 'ALLG.EIN' : 'ALLG.AUS')
 <div class="sm-feld">
   <label for="heim_breite"><?php echo rn_e(rn_t('HEIM.L_BREITE')); ?></label>
   <input data-role="none" type="text" id="heim_breite" name="heim_breite" autocomplete="off" value="<?php echo rn_e(rn_ein_w('heim_breite', $rn_cfg['heim_breite'])); ?>"<?php echo rn_ein_m('heim_breite'); ?>>
+  <p class="sm-hilfe"><a href="<?php echo rn_e('https://mapatlas.eu/' . (rn_sprache() === 'de' ? 'de' : 'en') . '/tools/coordinates'); ?>" target="_blank" rel="noopener"><?php echo rn_e(rn_t('HEIM.KARTE')); ?></a>. <?php echo rn_e(rn_t('HEIM.KARTE_ZUSAMMEN')); ?></p>
 </div>
 <div class="sm-feld">
   <label for="heim_laenge"><?php echo rn_e(rn_t('HEIM.L_LAENGE')); ?></label>

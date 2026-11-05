@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.28 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.29 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,10 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Neu in 2.1.29
+
+- Heimzone: Unter dem Feld „Breitengrad des Hauses“ steht ein Link zu einer Karte (mapatlas.eu). Dort die Adresse eingeben und die Zahlen unter „Dezimalgrad“ kopieren. Beide Zahlen dürfen auch zusammen ins Feld „Breitengrad des Hauses“ kopiert werden („50.123, 8.456“, getrennt durch Komma, Semikolon, Schrägstrich oder Leerzeichen, Dezimalpunkt); das Plugin teilt sie beim Speichern auf, wenn das Feld Längengrad leer ist oder schon die zweite Zahl trägt. Eine einzelne Zahl mit Komma („51,3“) wird nicht aufgeteilt.
 
 ## Neu in 2.1.28
 
