@@ -61,7 +61,7 @@ function rn_eingabe_felder($formular)
     }
     /* Nr. 36 b (seit 2.1.16): die Sprachausgabe und die Anlass-Schalter - nie die Sprechtoken
      * (ansage_x2_felder() nennt sie nicht; markiert werden koennen sie). */
-    $f = array_merge($f, ansage_x2_felder(rn_ansage_opt()), ansage_regeln_x2_felder());
+    $f = array_merge($f, ansage_x2_felder(rn_ansage_opt()), ansage_regeln_x2_felder(), array('ansage_tafel_ein', 'ansage_tafel_namen', 'ansage_homepod_ein', 'ansage_homepod_geraet'));     // 2.1.28: Tafel und HomePod dazu
     foreach (rn_ansage_anlaesse() as $a) { $f[] = $a[0]; }
     /* Gruppe 40 (2.1.20). Seit 2.1.23 (Meldung des Hausherrn) reisen auch die Heimkoordinaten mit, wie in Audi, BYD,
      * Skoda, VW, MGiSmart und Raumklima: bis 2.1.22 standen sie nach JEDER Beanstandung eines anderen Felds wieder
@@ -578,9 +578,13 @@ if (isset($_POST['speichern'])) {
     $neu['ansage_ruhe_ein'] = !empty($rn_rneu['nachtruhe']) ? '1' : '0';
     $neu['ansage_tafel_ein'] = !empty($rn_rneu['tafel']) ? '1' : '0';
     $neu['ansage_tafel_namen'] = (string) $rn_rneu['tafel_namen'];
+    $neu['ansage_homepod_ein'] = !empty($rn_rneu['homepod']) ? '1' : '0';
+    $neu['ansage_homepod_geraet'] = (string) $rn_rneu['homepod_geraet'];
     $neu['ansage_ruhe_von'] = (string) $rn_rneu['von'];
     $neu['ansage_ruhe_bis'] = (string) $rn_rneu['bis'];
     $neu['ansage_sperre_min'] = (string) (int) $rn_rneu['sperre_min'];
+    // 2.1.28: ein eingetipptes oder geloeschtes Sprechtoken ist nicht mehr vom Nachbarn; bis 2.1.27 ueberschrieb es der naechste Abgleich.
+    $neu['ansage_token_herkunft'] = (string) json_encode(ansage_token_herkunft_formular($_POST, rn_ansage_her($rn_cfg)));
 
     /* Sicherheitsnetz: jeder in DIESEM Speichern geaenderte Wert muss die
      * Pruefung bestehen, die beim Zurueckspielen gilt - sonst waere die

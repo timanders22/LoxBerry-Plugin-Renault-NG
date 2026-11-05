@@ -523,6 +523,8 @@ function rn_vorgaben()
     $v['ansage_ruhe_ein'] = '1';
     $v['ansage_tafel_ein'] = '1';
     $v['ansage_tafel_namen'] = '';
+    $v['ansage_homepod_ein'] = '1';     // 2.1.28: bis hierher zeigte das Formular HomePod, gespeichert wurde es nicht
+    $v['ansage_homepod_geraet'] = '';
     $v['ansage_ruhe_von'] = '22:00';
     $v['ansage_ruhe_bis'] = '07:00';
     $v['ansage_sperre_min'] = '30';
@@ -3060,7 +3062,7 @@ function rn_ansage_neue_schluessel()
     foreach (array_keys(ansage_vorgaben('aus')) as $k) {
         $s[] = 'tts_' . $k;
     }
-    foreach (array('ansage_tafel_ein', 'ansage_tafel_namen', 'ansage_ruhe_ein', 'ansage_ruhe_von', 'ansage_ruhe_bis', 'ansage_sperre_min', 'ansage_token_herkunft') as $k) { $s[] = $k; }     // 2.1.24
+    foreach (array('ansage_tafel_ein', 'ansage_tafel_namen', 'ansage_homepod_ein', 'ansage_homepod_geraet', 'ansage_ruhe_ein', 'ansage_ruhe_von', 'ansage_ruhe_bis', 'ansage_sperre_min', 'ansage_token_herkunft') as $k) { $s[] = $k; }     // 2.1.24
     return $s;
 }
 
@@ -3148,6 +3150,8 @@ function rn_ansage_regeln($cfg = null)
         // Stamm 1.4.0: die Tafel. Fehlt der Schluessel, gilt die Vorgabe des Stamms (an).
         if (isset($cfg['ansage_tafel_ein']) && (string) $cfg['ansage_tafel_ein'] === '0') { $r['tafel'] = 0; }
         if (isset($cfg['ansage_tafel_namen'])) { $r['tafel_namen'] = (string) $cfg['ansage_tafel_namen']; }
+        if (isset($cfg['ansage_homepod_ein']) && (string) $cfg['ansage_homepod_ein'] === '0') { $r['homepod'] = 0; }     // 2.1.28
+        if (isset($cfg['ansage_homepod_geraet'])) { $r['homepod_geraet'] = (string) $cfg['ansage_homepod_geraet']; }
     }
     $p = ansage_regeln_wert($r, $g);
     return $p === null ? ansage_regeln_vorgaben() : $p;
@@ -3675,6 +3679,8 @@ function rn_wert_pruefen($k, $w)
     if ($k === 'ansage_token_herkunft') { return $w === '' || is_array(json_decode($w, true)); }     // 2.1.24
     if ($k === 'ansage_tafel_ein') { return $w === '0' || $w === '1'; }
     if ($k === 'ansage_tafel_namen') { return ansage_tafel_namen_ok($w); }
+    if ($k === 'ansage_homepod_ein') { return $w === '0' || $w === '1'; }
+    if ($k === 'ansage_homepod_geraet') { return ansage_geraet_ok($w); }
     if ($k === 'ansage_ruhe_ein') { return $w === '0' || $w === '1'; }
     if ($k === 'ansage_ruhe_von' || $k === 'ansage_ruhe_bis') { return is_string($w) && (bool) preg_match('/^([01][0-9]|2[0-3]):[0-5][0-9]\z/', $w); }
     if ($k === 'ansage_sperre_min') { return is_string($w) && (bool) preg_match('/^[0-9]{1,3}\z/', $w) && (int) $w >= 5 && (int) $w <= 240; }

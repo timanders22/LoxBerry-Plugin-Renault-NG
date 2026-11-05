@@ -54,7 +54,7 @@ for rn_pfad in "$KONF" "$DATEN" "$PROT" "$ALT"; do
     case "$rn_pfad" in
         /?*) ;;
         *) echo "<WARNING> preupgrade.sh wurde nicht vom LoxBerry-Installer aufgerufen (Pfad ohne Wurzel: $rn_pfad) - es wird nichts gesichert."
-           exit 1 ;;
+           exit 2 ;;
     esac
 done
 
