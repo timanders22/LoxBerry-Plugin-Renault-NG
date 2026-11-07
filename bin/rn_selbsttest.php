@@ -251,8 +251,10 @@ pruefe('Vorgabe: Zieltemperatur 21', $v['ac_temp'], '21');
 pruefe('Vorgabe: Sprachausgabe ab Werk an (2.1.24)', $v['tts_mode'], 'musicserver');
 // Gruppe 40 (2.1.20): + die neuen Schluessel (rn_vorgaben_2120(), 19 + je Fahrzeug zwei). Welle Mehrfach-Ziele
 // (2.1.20): + tts_ziele (die Liste der weiteren Ausgabeziele als JSON, leer = keine).
+// 2.1.26: + ansage_tafel_ein, ansage_tafel_namen; 2.1.28: + ansage_homepod_ein, ansage_homepod_geraet.
+// Seit 2.1.26 nicht nachgezogen - der Fall war rot, ohne dass es auffiel (Freigabetor, 08.11.2026).
 pruefe('Vorgabe: 32 + 4 + tts + tts_ziele + 2.1.20 Schluessel', count($v),
-    38 + 5 + count(ansage_vorgaben('aus')) + count(rn_neue_schluessel_2120()));     // 2.1.24: + 5 Schluessel der Regeln
+    38 + 5 + 2 + 2 + count(ansage_vorgaben('aus')) + count(rn_neue_schluessel_2120()));     // 2.1.24: + 5 Schluessel der Regeln
 pruefe('Vorgabe: tts_ziele leer', $v['tts_ziele'], '');
 
 /* 7. Jeder Vorgabewert muss die eigene Wertpruefung bestehen.
