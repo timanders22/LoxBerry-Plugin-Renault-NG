@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.32 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.33 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,15 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Neu in 2.1.33
+
+- **Konfiguration wird vervollständigt:** Fehlen in `config.php` Einstellungen, die eine neuere Fassung mitbringt, trägt der Minutentakt (`abruf.php takt` aus `cron.01min`) sie jetzt einmal mit ihrer Vorgabe in die Datei ein. Bisher ergänzte das Plugin fehlende Einstellungen nur beim Lesen; in die Datei kamen sie erst beim nächsten Speichern im Formular. Das Protokoll nennt die ergänzten Namen in einer Zeile, nie die Werte.
+- Geschrieben werden die Werte, die in der Datei stehen, plus die fehlenden Vorgaben, auf demselben Weg wie beim Speichern (Rechte 0600, Prüfung der Datei, Zweitschrift). Einstellungen, die das Plugin nicht kennt, bleiben stehen; geschrieben wird nur, wenn etwas fehlt. Eine fehlende Einstellung galt beim Lesen schon bisher mit ihrer Vorgabe, am Verhalten ändert sich deshalb nichts – auch ein fehlender Haken für den HTTP-Endpunkt wird mit „aus“ eingetragen, so wie er bisher gelesen wurde.
+- Während einer Aktualisierung geschieht nichts: Der Übergang in `postupgrade.sh`, der einer bestehenden Anlage den HTTP-Endpunkt offen lässt, läuft vorher. Nicht angefasst werden eine fehlende, leere oder beschädigte Datei, eine Datei ohne Aktionstoken, eine Datei ohne das abschließende `?>` (sie kann abgeschnitten sein) und eine Datei mit einer Zuweisung, die das Plugin nicht lesen kann; im letzten Fall steht höchstens einmal je Stunde eine Warnung im Protokoll. Das Aktionstoken selbst wird nie eingetragen.
+- Gemessen ist das im Prüfstand unter PHP 7.4 und 8.4 auf dem Arbeitsrechner. Nicht gemessen ist es an einem LoxBerry und nicht an einem vollständigen Lauf von `abruf.php takt`; die Aufrufstelle ist nur im Quelltext geprüft.
+- **`endpunkt_ein` bleibt außen vor:** Fehlt die Einstellung, trägt das Vervollständigen sie nicht ein. Den Übergang einer bestehenden Anlage setzt weiter allein die Aktualisierung (`bin/rn_bestand.php`); ein hier festgeschriebenes „N“ könnte eine spätere Aktualisierung nicht mehr berichtigen.
+- **Berichtigt: Zweitschrift beim Speichern.** Endete `config.php` nicht mit `?>` und fehlten ihr Einstellungen, die die Zweitschrift trägt, war die Datei womöglich nach einer Zuweisung abgeschnitten. Das Lesen hielt sie für heil, und das nächste Speichern überschrieb die Zweitschrift mit den Vorgaben für den verlorenen Rest. Jetzt bleibt die Zweitschrift in diesem Fall unberührt, und das Protokoll nennt die betroffenen Einstellungen. Geprüft auf dem Arbeitsrechner unter PHP 7.4 und 8.4 (vier Fälle; die Vorfassung ist im Fall „abgeschnitten“ rot).
 
 ## Neu in 2.1.32
 

@@ -1244,9 +1244,15 @@ function rn_session_schreiben($datei, array $felder)
  * zurueckgesetzt. Beides ist hier behoben: var_export() maskiert, und
  * geschrieben wird die vollstaendige Konfiguration.
  */
-function rn_config_write($cfg)
+function rn_config_write($cfg, $ohne_vorgabe = array())
 {
-    $voll = array_merge(rn_vorgaben(), $cfg);
+    /* 2.1.33: $ohne_vorgabe nennt Schluessel, deren Vorgabe NICHT daruntergelegt wird, solange sie in $cfg
+     * fehlen - fuer rn_config_vervollstaendigen() und endpunkt_ein. Alle anderen Aufrufer: unveraendert. */
+    $vorgaben = rn_vorgaben();
+    foreach ((array) $ohne_vorgabe as $k) {
+        if (!array_key_exists($k, $cfg)) { unset($vorgaben[$k]); }
+    }
+    $voll = array_merge($vorgaben, $cfg);
     $z = "<?php\n";
     foreach ($voll as $k => $v) {
         $z .= '$' . $k . ' = ' . var_export((string) $v, true) . ";\n";
@@ -1254,6 +1260,8 @@ function rn_config_write($cfg)
     $z .= "?>\n";
 
     $datei = rn_paths()['config'];
+    /* 2.1.33: der Stand VOR dem Schreiben, fuer die Pruefung der Zweitschrift weiter unten. */
+    $vorher = @file_get_contents($datei);
 
     /* Erst pruefen, ob die neue Datei ueberhaupt gueltiges PHP ist - sonst
      * waere die Oberflaeche nach dem Speichern nicht mehr aufrufbar.
@@ -1316,6 +1324,18 @@ function rn_config_write($cfg)
      * per rename() die heile. Scheitert es jetzt, bleibt die bisherige
      * Zweitschrift unberuehrt, und das Protokoll sagt es. */
     $sich = rn_paths()['sicherung'];
+    /* 2.1.33: War die Datei vor diesem Schreiben ohne den Abschluss ?> und fehlten ihr Einstellungen, die die
+     * Zweitschrift traegt, kann sie nach einer vollstaendigen Zuweisung abgeschnitten gewesen sein: das Lesen
+     * haelt sie fuer heil, und fuer den verlorenen Rest stehen jetzt die Vorgaben in der Datei. Die Zweitschrift
+     * traegt dann die einzigen echten Werte und wird nicht ueberschrieben - gemeldet wird es. */
+    $verlust = rn_zweitschrift_verlust($vorher, $sich);
+    if ($verlust) {
+        rn_melden('WARN', 'Die Konfiguration ist geschrieben, die Zweitschrift ' . $sich . ' bleibt aber '
+            . 'unberuehrt: die Datei endete vorher nicht mit ?> und trug ' . count($verlust) . ' Einstellung(en) '
+            . 'der Zweitschrift nicht (' . implode(', ', $verlust) . '). Sie war womoeglich abgeschnitten; die '
+            . 'Werte stehen in der Zweitschrift (Einstellungen zurueckspielen).');
+        return true;
+    }
     if (!rn_datei_schreiben($sich, $zurueck, 0600)) {
         rn_melden('WARN', 'Die Konfiguration ist geschrieben, die Zweitschrift ' . $sich
             . ' liess sich aber nicht erneuern - die bisherige bleibt unberuehrt. '
@@ -1324,6 +1344,123 @@ function rn_config_write($cfg)
     }
     @chmod($sich, 0600);
     return true;
+}
+
+/**
+ * Die Einstellungen, die die Zweitschrift traegt und ein Stand OHNE Abschluss ?> nicht (2.1.33).
+ *
+ * Leere Rueckgabe heisst: die Zweitschrift darf erneuert werden. Nur ein Stand ohne ?> am Ende kommt in
+ * Frage, denn rn_config_write() schliesst jede Datei damit ab; ein Stand mit Abschluss, eine fehlende Datei
+ * und eine fehlende oder unlesbare Zweitschrift geben eine leere Liste. Verglichen werden die Namen, nicht die
+ * Werte.
+ */
+function rn_zweitschrift_verlust($vorher, $sich)
+{
+    if (!is_string($vorher) || $vorher === '' || preg_match('/\?>\s*\z/', $vorher) === 1) {
+        return array();
+    }
+    $z = is_readable($sich) ? rn_config_einlesen($sich) : null;
+    if (!is_array($z) || !$z) {
+        return array();
+    }
+    $v = rn_config_zerlegen($vorher);
+    $v = is_array($v) ? $v : array();
+    return array_values(array_diff(array_keys($z), array_keys($v)));
+}
+
+/**
+ * Fehlende Einstellungen EINMAL mit ihrer Vorgabe in config.php schreiben (2.1.33; Regeln/05, Bauform Docker NG
+ * 1.3.7).
+ *
+ * Bis 2.1.32 ergaenzte rn_config_read() fehlende Schluessel nur im Speicher; in die Datei kamen sie erst beim
+ * naechsten Speichern im Formular (oder einmal beim Update von 2.1.19 und aelter ueber rn_bestand.php
+ * --endpunkt-ein). Aufgerufen vom Minutentakt (abruf.php takt, cron.01min) vor dem ersten Lesen der Konfiguration.
+ *
+ *  - nur mit LoxBerry-Wurzel (nicht im Archivmodus) und nicht, solange die Upgrade-Marke liegt
+ *    (data/plugins/<ordner>.upgrade_laeuft; wie postupgrade.sh entscheidet hier das Vorhandensein, kein Alter -
+ *    geschlossen ausfallen). Sonst kaeme endpunkt_ein mit der Vorgabe N in die Datei, BEVOR postupgrade.sh einer
+ *    bestehenden Anlage das Y eintraegt (Abschnitt 4 dort) - der HTTP-Weg waere still aus;
+ *  - nur eine Datei, die rn_konfig_urteil() fuer heil haelt und die ein NICHT LEERES Aktionstoken traegt (das
+ *    Merkwort der Linie). Eine fehlende, leere, abgeschnittene oder fremde Datei ist Sache der Selbstheilung;
+ *    aktionstoken selbst wird nie ergaenzt;
+ *  - nur, wenn der Zerleger jede Zuweisung der Datei lesen konnte: eine von Hand eingetragene Zuweisung, die er
+ *    uebergeht (Feld, Ausdruck), ginge beim Neuschreiben verloren - dann bleibt die Datei, wie sie ist, mit einer
+ *    Zeile je Stunde im Protokoll;
+ *  - geschrieben werden die WERTE AUS DER DATEI, so wie der Zerleger sie liest, plus die fehlenden Vorgaben -
+ *    nicht rn_config_read(), das fremde Schluessel fallen laesst. rn_config_read() legt die Datei ohne Lese-Regel
+ *    ueber rn_vorgaben(): jeder fehlende Schluessel gilt beim Lesen schon heute mit seiner Vorgabe, auch
+ *    endpunkt_ein mit N. Am Verhalten aendert das Eintragen nichts;
+ *  - nur Schluessel aus rn_vorgaben(); das Speichern im Formular schreibt dieselben (rn_config_write() legt immer
+ *    rn_vorgaben() darunter), ansage_token_herkunft dort ebenso mit '', wenn er fehlt;
+ *  - fremde Schluessel bleiben stehen; geschrieben wird nur, wenn etwas fehlt; Weg, Rechte (0600), Pruefung und
+ *    Zweitschrift wie beim Speichern (rn_config_write()); eine Protokollzeile mit den Namen, nie mit Werten.
+ *
+ *  - nur eine Datei, die mit ?> endet, wie jede von rn_config_write() geschriebene (siehe unten).
+ *
+ * Rueckgabe: array('stand' => ohne_wurzel|ruht|ohne_datei|ohne_merkwort|ohne_abschluss|nicht_zerlegbar|
+ *                  vollstaendig|ergaenzt|fehler, 'schluessel' => Namen der eingetragenen bzw. fehlenden Schluessel)
+ */
+function rn_config_vervollstaendigen()
+{
+    $p = rn_paths(false);
+    if ($p['home'] === '') {
+        return array('stand' => 'ohne_wurzel', 'schluessel' => array());
+    }
+    if (file_exists($p['datadir'] . '.upgrade_laeuft')) {
+        return array('stand' => 'ruht', 'schluessel' => array());
+    }
+    clearstatcache(true, $p['config']);
+    if (!is_file($p['config'])) {
+        return array('stand' => 'ohne_datei', 'schluessel' => array());
+    }
+    $roh = @file_get_contents($p['config']);
+    if (!is_string($roh)) {
+        return array('stand' => 'ohne_merkwort', 'schluessel' => array());
+    }
+    $heil = false;
+    $werte = rn_config_zerlegen($roh, $heil);
+    $hat = is_array($werte) && array_key_exists('aktionstoken', $werte)
+           && trim((string) $werte['aktionstoken']) !== '';
+    if (!$hat || rn_konfig_urteil($werte, $heil, function () { return false; }) !== '') {
+        return array('stand' => 'ohne_merkwort', 'schluessel' => array());
+    }
+    /* Strenger als das Lesen: rn_config_write() schliesst jede Datei mit ?> ab. Fehlt der Abschluss, kann die Datei
+     * nach einer vollstaendigen Zuweisung abgeschnitten sein - rn_konfig_urteil() haelt sie dann fuer heil, und ein
+     * Vervollstaendigen schriebe die Vorgaben fuer den verlorenen Rest in Datei UND Zweitschrift, ohne dass jemand
+     * gespeichert hat. Dann bleibt beides, wie es ist. */
+    if (preg_match('/\?>\s*\z/', $roh) !== 1) {
+        return array('stand' => 'ohne_abschluss', 'schluessel' => array());
+    }
+    $zuweisungen = array();
+    preg_match_all('/^[ \t]*\$([A-Za-z_][A-Za-z0-9_]*)\s*=/m', $roh, $zuweisungen);
+    $uebergangen = array_values(array_unique(array_diff($zuweisungen[1], array_keys($werte))));
+    $fehlend = array();
+    foreach (rn_vorgaben() as $k => $w) {
+        /* endpunkt_ein bleibt aussen vor (11.11.2026): den Uebergang fuer Bestandsanlagen setzt das
+         * Update; ein hier festgeschriebenes "aus" koennte ein spaeteres Update nicht mehr berichtigen. */
+        if ($k === 'aktionstoken' || $k === 'endpunkt_ein' || array_key_exists($k, $werte)) {
+            continue;
+        }
+        $werte[$k] = $w;
+        $fehlend[] = $k;
+    }
+    if (!$fehlend) {
+        return array('stand' => 'vollstaendig', 'schluessel' => array());
+    }
+    if ($uebergangen) {
+        rn_melden_stuendlich('WARN', 'Die Konfiguration wurde nicht vervollstaendigt: config.php enthaelt '
+            . count($uebergangen) . ' Zuweisung(en), die das Plugin nicht lesen kann (' . implode(', ', $uebergangen)
+            . ') und die beim Neuschreiben verloren gingen. Fehlend: ' . implode(', ', $fehlend) . '.');
+        return array('stand' => 'nicht_zerlegbar', 'schluessel' => $fehlend);
+    }
+    if (!rn_config_write($werte, array('endpunkt_ein'))) {
+        rn_melden_stuendlich('ERROR', 'Die Konfiguration liess sich nicht vervollstaendigen - ' . $p['config']
+            . ' liess sich nicht schreiben (fehlend: ' . implode(', ', $fehlend) . ').');
+        return array('stand' => 'fehler', 'schluessel' => $fehlend);
+    }
+    rn_melden('INFO', 'Konfiguration vervollstaendigt: ' . count($fehlend) . ' fehlende Einstellung(en) mit der '
+        . 'Vorgabe eingetragen (' . implode(', ', $fehlend) . ').');
+    return array('stand' => 'ergaenzt', 'schluessel' => $fehlend);
 }
 
 /* ==================================================================

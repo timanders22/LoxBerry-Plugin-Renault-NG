@@ -122,6 +122,10 @@ if (!isset($rn_auftrag) && isset($argv[1]) && $argv[1] === '--mqtt-leeren') {
  * Ist nichts eingeschaltet, endet er nach dem Lesen der Konfiguration - ohne
  * Protokoll (logger.php wird erst geladen, wenn eine Zeile faellig ist). */
 if (!isset($rn_auftrag) && isset($argv[1]) && $argv[1] === 'takt') {
+    /* 2.1.33 (Regeln/05): fehlende Vorgaben einmal in config.php schreiben - vor dem ersten Lesen der
+     * Konfiguration in diesem Lauf; waehrend eines Updates (Upgrade-Marke) geschieht nichts. Schreibt nur, wenn
+     * etwas fehlt, und dann eine Protokollzeile. */
+    rn_config_vervollstaendigen();
     rn_takt_lauf(__FILE__);
     exit(0);
 }
