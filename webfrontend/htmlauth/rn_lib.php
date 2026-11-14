@@ -53,6 +53,11 @@ if (!function_exists('lb_wurzel_ermitteln')) {
  * 2.1.16; seit 2.1.20 Stamm 1.2.1 mit weiteren Ausgabezielen, rn_mit_zielen(), Welle Mehrfach-Ziele).
  * Liegt neben dieser Datei; sie schuetzt sich selbst gegen doppeltes Laden. */
 require_once __DIR__ . '/sprachausgabe.php';
+/* 2.1.34: Das gemeinsame Sicherungsmodul (Abschrift von Werkzeuge/gemeinsam/sicherung.php, Auftrag des
+ * Hausherrn 12.11.2026): Einstellungen sichern und zurueckspielen nach denselben Regeln wie in den
+ * anderen Linien. Liegt neben dieser Datei; die Beschreibung dieser Linie steht in
+ * rn_sicherung_beschreibung(). */
+require_once __DIR__ . '/sicherung.php';
 
 function rn_lbhome()
 {
@@ -2936,155 +2941,96 @@ function rn_abo_datei()
 }
 
 /**
- * Eine Sicherungsdatei einlesen - und dabei NICHTS durchgehen lassen.
+ * 2.1.34: Die Beschreibung dieser Linie fuer das gemeinsame Sicherungsmodul (sicherung.php neben dieser Datei,
+ * Abschrift von Werkzeuge/gemeinsam/sicherung.php; Auftrag des Hausherrn 12.11.2026).
  *
- * Der wichtigste Punkt: eine halb gueltige Datei ueberschreibt GAR NICHTS.
- * Wer eine Sicherung zurueckspielt, will entweder den ganzen Stand oder
- * gar keinen - eine zur Haelfte uebernommene Konfiguration ist schlimmer
- * als die alte, und man sieht es ihr nicht an.
+ * Bis 2.1.33 stand hier rn_sicherung_lesen() mit einer eigenen Schleife: ein unbekannter Schluessel wies die
+ * ganze Datei ab, eine Datei mit fremdem oder ganz ohne Kennzeichen _plugin wurde gelesen wie eine eigene, und
+ * ein leerer Wert ueberschrieb den bestehenden (ausser beim Aktionstoken) oder fiel an der Wertpruefung durch.
+ * Seither nach den Regeln des Moduls: Kennzeichen 'renault_ng' (seit 2.1.6 im Kopf jeder Sicherung; die
+ * Sicherungen von 2.1.4 und 2.1.5 hatten gar keinen Kopf und werden abgewiesen), Unbekanntes wird verworfen und
+ * mit Namen gemeldet, ein leerer Wert laesst den bisherigen stehen und wird genannt.
  *
- * Unbekannte Schluessel sind eine Beanstandung, kein stiller Verlust: sie
- * stammen aus einer anderen Fassung oder einem anderen Plugin.
- *
- * Rueckgabe: array(Konfiguration|null, Beanstandungen[], uebernommene Werte,
- * Hinweise[] - seit 2.1.13, etwa "das geltende Token bleibt").
+ * Wie bis 2.1.33:
+ *  - config.php ist flach: jeder Schluessel ein Wert, keine Bloecke (die Sprachausgabe steht als tts_*, die
+ *    weiteren Ziele als JSON-Text in tts_ziele). Jeder Wert ist eine Zeichenkette ('wandeln'), wie
+ *    rn_config_write() ihn schreibt.
+ *  - Jeder Wert geht durch rn_wert_taugt() und rn_wert_pruefen() - dieselbe Positivliste wie das Formular -,
+ *    der Block der Sprachausgabe durch ansage_wert_pruefen() wie im Formular ('quer').
+ *  - Was fehlen darf: die Schluessel der Sprachausgabe von 2.1.16 und 2.1.24 (rn_ansage_neue_schluessel()), die
+ *    von 2.1.20 (rn_neue_schluessel_2120()) und tts_ziele behalten den geltenden Wert und werden genannt; jeder
+ *    andere fehlende Schluessel ist eine Beanstandung.
+ *  - Die Sprechtoken (rn_ansage_tokenfelder()) und der Vermerk ansage_token_herkunft kommen nie aus einer Datei
+ *    und gehen nie hinein ('nie_aus_datei'); es gelten die der Anlage (rn_sicherung_vorbereiten()). Traegt eine
+ *    Datei ein nicht leeres Sprechtoken, stammt sie nicht aus "Einstellungen sichern" und wird abgewiesen (seit
+ *    2.1.16). Das Modul uebergeht diese Schluessel still; 'quer' sieht seit Modul 1.2.0 die Datei selbst
+ *    (3. Argument) und nennt sie (bis dahin hielt 'vorbehandeln' den rohen Inhalt fest).
+ *  - Benutzername und Kennwort des Renault-Kontos und das Aktionstoken stehen in config.php und damit in der
+ *    Sicherung.
  */
-function rn_sicherung_lesen($roh, &$namen = null)
+function rn_sicherung_beschreibung()
 {
-    $mangel = array();
-    $namen = array();     // X-3: die Namen der beanstandeten Einstellungen, nie Werte
-    $daten = json_decode((string) $roh, true);
-    if (!is_array($daten)) {
-        return array(null, array(rn_t('TEXT.SICH_KEIN_JSON')), 0);
+    $p = rn_paths(false);
+    $sprech = rn_ansage_tokenfelder();
+    $spaet = array_merge(rn_ansage_neue_schluessel(), rn_neue_schluessel_2120(), array('tts_ziele'));
+    $text = function ($w) { return (string) $w; };
+    $schluessel = array();
+    foreach (array_keys(rn_vorgaben()) as $k) {
+        $schluessel[$k] = array('art' => 'wert', 'wandeln' => $text);
+        if (in_array($k, $spaet, true)) { $schluessel[$k]['fehlt'] = 'behalten'; }
     }
-
-    /* Grundlage ist der AKTUELLE Stand, nicht die Werkseinstellung.
-     *
-     * Bis 2.1.5 stand hier $neu = rn_vorgaben(). Gemessen an einer
-     * eingerichteten Anlage mit der Datei {"username":"neu@example.org"}:
-     * "UEBERNOMMEN, 1 Werte" - und danach waren Aktionstoken, Kennwort,
-     * Fahrgestellnummer, Fahrzeugname, die Freigabe zum Schalten und der
-     * Abruftakt auf Werk. Ein in der Sicherung fehlender Schluessel behaelt
-     * jetzt seinen jetzigen Wert; dass welche fehlen, wird gesagt. */
-    $neu = rn_config_read();
-    $bekannt = array_keys(rn_vorgaben());
-    $anzahl = 0;
-    $gesehen = array();
-    $hinweise = array();
-
-    foreach ($daten as $k => $w) {
-        $k = (string) $k;
-        /* Der lesbare Kopf wird UEBERGANGEN, nicht beanstandet. */
-        if ($k !== '' && $k[0] === '_') {
-            continue;
-        }
-        /* Nr. 36 b (seit 2.1.16): eine Sicherung dieses Plugins traegt nie ein Sprechtoken - traegt
-         * die Datei eines (auch als Liste, Zahl oder null), stammt sie nicht aus "Einstellungen
-         * sichern" und wird abgewiesen; die geltenden Sprechtoken bleiben. Leer heisst "keines". */
-        if (in_array($k, rn_ansage_tokenfelder_zusatz(), true)) { continue; }     // 2.1.24
-        if (in_array($k, rn_ansage_tokenfelder(), true)) {
-            if ($w !== '') {
-                $mangel[] = sprintf(rn_t('TEXT.SICH_TTS_TOKEN'), htmlspecialchars($k, ENT_QUOTES, 'UTF-8'));
-                $namen[] = $k;
+    return array(
+        'kennzeichen' => 'renault_ng',
+        'hinweis' => 'Sicherung der Einstellungen des LoxBerry-Plugins Renault NG. '
+                   . 'Diese Datei enthaelt Ihr Renault-Kennwort und das Aktionstoken '
+                   . 'im Klartext - behandeln Sie sie wie ein Passwort.',
+        /* Die Fassung im Kopf aus rn_fassung() (Plugin-Datenbank, dann plugin.cfg) - keine weitere Stelle neben
+         * den vier, die Werkzeuge/fassung_setzen.py pflegt; ersatzweise die des Moduls. */
+        'fassung' => 'rn_fassung',
+        'home' => (string) $p['home'], 'ordner' => (string) $p['plugin'],
+        'plugin_cfg' => dirname(dirname(__DIR__)) . '/plugin.cfg',
+        'vorgaben' => rn_vorgaben(),
+        'schluessel' => $schluessel,
+        'nie_aus_datei' => array_merge($sprech, rn_ansage_tokenfelder_zusatz()),
+        'pruefen' => function ($k, $w) {
+            if (!rn_wert_taugt($w) || !rn_wert_pruefen($k, (string) $w)) {
+                return sprintf(rn_t('TEXT.SICH_WERT'), rn_e((string) $k));
             }
-            continue;
-        }
-        if (!in_array($k, $bekannt, true)) {
-            $mangel[] = sprintf(rn_t('TEXT.SICH_FREMD'),
-                                 htmlspecialchars($k, ENT_QUOTES, 'UTF-8'));
-            $namen[] = $k;
-            continue;
-        }
-        /* Jeder WERT wird geprueft, nicht nur der Schluessel.
-         *
-         * Bis 2.1.5 stand hier schlicht $neu[$k] = $w. Gemessen gingen damit
-         * durch: country=NICHTEINLAND, zoeph=9, steuerung_ein=JA,
-         * vin=KEINEVIN, ac_temp=999, cron_ncs=0, ein Fahrzeugname mit / # +
-         * und ein Zeilenumbruch im Namen, dazu ein Feld statt eines Skalars
-         * (aus dem im Quelltext die Zeichenkette 'Array' wurde). Dieselben
-         * Werte weist der Speicher-Handler alle zurueck - die Sicherung war
-         * der Weg um die eigene Formpruefung herum. */
-        if (!rn_wert_taugt($w)) {
-            $mangel[] = sprintf(rn_t('TEXT.SICH_WERT'),
-                                 htmlspecialchars($k, ENT_QUOTES, 'UTF-8'));
-            $namen[] = $k;
-            continue;
-        }
-        $w = (string) $w;
-        /* Ein leeres Aktionstoken heisst "kein Token gesichert" (Befund U4,
-         * Regeln/05): das geltende Token bleibt, und die Meldung sagt es. Bis
-         * 2.1.12 wurde es als leer geschrieben, und rn_config_read() "heilte"
-         * die Datei im selben Aufruf aus der Zweitschrift - die Oberflaeche
-         * meldete Erfolg fuer einen Stand, der schon wieder fort war.
-         * Gewaehlt ist Behalten statt Abweisen: eine sonst gueltige Sicherung
-         * (etwa aus einer Fassung, die das Token nicht sicherte) bleibt so
-         * zurueckspielbar, und die Adressen in Loxone gelten weiter. */
-        if ($k === 'aktionstoken' && $w === '') {
-            $gesehen[$k] = true;
-            $hinweise[] = rn_t('TEXT.SICH_TOKEN_BEHALTEN');
-            continue;
-        }
-        if (!rn_wert_pruefen($k, $w)) {
-            $mangel[] = sprintf(rn_t('TEXT.SICH_WERT'),
-                                 htmlspecialchars($k, ENT_QUOTES, 'UTF-8'));
-            $namen[] = $k;
-            continue;
-        }
-        $neu[$k] = $w;
-        $gesehen[$k] = true;
-        $anzahl++;
-    }
-
-    /* "Fehlt" heisst: der Schluessel steht NICHT in der Datei (Befund U3).
-     * Bis 2.1.12 zaehlte auch ein vorhandener, aber abgewiesener Schluessel
-     * als fehlend, und die Meldung schob die Schuld auf die Datei; der
-     * abgewiesene Wert steht schon als eigene Beanstandung da. */
-    $in_datei = array();
-    foreach (array_keys($daten) as $k) { $in_datei[(string) $k] = true; }
-    $fehlend = array();
-    foreach ($bekannt as $k) {
-        /* Nr. 36 b: eine Sicherung von 2.1.15 oder frueher kennt die Sprachausgabe nicht; ihre
-         * Schluessel behalten den Wert dieser Anlage ($neu geht vom Bestand aus). */
-        if (in_array($k, rn_ansage_neue_schluessel(), true)) { continue; }
-        /* Gruppe 40: eine Sicherung von 2.1.19 oder frueher kennt die Schluessel
-         * von 2.1.20 nicht - sie behalten den geltenden Wert (endpunkt_ein bleibt,
-         * was er ist). */
-        if (in_array($k, rn_neue_schluessel_2120(), true)) { continue; }
-        /* Welle Mehrfach-Ziele (2.1.20, Spaetliste): eine Sicherung bis 2.1.19 kennt tts_ziele nicht - die geltenden
-         * weiteren Ziele bleiben ($neu geht vom Bestand aus), und der Hinweis nennt sie. Eine Sicherung MIT leerer
-         * Liste heisst "keine weiteren Ziele" und wird so uebernommen. */
-        if ($k === 'tts_ziele') {
-            if (!isset($in_datei[$k]) && trim((string) $neu[$k]) !== '') {
-                $hinweise[] = sprintf(rn_t('TEXT.SICH_SPAET'), 'tts.ziele');
+            return '';
+        },
+        'quer' => function ($neu, $r = array(), $daten = null) use ($sprech) {
+            $aus = array();
+            foreach ($sprech as $k) {
+                if (is_array($daten) && array_key_exists($k, $daten) && $daten[$k] !== '') {
+                    $aus[] = array($k, sprintf(rn_t('TEXT.SICH_TTS_TOKEN'), rn_e($k)));
+                }
             }
-            continue;
-        }
-        if (!isset($in_datei[$k])) { $fehlend[] = $k; }
+            $g = '';
+            if (ansage_wert_pruefen(rn_tts_aus($neu), $g, rn_ansage_modi()) === null) {
+                $aus[] = array('tts_mode', sprintf(rn_t('TEXT.SICH_TTS'), rn_e(ansage_kennung_text($g, rn_ansage_k()))));
+            }
+            return $aus;
+        },
+        'jetzt' => 'rn_config_read',
+        'vorbereiten' => 'rn_sicherung_vorbereiten',
+        'zweitschrift' => function () { $q = rn_paths(); return array($q['config'], $q['sicherung']); },
+        'log' => function ($z) { renault_log('INFO', $z); },
+        't' => 'rn_t',
+        'e' => 'rn_e',
+    );
+}
+
+/**
+ * 2.1.34, Rueckruf 'vorbereiten' des Sicherungsmoduls: Sprechtoken und der Vermerk ansage_token_herkunft kommen
+ * nie aus der Datei - es gelten die der Anlage. Bis 2.1.33 ging das Zurueckspielen vom Bestand aus und behielt
+ * sie so; das Modul geht von den Vorgaben aus.
+ */
+function rn_sicherung_vorbereiten($neu, $jetzt)
+{
+    foreach (array_merge(rn_ansage_tokenfelder(), rn_ansage_tokenfelder_zusatz()) as $k) {
+        if (is_array($jetzt) && array_key_exists($k, $jetzt)) { $neu[$k] = (string) $jetzt[$k]; }
     }
-    if (!isset($in_datei['tts_mode'])) {
-        $hinweise[] = rn_t('TEXT.SICH_OHNE_ANSAGE');
-    }
-    /* Nr. 36 b: der Block der Sprachausgabe wie im Formular geprueft (Ausgabeart, Heimnetz). */
-    if (!$mangel) {
-        $rn_tg = '';
-        if (ansage_wert_pruefen(rn_tts_aus($neu), $rn_tg, rn_ansage_modi()) === null) {
-            $mangel[] = sprintf(rn_t('TEXT.SICH_TTS'), htmlspecialchars(
-                ansage_kennung_text($rn_tg, rn_ansage_k()), ENT_QUOTES, 'UTF-8'));
-            $namen[] = 'tts_mode';
-        }
-    }
-    if ($fehlend) {
-        foreach ($fehlend as $k) { $namen[] = $k; }
-        $mangel[] = sprintf(rn_t('TEXT.SICH_FEHLT'), count($fehlend), count($bekannt),
-            htmlspecialchars(implode(', ', array_slice($fehlend, 0, 8))
-                . (count($fehlend) > 8 ? ' …' : ''), ENT_QUOTES, 'UTF-8'));
-    }
-    if ($anzahl === 0) {
-        $mangel[] = rn_t('TEXT.SICH_LEER');
-    }
-    /* Alle Beanstandungen werden gesammelt; eine halb gueltige Datei aendert
-     * GAR NICHTS. */
-    return array($mangel ? null : $neu, $mangel, $anzahl, $hinweise);
+    return $neu;
 }
 
 /* ==================================================================
@@ -3718,58 +3664,43 @@ function rn_kaputt_wert($k)
 }
 
 /**
- * Das Feld, das "Einstellungen sichern" ausgibt: lesbarer Kopf und die VOLLE
- * Konfiguration samt Aktionstoken (Begruendung in index.php). An EINER Stelle
- * fuer den Knopf und fuer rn_rueckspiel_altwerte() (X-3) - sonst pruefte die
- * Warnung eine andere Datei als die gelieferte.
+ * Das Feld, das "Einstellungen sichern" ausgibt - an EINER Stelle fuer den Knopf und fuer
+ * rn_rueckspiel_altwerte() (X-3).
+ *
+ * 2.1.34: gebaut vom gemeinsamen Sicherungsmodul (sicherung_bauen()): lesbarer Kopf _hinweis, _plugin
+ * ('renault_ng'), _fassung, _stand und die VOLLE Konfiguration samt Aktionstoken und Zugangsdaten, ohne die
+ * Sprechtoken und den Vermerk ansage_token_herkunft ('nie_aus_datei'). Wuerde das eigene Zurueckspielen die
+ * Datei abweisen, traegt der Kopf _warnung - nur Namen, nie Werte; geliefert wird sie trotzdem vollstaendig.
  */
 function rn_sicherung_inhalt()
 {
-    $kopf = array(
-        '_hinweis' => 'Sicherung der Einstellungen des LoxBerry-Plugins Renault NG. '
-                    . 'Diese Datei enthaelt Ihr Renault-Kennwort und das Aktionstoken '
-                    . 'im Klartext - behandeln Sie sie wie ein Passwort.',
-        '_plugin'  => 'renault_ng',
-        '_fassung' => rn_fassung(),
-        '_stand'   => date('Y-m-d H:i:s'),
-    );
-    /* Nr. 36 b: die Sprechtoken der Sprachausgabe gehen nie in eine Sicherung (Entwurf 5) -
-     * anders als Kennwort und Aktionstoken, die diese Linie bewusst mitsichert. */
-    $rn_c = rn_config_read();
-    foreach (array_merge(rn_ansage_tokenfelder(), rn_ansage_tokenfelder_zusatz()) as $rn_tf) {
-        unset($rn_c[$rn_tf]);
-    }
-    return array_merge($kopf, $rn_c);
+    return sicherung_bauen(rn_sicherung_beschreibung(), rn_config_read());
 }
 
 /**
- * X-3 (Welle-4-Bau): Welche Einstellungen wuerden beim Zurueckspielen der
- * EIGENEN Sicherung abgewiesen? Gebaut wird genau die Datei, die
- * "Einstellungen sichern" liefert, und durch dieselbe Pruefung geschickt wie
- * beim Zurueckspielen (rn_sicherung_lesen). Rueckgabe: Namen (nie Werte),
- * leer heisst "wuerde angenommen".
+ * X-3 (Welle-4-Bau): Welche Einstellungen wuerden beim Zurueckspielen der EIGENEN Sicherung abgewiesen?
+ * Rueckgabe: Namen (nie Werte), leer heisst "wuerde angenommen".
  *
- * Die Faelle, die hier anschlagen: ein Wert in config.php, den das Formular
- * nie gespeichert haette (von Hand geaendert, aus einer anderen Fassung, eine
- * Grenze, die sich geaendert hat). rn_config_read() setzt solche Werte beim
- * Lesen nicht zurueck - sie stehen in der Sicherung, und das Zurueckspielen
- * weist die ganze Datei ab.
+ * 2.1.34: dieselbe Pruefung wie beim Zurueckspielen, aus dem Sicherungsmodul (sicherung_selbstpruefung()) an
+ * genau der Datei, die der Knopf liefert. Die Faelle, die hier anschlagen: ein Wert in config.php, den das
+ * Formular nie gespeichert haette (von Hand geaendert, aus einer anderen Fassung, eine Grenze, die sich
+ * geaendert hat) - rn_config_read() setzt solche Werte beim Lesen nicht zurueck.
  */
 function rn_rueckspiel_altwerte()
 {
-    $js = json_encode(rn_sicherung_inhalt(),
-        JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if ($js === false) {
-        return array();     // Sichern meldet dann selbst SICH_SCHREIBFEHLER
+    $b = rn_sicherung_beschreibung();
+    $cfg = rn_config_read();
+    $d = sicherung_bauen($b, $cfg);
+    unset($d['_warnung']);
+    $aus = array();
+    foreach (sicherung_selbstpruefung($b, $d, $cfg) as $n) {
+        foreach (explode(',', (string) $n) as $x) {
+            $aus[] = ($x === '-') ? rn_t('TEXT.SICH_GANZE_DATEI') : $x;
+        }
     }
-    $namen = array();
-    list($neu) = rn_sicherung_lesen($js, $namen);
-    $namen = array_values(array_unique($namen));
-    sort($namen);
-    if ($neu === null && !$namen) {
-        $namen[] = rn_t('TEXT.SICH_GANZE_DATEI');
-    }
-    return $namen;
+    $aus = array_values(array_unique($aus));
+    sort($aus);
+    return $aus;
 }
 
 /**

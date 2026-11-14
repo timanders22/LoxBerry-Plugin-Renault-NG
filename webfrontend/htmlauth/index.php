@@ -893,22 +893,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rn_sichern'])) {
     /* Lesbarer Kopf: der Datei sieht sonst niemand an, von welchem Plugin,
      * welcher Anlage und welchem Tag sie stammt - und beim Umzug auf einen
      * zweiten LoxBerry ist genau das der Zweck. Die Schluessel beginnen mit
-     * einem Unterstrich; rn_sicherung_lesen() UEBERGEHT sie, statt sie zu
-     * beanstanden. */
+     * einem Unterstrich; das Sicherungsmodul UEBERGEHT sie beim Zurueckspielen,
+     * statt sie zu beanstanden, und weist an _plugin eine fremde Datei ab. */
     /* Kopf und Inhalt kommen seit dem Welle-4-Bau aus rn_sicherung_inhalt()
-     * (rn_lib.php) - dieselbe Datei prueft rn_rueckspiel_altwerte() (X-3).
+     * (rn_lib.php, seit 2.1.34 vom gemeinsamen Sicherungsmodul gebaut) -
+     * dieselbe Datei prueft rn_rueckspiel_altwerte() (X-3).
      * Wuerde das eigene Zurueckspielen sie abweisen, traegt der Kopf
      * '_warnung' - nur Namen, nie Werte; geliefert wird sie trotzdem
      * vollstaendig. */
-    $rn_inhalt = rn_sicherung_inhalt();
-    $rn_sich_warn = rn_rueckspiel_altwerte();
-    if ($rn_sich_warn) {
-        $rn_inhalt = array('_warnung' => sprintf(rn_t('TEXT.SICH_WARN_KOPF'),
-                                                 implode(', ', $rn_sich_warn))) + $rn_inhalt;
-    }
-    $rn_js = json_encode($rn_inhalt,
-        JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if ($rn_js !== false) {
+    $rn_js = sicherung_json(rn_sicherung_inhalt());
+    if ($rn_js !== '') {
         renault_log('INFO', 'Einstellungen gesichert (Datei enthaelt Zugangsdaten '
             . 'und das Aktionstoken).');
         while (ob_get_level() > 0) { @ob_end_clean(); }
@@ -928,93 +922,91 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rn_sichern'])) {
  * dieses Plugins ist wenige Kilobyte gross; alles darueber wird gar
  * nicht erst gelesen. */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rn_zurueck'])) {
-    if (!isset($_FILES['rn_sicherung']) || !is_array($_FILES['rn_sicherung'])
-        || !isset($_FILES['rn_sicherung']['tmp_name'])
-        /* is_string() zuerst (Befund U8): ein Feld rn_sicherung[] liefert hier
-         * ein Feld, und is_uploaded_file() warf darauf unter PHP 8 einen
-         * TypeError - HTTP 500 mit leerer Seite. */
-        || !is_string($_FILES['rn_sicherung']['tmp_name'])
-        || !@is_uploaded_file($_FILES['rn_sicherung']['tmp_name'])) {
-        $rn_fehler[] = rn_t('TEXT.SICH_KEINE_DATEI');
-    // 64 kB wie im Hausmuster; die echte Datei ist rund ein Kilobyte gross.
-    } elseif ((int) $_FILES['rn_sicherung']['size'] > 65536) {
-        $rn_fehler[] = rn_t('TEXT.SICH_ZU_GROSS');
+    /* 2.1.34: Haken, hochgeladene Datei und Groessengrenze prueft das gemeinsame Sicherungsmodul
+     * (sicherung_eingang(), Modul 1.1.0, Entscheidung des Hausherrn 12.11.2026) - in jeder Linie gleich, und
+     * vor is_uploaded_file() steht der Haken zurueck_ok: ohne ihn wird nichts gelesen und nichts geaendert. */
+    list($rn_roh, $rn_ein_ab) = sicherung_eingang(rn_sicherung_beschreibung(), $_POST, $_FILES, 'rn_sicherung');
+    if ($rn_ein_ab !== null) {
+        $rn_ein_m = sicherung_meldungen(rn_sicherung_beschreibung(), $rn_ein_ab);
+        foreach ($rn_ein_m['fehler'] as $rn_ein_x) { $rn_fehler[] = $rn_ein_x; }
     } else {
         /* Die Fahrzeugnamen VOR dem Zurueckspielen (Renault-a2, Befund M3):
          * eine Sicherung mit anderen Namen laesst sonst die Themen unter dem
          * alten Namen fuer immer im Broker. */
         $rn_namen_vorher = array();
         foreach (rn_fahrzeuge($rn_cfg) as $rn_f0) { $rn_namen_vorher[] = $rn_f0['name']; }
-        list($rn_neu, $rn_mangel, $rn_n, $rn_hinweise) = rn_sicherung_lesen(
-            (string) @file_get_contents($_FILES['rn_sicherung']['tmp_name']));
-        if ($rn_neu === null) {
-            /* ALLE Beanstandungen, nicht nur die erste - und geaendert
-             * wird nichts. */
-            $rn_fehler[] = rn_t('TEXT.SICH_ABGELEHNT') . ' ' . implode(' ', $rn_mangel);
-            renault_log('WARN', 'Eine zurueckgespielte Sicherung wurde abgelehnt, '
-                . 'die Konfiguration ist unveraendert. Erste Beanstandung: '
-                . strip_tags((string) $rn_mangel[0]));
-        } elseif (rn_config_write($rn_neu)) {
-            /* Der Zwischenspeicher gehoert zu einer anderen Fahrgestellnummer
-             * und die Anmeldung zu einem anderen Konto - beides wird
-             * verworfen, wie es der Speichern-Handler auch tut. Und dem
-             * Anwender wird gesagt, was mit dem Abruf geschieht: einen Dienst
-             * zum Nachziehen gibt es nicht, den Takt macht der Cron.
-             * Seit 2.1.20 nur bei geaenderten Zugangsdaten bzw. Fahrzeugen
-             * (rn_konto_geaendert(), rn_session_verwerfen()). */
-            foreach (rn_session_verwerfen($rn_cfg, $rn_neu) as $rn_snr) {
+        /* 2.1.34: das gemeinsame Sicherungsmodul (sicherung_zurueckspielen(), Beschreibung
+         * rn_sicherung_beschreibung()) liest und prueft, weist eine Datei mit fremdem oder ohne Kennzeichen
+         * als Ganzes ab, verwirft Unbekanntes mit Namen, laesst einen leeren Wert den bisherigen stehen und
+         * aendert bei einer Beanstandung GAR NICHTS (alle Beanstandungen, nicht nur die erste). Die Schritte
+         * dieser Linie davor und danach stehen in den Rueckrufen - dieselben wie bis 2.1.33. */
+        $rn_b = rn_sicherung_beschreibung();
+        $rn_b['speichern'] = function ($neu) use (&$rn_misslungen) {
+            if (!rn_config_write($neu)) {
+                renault_log('ERROR', 'Die zurueckgespielte Sicherung liess sich nicht '
+                    . 'schreiben; die alte Konfiguration steht unveraendert.');
+                return false;
+            }
+            /* Erfolg erst nach dem Zuruecklesen (Befund U4). Bis 2.1.12 hiess es "zurueckgespielt",
+             * waehrend rn_config_read() im selben Aufruf eine Sicherung ohne Token aus der Zweitschrift
+             * "heilte" - der alte Stand stand wieder da, die zurueckgespielten Werte lagen als .kaputt daneben. */
+            $zurueck = rn_config_read();
+            $anders = array();
+            foreach (rn_vorgaben() as $k => $v0) {
+                if ((string) $zurueck[$k] !== (string) $neu[$k]) { $anders[] = $k; }
+            }
+            if ($anders) {
+                $rn_misslungen[] = sprintf(rn_t('TEXT.SICH_NICHT_WIRKSAM'),
+                    rn_e(implode(', ', array_slice($anders, 0, 8))));
+                renault_log('ERROR', 'Die zurueckgespielte Sicherung steht beim Zuruecklesen '
+                    . 'nicht da (abweichend: ' . implode(', ', $anders) . ').');
+                return false;
+            }
+            return true;
+        };
+        $rn_b['nachziehen'] = function ($neu, $jetzt, $r) use (&$rn_cfg, &$rn_misslungen, $rn_namen_vorher, $rn_p) {
+            $h = array();
+            /* Nr. 36 b: eine Sicherung von 2.1.15 oder frueher kennt die Sprachausgabe nicht - deren
+             * Einstellungen bleiben, und die Seite sagt es. */
+            if (in_array('tts_mode', $r['fehlt_behalten'], true)) { $h[] = rn_t('TEXT.SICH_OHNE_ANSAGE'); }
+            /* Der Zwischenspeicher gehoert zu einer anderen Fahrgestellnummer und die Anmeldung zu einem
+             * anderen Konto - beides wird verworfen, wie es der Speichern-Handler auch tut, seit 2.1.20 nur
+             * bei geaenderten Zugangsdaten bzw. Fahrzeugen (rn_konto_geaendert(), rn_session_verwerfen()).
+             * Und dem Anwender wird gesagt, was mit dem Abruf geschieht: einen Dienst zum Nachziehen gibt es
+             * nicht, den Takt macht der Cron. */
+            foreach (rn_session_verwerfen($jetzt, $neu) as $rn_snr) {
                 $rn_sd = $rn_p['datadir'] . '/session' . ($rn_snr > 1 ? (string) $rn_snr : '');
                 if (is_file($rn_sd)) { @unlink($rn_sd); }
             }
-            if (rn_konto_geaendert($rn_cfg, $rn_neu) && is_file($rn_p['anmeldung'])) {
+            if (rn_konto_geaendert($jetzt, $neu) && is_file($rn_p['anmeldung'])) {
                 @unlink($rn_p['anmeldung']);
             }
             $rn_cfg = rn_config_read();
-            /* Erfolg erst nach dem Zuruecklesen (Befund U4). Bis 2.1.12 hiess
-             * es "zurueckgespielt", waehrend rn_config_read() im selben Aufruf
-             * eine Sicherung ohne Token aus der Zweitschrift "heilte" - der alte
-             * Stand stand wieder da, die zurueckgespielten Werte lagen als
-             * .kaputt daneben. */
-            $rn_anders = array();
-            foreach (rn_vorgaben() as $k => $rn_v0) {
-                if ((string) $rn_cfg[$k] !== (string) $rn_neu[$k]) { $rn_anders[] = $k; }
+            $d = sprintf(rn_t('TEXT.SICH_DIENST'), max(1, (int) $neu['cron_ncs']));
+            renault_log('INFO', 'Nach dem Zurueckspielen: Zwischenspeicher und Anmeldung verworfen; der '
+                . 'naechste Cron-Lauf meldet sich mit den neuen Zugangsdaten an.');
+            /* Renault-a2: weggefallene Fahrzeugnamen wie beim Speichern abraeumen - erst hier, wenn die
+             * Sicherung nachweislich dasteht. */
+            $rn_namen_nachher = array();
+            foreach (rn_fahrzeuge($rn_cfg) as $rn_f0) { $rn_namen_nachher[] = $rn_f0['name']; }
+            $rn_alt = rn_mqtt_altnamen_abraeumen($rn_namen_vorher, $rn_namen_nachher);
+            $d .= $rn_alt['meldung'];
+            $rn_misslungen = array_merge($rn_misslungen, $rn_alt['misslungen']);
+            /* 2.1.22 (Fremdpruefung 2B): die Befehlsbruecke dem zurueckgespielten Haken sofort nachfuehren,
+             * wie beim Speichern im Reiter MQTT (Bauart BatterieBMS 0.9.38). */
+            list($rn_brc, $rn_bwas, $rn_baus) = rn_bruecke_schalten($rn_cfg);
+            if ($rn_bwas !== '') {
+                $d .= '<br>' . rn_e(sprintf(rn_t('BEFEHL.M_SCHALTEN'), $rn_bwas,
+                    trim(strtok((string) $rn_baus, "\n")) !== '' ? trim(strtok((string) $rn_baus, "\n")) : (string) $rn_brc));
+                renault_log('INFO', 'Sicherung zurueckgespielt: Bruecke ' . $rn_bwas . ' (rc ' . (string) $rn_brc . ').');
             }
-            if ($rn_anders) {
-                $rn_misslungen[] = sprintf(rn_t('TEXT.SICH_NICHT_WIRKSAM'),
-                    rn_e(implode(', ', array_slice($rn_anders, 0, 8))));
-                renault_log('ERROR', 'Die zurueckgespielte Sicherung steht beim Zuruecklesen '
-                    . 'nicht da (abweichend: ' . implode(', ', $rn_anders) . ').');
-            } else {
-                $rn_meldung = sprintf(rn_t('TEXT.SICH_UEBERNOMMEN'), $rn_n) . ' '
-                            . ($rn_hinweise ? implode(' ', $rn_hinweise) . ' ' : '')
-                            . sprintf(rn_t('TEXT.SICH_DIENST'),
-                                      max(1, (int) $rn_neu['cron_ncs']));
-                renault_log('INFO', 'Sicherung zurueckgespielt: ' . $rn_n . ' Werte. '
-                    . 'Zwischenspeicher und Anmeldung verworfen; der naechste Cron-Lauf '
-                    . 'meldet sich mit den neuen Zugangsdaten an.');
-                /* Renault-a2: weggefallene Fahrzeugnamen wie beim Speichern
-                 * abraeumen - erst hier, wenn die Sicherung nachweislich
-                 * dasteht. */
-                $rn_namen_nachher = array();
-                foreach (rn_fahrzeuge($rn_cfg) as $rn_f0) { $rn_namen_nachher[] = $rn_f0['name']; }
-                $rn_alt = rn_mqtt_altnamen_abraeumen($rn_namen_vorher, $rn_namen_nachher);
-                $rn_meldung .= $rn_alt['meldung'];
-                $rn_misslungen = array_merge($rn_misslungen, $rn_alt['misslungen']);
-                /* 2.1.22 (Fremdpruefung 2B): die Befehlsbruecke dem zurueckgespielten Haken sofort
-                 * nachfuehren, wie beim Speichern im Reiter MQTT (Bauart BatterieBMS 0.9.38). Bis 2.1.21
-                 * erst der Waechter im Minutentakt. */
-                list($rn_brc, $rn_bwas, $rn_baus) = rn_bruecke_schalten($rn_cfg);
-                if ($rn_bwas !== '') {
-                    $rn_meldung .= '<br>' . rn_e(sprintf(rn_t('BEFEHL.M_SCHALTEN'), $rn_bwas,
-                        trim(strtok((string) $rn_baus, "\n")) !== '' ? trim(strtok((string) $rn_baus, "\n")) : (string) $rn_brc));
-                    renault_log('INFO', 'Sicherung zurueckgespielt: Bruecke ' . $rn_bwas . ' (rc ' . (string) $rn_brc . ').');
-                }
-            }
-        } else {
-            $rn_fehler[] = rn_t('TEXT.SICH_SCHREIBFEHLER');
-            renault_log('ERROR', 'Die zurueckgespielte Sicherung liess sich nicht '
-                . 'schreiben; die alte Konfiguration steht unveraendert.');
-        }
+            $h[] = $d;
+            return $h;
+        };
+        $rn_r = sicherung_zurueckspielen($rn_b, $rn_roh);
+        $rn_m = sicherung_meldungen($rn_b, $rn_r);
+        foreach ($rn_m['fehler'] as $rn_x) { $rn_fehler[] = $rn_x; }
+        if ($rn_r['gespeichert'] && $rn_m['hinweise']) { $rn_meldung = implode(' ', $rn_m['hinweise']); }
     }
 }
 
@@ -1629,6 +1621,7 @@ if ($rn_sich_warn) { ?>
     <input data-role="none" type="hidden" name="activetab" value="tab-settings">
     <input data-role="none" type="hidden" name="formtoken" value="<?php echo rn_e($rn_ftoken); ?>">
     <input data-role="none" type="file" name="rn_sicherung" accept=".json">
+    <?= sicherung_haken_zeile(rn_sicherung_beschreibung()) ?>
     <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="rn_zurueck" value="1"><?= rn_t('TEXT.K_ZURUECK') ?></button>
   </form>
 </div>

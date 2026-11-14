@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.33 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.34 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,20 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Neu in 2.1.34
+
+- **Verhalten geändert – Einstellungen sichern und zurückspielen nach der gemeinsamen Vorlage:** Die Knöpfe im Reiter *Einstellungen* arbeiten jetzt mit demselben Sicherungsmodul wie die übrigen Plugins dieser Reihe. Für den Anwender ändert sich:
+  - Eine Datei eines anderen Plugins und eine Datei ohne Kennzeichen `_plugin` werden als Ganzes abgewiesen; es ändert sich dann nichts. Bis 2.1.33 wurden beide gelesen wie eine eigene Sicherung. Sicherungen dieses Plugins von 2.1.6 bis 2.1.33 tragen das Kennzeichen `renault_ng` und werden weiter angenommen. Sicherungen von 2.1.4 und 2.1.5 hatten gar keinen Kopf; sie lassen sich von einer fremden Datei nicht sicher unterscheiden und werden seit dieser Fassung abgewiesen (bis 2.1.33 wurden sie angenommen).
+  - Eine Einstellung, die diese Fassung nicht kennt, wird nicht übernommen und mit ihrem Namen gemeldet, nie mit ihrem Wert; die übrigen Einstellungen werden zurückgespielt. Bis 2.1.33 wies ein unbekannter Name die ganze Datei ab.
+  - Ein leerer Wert in der Sicherung überschreibt keinen bestehenden; der bisherige Wert bleibt, und die Meldung nennt den Namen. Bis 2.1.33 galt das nur für das Aktionstoken: ein leeres Kennwort überschrieb das hinterlegte, und ein leeres Feld mit fester Form (etwa das Land) wies die ganze Datei ab.
+- Unverändert: Eine Datei mit einem unzulässigen Wert ändert gar nichts, und alle Beanstandungen werden genannt. Aktionstoken, Benutzername und Kennwort des Renault-Kontos gehören in die Datei, die Sprechtoken nicht; eine Datei, die ein Sprechtoken trägt, wird abgewiesen. Einstellungen, die eine ältere Sicherung noch nicht kennt (Sprachausgabe, die Einstellungen von 2.1.20, die weiteren Ausgabeziele), behalten ihren Wert, und die Meldung nennt sie. Nach dem Zurückspielen zieht die Zweitschrift mit, Zwischenspeicher und Anmeldung werden verworfen, wenn sich Konto oder Fahrzeug geändert haben, die Befehlsbrücke folgt dem Haken, und die Meldung sagt, wann sich der Abruf neu anmeldet.
+- **Berichtigt – virtuelle Eingänge für das MQTT-Gateway:** In der Anleitung zur Einbindung in Loxone stand, das MQTT-Gateway lege die Eingänge beim ersten Wert selbst an und ein verschönerter Titel ergebe einen zweiten Eingang. Gemessen ist beides nicht. Jetzt steht dort: Die Eingänge legt man in Loxone Config mit genau dem Titel aus der Tabelle an; das MQTT-Gateway ordnet nur über den Namen zu.
+- **Verhalten geändert – Zurückspielen nur mit Haken:** Zwischen dem Feld für die Sicherungsdatei und dem Knopf „Einstellungen zurückspielen“ steht ein Haken „Ja, die geltenden Einstellungen durch die Sicherung ersetzen“, ab Werk aus. Ohne ihn wird die Datei nicht gelesen und nichts geändert, und die Meldung sagt es. Haken, Text und die Prüfung der hochgeladenen Datei (über das Formular gekommen, höchstens 256 KB) kommen aus dem gemeinsamen Sicherungsmodul 1.1.0 und sind in allen Plugins dieser Reihe gleich. Die Grenze für die Datei lag bis 2.1.33 bei 64 KB.
+- **Gemeinsames Sicherungsmodul 1.2.0:** Das Modul kann jetzt, was einzelne Plugins dieser Reihe bisher selbst darum herum gebaut haben (Entscheidung „Einheitlichkeit“). Die Prüfung „die Datei trägt ein Sprechtoken“ liest den Block der Datei jetzt über das Modul statt über eine eigene Umgehung; am Verhalten ändert sich nichts.
+- **Gemeinsames Sicherungsmodul 1.2.1:** Ein Vermerk, der nie aus einer Sicherungsdatei kommt (etwa, dass ein Sprechtoken aus einem Nachbar-Plugin übernommen wurde), behält beim Zurückspielen seinen geltenden Wert. An diesem Plugin ändert sich dadurch nichts; es setzte den Vermerk schon bisher selbst wieder ein.
+- **Gemeinsames Sicherungsmodul 1.2.2:** Fehlt eine Einstellung in der Sicherung und setzt das Plugin ihren Wert nach einer eigenen Übergangsregel (etwa aus einer verwandten Einstellung derselben Sicherung), bleibt dieser Wert beim Zurückspielen, und die Meldung nennt ihn als nach einer Übergangsregel abgeleitet – nicht als Werkseinstellung und nicht als bisherigen Wert. An diesem Plugin ändert sich dadurch nichts.
+- Gemessen mit einem Prüfstand auf dem Arbeitsrechner unter PHP 7.4 und 8.4, der über einen Webserver die echten Knöpfe drückt, mit den Sicherungen aller 30 Vorfassungen von 2.1.4 bis 2.1.33; am Gerät nicht gemessen.
 
 ## Neu in 2.1.33
 
@@ -476,7 +490,7 @@ Einstellungen entfernt wurde, kennt die Deinstallation nicht.
   Abfragezyklus von einer Woche) nur die Zahlenthemen an; die Werte kamen
   trotzdem vom Gateway. An ihrer Stelle steht im Reiter *Einbindung in
   Loxone* die **vollständige Namenstabelle**: jeder Eingangsname, wie das
-  Gateway ihn anlegt, mit Retain-Angabe, Einheit und Bedeutung. **Wer die
+  Gateway ihn bildet, mit Retain-Angabe, Einheit und Bedeutung. **Wer die
   Datei früher eingelesen hat, muss nichts tun** — die Eingänge bleiben und
   bekommen weiter Werte. Die Importdatei für die **Befehle** bleibt.
 
