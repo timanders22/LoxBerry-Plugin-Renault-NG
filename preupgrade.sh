@@ -38,6 +38,14 @@
 # Auf jedes Kopieren folgt die Pruefung, ob es geklappt hat - ein <OK> fuer
 # etwas, das nicht geschehen ist, ist schlechter als gar keine Meldung.
 
+# [upgrade_daten] Argumente des Installers festhalten - unten sichert der gemeinsame Baustein
+# [upgrade_daten] upgrade_daten.sh (neben diesem Skript) den ganzen Datenordner.
+UPGD_ORDNER="$3"; UPGD_WURZEL="$5"
+
+# 2.1.35: die Anmeldung (Gigya-Token, Kamereon-Konto) traegt diese Linie bewusst nicht ueber das Update - sie wird
+# neu geholt (wie bisher, Abschnitt 2 unten). Angabe fuer den Baustein 1.1.0 (UPGD_OHNE).
+UPGD_OHNE="anmeldung"
+
 KONF="REPLACELBPCONFIGDIR"
 DATEN="REPLACELBPDATADIR"
 PROT="REPLACELBPLOGDIR"
@@ -410,4 +418,21 @@ for paar in "renault.log:$PROT" "renault.log.1:$PROT"; do
     fi
 done
 
-exit $rc
+# 2.1.35: Rueckgabewert am Ende. Bis 2.1.34 stand hier "exit $rc" (0 in Ordnung, 1 Warnung; jeder Abbruch mit 2
+# steht oben als eigenes exit). Darunter steht seit 2.1.35 der gemeinsame Baustein upgrade_daten.sh, und den setzt
+# Werkzeuge/upgrade_daten_einbauen.py vor ein abschliessendes "exit 0". Damit eine Warnung (rc 1) trotzdem beim
+# Installer ankommt, gibt die Falle beim Verlassen rc zurueck - aber nur, wenn das Skript mit 0 endet: ein Abbruch
+# des Bausteins (exit 2) bleibt 2. Gemessen in WSL, bash: rc 0 -> 0, rc 1 -> 1, Baustein scheitert -> 2.
+if [ "$rc" != 0 ]; then
+    trap 'rn_ende=$?; if [ "$rn_ende" = 0 ]; then exit "$rc"; fi; exit "$rn_ende"' EXIT
+fi
+# [upgrade_daten] Gemeinsamer Baustein (Werkzeuge/gemeinsam/upgrade_daten.sh): den ganzen Datenordner
+# [upgrade_daten] neben den Ordner sichern; misslingt das, bricht die Aktualisierung mit Rueckgabe 2 ab.
+if [ -f "$(dirname "$0")/upgrade_daten.sh" ] && . "$(dirname "$0")/upgrade_daten.sh"; then
+    upgrade_daten_sichern "$UPGD_ORDNER" "$UPGD_WURZEL" || exit 2
+else
+    echo "<FAIL> Der Baustein upgrade_daten.sh fehlt neben $(basename "$0") - die Aktualisierung wird abgebrochen,"
+    echo "<FAIL> die bisherige Fassung bleibt installiert."
+    exit 2
+fi
+exit 0

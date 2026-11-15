@@ -82,7 +82,8 @@ function rn_eingabe_felder($formular)
 /* Geheimnisfelder: werden markiert, ihr Wert reist nie mit. */
 function rn_eingabe_geheim()
 {
-    return array_merge(array('password', 'weather_api_key', 'abrp_token'), rn_ansage_tokenfelder());
+    return array_merge(array('password', 'weather_api_key', 'abrp_token', 'gigya_api_eigen', 'kamereon_api_eigen'),
+                       rn_ansage_tokenfelder());     // 2.1.35: die eigenen App-Schluessel
 }
 function rn_eingabe_tauglich($w)
 {
@@ -361,8 +362,13 @@ if (isset($_POST['speichern'])) {
      * weather_api_key und abrp_token standen als Klartext im Formular. Die
      * Schluessel werden wie bisher von Steuerzeichen und Anfuehrungszeichen
      * befreit; das Kennwort bleibt unbeschnitten. */
+    /* 2.1.35: dazu die beiden eigenen Schluessel der Renault-App (Notbehelf, ab Werk leer = eingebaut) - wie
+     * die Schluessel oben: leer laesst stehen, der Haken loescht, beides zugleich ist ein Widerspruch. Ein
+     * eingetragener Wert muss die Form haben (rn_api_schluessel_form()); sonst Beanstandung, nichts
+     * gespeichert, nie zurechtgeschnitten. */
     foreach (array('password' => 'TEXT.L_PASSWORT', 'weather_api_key' => 'TEXT.L_WETTER',
-                   'abrp_token' => 'TEXT.L_ABRP_TOKEN') as $f => $rn_lbl) {
+                   'abrp_token' => 'TEXT.L_ABRP_TOKEN', 'gigya_api_eigen' => 'TEXT.L_GIGYA_EIGEN',
+                   'kamereon_api_eigen' => 'TEXT.L_KAMEREON_EIGEN') as $f => $rn_lbl) {
         $rn_roh = (isset($_POST[$f]) && is_string($_POST[$f])) ? $_POST[$f] : '';
         if ($f !== 'password') {
             /* Nr. 19: nur der Leerraum am Rand faellt still weg; Anfuehrungs-
@@ -374,6 +380,12 @@ if (isset($_POST['speichern'])) {
                 rn_bean($f);
                 continue;
             }
+        }
+        if (($f === 'gigya_api_eigen' || $f === 'kamereon_api_eigen') && $rn_roh !== ''
+            && !rn_api_schluessel_form($rn_roh)) {
+            $rn_fehler[] = sprintf(rn_t('TEXT.F_APP_SCHLUESSEL'), rn_e(rn_t($rn_lbl)), strlen($rn_roh));
+            rn_bean($f);
+            continue;
         }
         /* Renault-b1: das Kennwort aus der beiseitegelegten Datei - auf dem
          * Server gelesen, nie ueber das Formular. */
@@ -628,6 +640,12 @@ if (isset($_POST['speichern'])) {
             if (rn_konto_geaendert($rn_cfg, $neu)) {
                 if (is_file($rn_p['anmeldung'])) { @unlink($rn_p['anmeldung']); }
                 renault_log('INFO', 'Zugangsdaten geaendert - die Anmeldung wird beim naechsten Abruf neu geholt.');
+            } elseif (rn_api_schluessel_geaendert($rn_cfg, $neu)) {
+                /* 2.1.35: ein anderer App-Schluessel gilt erst mit einer neuen Anmeldung. Die Zwischenspeicher
+                 * der Fahrzeuge bleiben - sie gehoeren zum Konto, nicht zum Schluessel. */
+                if (is_file($rn_p['anmeldung'])) { @unlink($rn_p['anmeldung']); }
+                renault_log('INFO', 'Eigene Schluessel der Renault-App geaendert - die Anmeldung wird beim naechsten '
+                    . 'Abruf neu geholt.');
             }
             $rn_cfg = rn_config_read();
             $rn_meldung = rn_e(rn_t('TEXT.M_GESPEICHERT'))
@@ -978,7 +996,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rn_zurueck'])) {
                 $rn_sd = $rn_p['datadir'] . '/session' . ($rn_snr > 1 ? (string) $rn_snr : '');
                 if (is_file($rn_sd)) { @unlink($rn_sd); }
             }
-            if (rn_konto_geaendert($jetzt, $neu) && is_file($rn_p['anmeldung'])) {
+            if ((rn_konto_geaendert($jetzt, $neu) || rn_api_schluessel_geaendert($jetzt, $neu))     // 2.1.35: auch die App-Schluessel
+                && is_file($rn_p['anmeldung'])) {
                 @unlink($rn_p['anmeldung']);
             }
             $rn_cfg = rn_config_read();
@@ -1295,13 +1314,31 @@ $rn_kauto = $rn_broker ? rn_t($rn_broker['autostart'] ? 'ALLG.EIN' : 'ALLG.AUS')
 <div class="sm-feld">
   <label for="country"><?php echo rn_e(rn_t('TEXT.L_LAND')); ?></label>
   <select data-role="none" id="country" name="country"<?php echo rn_ein_m('country'); ?>>
+    <?php /* 2.1.35: GB - derselbe Gigya-Schluessel, dasselbe Rechenzentrum (accounts.eu1.gigya.com) und derselbe
+           * Kamereon-Rechner wie DE, nur country=GB in den Anfragen (gemessen 15.11.2026 an renault-api
+           * const.py 937c5b38e726, ZoePHP 962403638af1, openHAB Constants.java 589e0b3aaec4). */ ?>
     <?php foreach (array('DE' => 'Deutschland', 'AT' => 'Österreich', 'CH' => 'Schweiz',
                          'IT' => 'Italia', 'SE' => 'Sverige', 'FR' => 'France',
+                         'GB' => rn_t('TEXT.L_LAND_GB'),
                          'EN' => rn_t('TEXT.L_ANDERE')) as $k => $v) { ?>
       <option value="<?php echo rn_e($k); ?>"<?php echo rn_ein_w('country', $rn_cfg['country']) === $k ? ' selected' : ''; ?>><?php echo rn_e($v); ?></option>
     <?php } ?>
   </select>
 </div>
+
+<h3><?php echo rn_e(rn_t('TEXT.H_APP_SCHLUESSEL')); ?> <span class="sm-small"><?php echo rn_e(rn_t('TEXT.H_OPTIONAL')); ?></span></h3>
+<p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.H_APP_SCHLUESSEL_TEXT')); ?></p>
+<?php foreach (array('gigya_api_eigen' => 'TEXT.L_GIGYA_EIGEN', 'kamereon_api_eigen' => 'TEXT.L_KAMEREON_EIGEN') as $rn_af => $rn_al) { ?>
+<div class="sm-feld">
+  <label for="<?php echo rn_e($rn_af); ?>"><?php echo rn_e(rn_t($rn_al)); ?></label>
+  <?php /* 2.1.35, wie das Kennwort: nie mit Wert in der Seite, nur "eigener gespeichert / eingebauter gilt";
+           leer heisst unveraendert, geloescht (zurueck zum eingebauten) wird ueber den Haken. */ ?>
+  <input data-role="none" type="password" id="<?php echo rn_e($rn_af); ?>" name="<?php echo rn_e($rn_af); ?>" value="" autocomplete="new-password"<?php echo rn_ein_m($rn_af); ?>
+         placeholder="<?php echo rn_e($rn_cfg[$rn_af] !== '' ? rn_t('TEXT.P_EIGEN_GESPEICHERT') : rn_t('TEXT.P_EINGEBAUT')); ?>">
+  <p class="sm-hilfe"><label><input data-role="none" type="checkbox" name="<?php echo rn_e($rn_af); ?>_loeschen" value="1" style="width:auto;margin:0 6px 0 0;vertical-align:middle"><?php echo rn_e(rn_t('TEXT.L_APP_SCHLUESSEL_LOESCHEN')); ?></label></p>
+</div>
+<?php } ?>
+<p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.H_APP_SCHLUESSEL_FORM')); ?> <?php echo rn_e(rn_t('TEXT.H_GEHEIM')); ?></p>
 
 <h2><?php echo rn_e(rn_t('TEXT.H_FAHRZEUGE')); ?></h2>
 <p class="sm-hilfe"><?php echo rn_t('TEXT.H_FAHRZEUGE_TEXT'); ?></p>

@@ -141,7 +141,8 @@ if (!isset($rn_auftrag) && isset($argv[1]) && $argv[1] === '--haus-lesen') {
 }
 
 require_once __DIR__ . '/logger.php';
-list($gigya_api, $kamereon_api) = rn_api_schluessel();   // api-keys.php, einmal gelesen
+/* Die Schluessel der Renault-App holt seit 2.1.35 rn_api_schluessel($rn_cfg) unten, nach dem Lesen der
+ * Konfiguration (eingebaut aus api-keys.php oder ein eigener aus config.php). */
 
 rn_umzug();                      // einmaliger Umzug aus dem Programmordner
 
@@ -200,6 +201,7 @@ if (!function_exists('curl_init')) {
 
 $rn_cfg   = rn_config_read();
 $rn_autos = rn_fahrzeuge($rn_cfg);
+list($gigya_api, $kamereon_api) = rn_api_schluessel($rn_cfg);   // 2.1.35: eingebaut oder eigener
 
 /* ==================================================================
  * Fail closed: ohne Zugangsdaten wird nichts versucht

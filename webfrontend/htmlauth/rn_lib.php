@@ -484,6 +484,10 @@ function rn_vorgaben()
         'username'        => '',
         'password'        => '',
         'country'         => 'DE',
+        // ---- Schluessel der Renault-App von Hand (2.1.35, Notbehelf): leer = der
+        //      eingebaute aus api-keys.php (rn_api_schluessel()) ----
+        'gigya_api_eigen'    => '',
+        'kamereon_api_eigen' => '',
         // ---- Aufzeichnung ----
         'save_in_db'      => 'N',
         // ---- Abruftakt (bis 2.0.6 nur von Hand in der Datei zu aendern) ----
@@ -747,7 +751,8 @@ function rn_einmal_schreiben($meldung, array $fehler, array $misslungen, $test_t
                              $test_text, $cfg, $eingaben = null)
 {
     $weg = array();
-    foreach (array('password', 'aktionstoken', 'weather_api_key', 'abrp_token') as $k) {
+    foreach (array('password', 'aktionstoken', 'weather_api_key', 'abrp_token',
+                   'gigya_api_eigen', 'kamereon_api_eigen') as $k) {     // 2.1.35: die eigenen App-Schluessel
         $g = (is_array($cfg) && isset($cfg[$k])) ? (string) $cfg[$k] : '';
         if (strlen($g) >= 6) { $weg[$g] = '***'; }
     }
@@ -2967,12 +2972,17 @@ function rn_abo_datei()
  *    (3. Argument) und nennt sie (bis dahin hielt 'vorbehandeln' den rohen Inhalt fest).
  *  - Benutzername und Kennwort des Renault-Kontos und das Aktionstoken stehen in config.php und damit in der
  *    Sicherung.
+ *  - 2.1.35: die beiden eigenen Schluessel der Renault-App (gigya_api_eigen, kamereon_api_eigen) ebenso; eine
+ *    aeltere Sicherung kennt sie nicht, dann behalten sie den geltenden Wert (rn_neue_schluessel_2135()). Leer
+ *    heisst "der eingebaute Schluessel"; ein leerer Wert in der Datei ueberschreibt nach der Regel des Moduls
+ *    keinen eigenen Schluessel der Anlage - entfernt wird er ueber den Haken im Formular.
  */
 function rn_sicherung_beschreibung()
 {
     $p = rn_paths(false);
     $sprech = rn_ansage_tokenfelder();
-    $spaet = array_merge(rn_ansage_neue_schluessel(), rn_neue_schluessel_2120(), array('tts_ziele'));
+    $spaet = array_merge(rn_ansage_neue_schluessel(), rn_neue_schluessel_2120(), array('tts_ziele'),
+                         rn_neue_schluessel_2135());
     $text = function ($w) { return (string) $w; };
     $schluessel = array();
     foreach (array_keys(rn_vorgaben()) as $k) {
@@ -3011,13 +3021,33 @@ function rn_sicherung_beschreibung()
             }
             return $aus;
         },
-        'jetzt' => 'rn_config_read',
+        'jetzt' => 'rn_sicherung_jetzt',     // 2.1.35 (Modul 1.2.4): samt Schluesseln, die diese Fassung nicht kennt
         'vorbereiten' => 'rn_sicherung_vorbereiten',
         'zweitschrift' => function () { $q = rn_paths(); return array($q['config'], $q['sicherung']); },
         'log' => function ($z) { renault_log('INFO', $z); },
         't' => 'rn_t',
         'e' => 'rn_e',
     );
+}
+
+/**
+ * 2.1.35, Rueckruf 'jetzt' des Sicherungsmoduls: die geltende Konfiguration, wie das Modul sie seit 1.2.4 braucht -
+ * rn_config_read() und dazu jeder Schluessel aus config.php, den diese Fassung nicht kennt (nur Zeichenketten).
+ * rn_config_read() liefert nur die Schluessel der Vorgaben; bis 2.1.34 fiel ein fremder Schluessel (etwa von Hand
+ * eingetragen) beim Zurueckspielen deshalb still weg. Er faellt weiter weg - das Modul nennt ihn jetzt mit Namen
+ * (K_JETZT_ENTFERNT) und im Protokoll, nie mit Wert. Liest, schreibt nichts (ausser der Heilung in rn_config_read()).
+ */
+function rn_sicherung_jetzt()
+{
+    $cfg = rn_config_read();
+    $p = rn_paths(false);
+    $roh = is_readable($p['config']) ? rn_config_einlesen($p['config']) : null;
+    if (is_array($roh)) {
+        foreach ($roh as $k => $v) {
+            if (!array_key_exists($k, $cfg) && !is_array($v)) { $cfg[(string) $k] = (string) $v; }
+        }
+    }
+    return $cfg;
 }
 
 /**
@@ -3617,7 +3647,7 @@ function rn_kaputt_dateien()
  *  ein anderes, der Kasten stuende sonst fuer immer da. */
 function rn_kaputt_geheim()
 {
-    return array('password', 'weather_api_key', 'abrp_token');
+    return array('password', 'weather_api_key', 'abrp_token', 'gigya_api_eigen', 'kamereon_api_eigen');     // 2.1.35
 }
 
 /**
@@ -3818,6 +3848,10 @@ function rn_wert_pruefen($k, $w)
             /* Dieselben Sonderzeichen, die rn_hook_ausfuehren() vor dem
              * Ausfuehren abweist - hier schon beim Hereinkommen. */
             return preg_match('/[;&|`$()<>\r\n]/', $w) !== 1;
+        case 'gigya_api_eigen':
+        case 'kamereon_api_eigen':
+            /* 2.1.35: leer = der eingebaute Schluessel; sonst rn_api_schluessel_form(). */
+            return $w === '' || rn_api_schluessel_form($w);
     }
     return true;
 }
@@ -3900,8 +3934,8 @@ function rn_http_zeitschranke($neu = null)
     return $z;
 }
 
-/** Die Schluessel aus api-keys.php: array(gigya, kamereon). Einmal je Prozess gelesen. */
-function rn_api_schluessel()
+/** Die eingebauten Schluessel aus api-keys.php: array(gigya, kamereon). Einmal je Prozess gelesen. */
+function rn_api_schluessel_eingebaut()
 {
     static $s = null;
     if ($s !== null) { return $s; }
@@ -3913,6 +3947,79 @@ function rn_api_schluessel()
     };
     $s = $lade(__DIR__ . '/api-keys.php');
     return $s;
+}
+
+/**
+ * 2.1.35: Hat ein von Hand eingetragener Schluessel der Renault-App eine brauchbare Form? Rein.
+ * Nur A-Z, a-z, 0-9, Unterstrich und Bindestrich, 16 bis 128 Zeichen. Gemessen 15.11.2026 an den
+ * Schluesseln in renault-api (const.py, Commit 937c5b38e726): Gigya 24, 59 und 66 Zeichen, Kamereon
+ * 32 Zeichen, alle aus diesen Zeichen. Ein Wert ausserhalb wird abgewiesen, nie zurechtgeschnitten.
+ */
+function rn_api_schluessel_form($w)
+{
+    return is_string($w) && preg_match('/^[A-Za-z0-9_-]{16,128}\z/', $w) === 1;
+}
+
+/**
+ * 2.1.35: Welcher Schluessel gilt, und woher kommt er? Rein - $eingebaut ist array(gigya, kamereon) aus
+ * rn_api_schluessel_eingebaut(). Rueckgabe je 'gigya' und 'kamereon': array(Wert, Herkunft) mit Herkunft
+ *   'eingebaut'  Feld leer, der Schluessel aus api-keys.php gilt (die Regel);
+ *   'eigen'      ein eigener Schluessel aus config.php gilt (der Notbehelf);
+ *   'ungueltig'  in config.php steht ein Wert ohne brauchbare Form (von Hand oder aus einer fremden
+ *                Fassung) - es gilt KEIN Schluessel, die Anmeldung scheitert und das Protokoll sagt es.
+ *                Nicht still auf den eingebauten zurueckgefallen: wer einen eigenen eintraegt, will ihn.
+ *   'fehlt'      Feld leer und api-keys.php liefert keinen.
+ */
+function rn_api_schluessel_lage($cfg, array $eingebaut)
+{
+    $aus = array();
+    foreach (array('gigya' => array('gigya_api_eigen', 0), 'kamereon' => array('kamereon_api_eigen', 1)) as $n => $d) {
+        $eigen = (is_array($cfg) && isset($cfg[$d[0]])) ? (string) $cfg[$d[0]] : '';
+        $ein = isset($eingebaut[$d[1]]) ? (string) $eingebaut[$d[1]] : '';
+        if ($eigen === '') {
+            $aus[$n] = array($ein, $ein !== '' ? 'eingebaut' : 'fehlt');
+        } elseif (rn_api_schluessel_form($eigen)) {
+            $aus[$n] = array($eigen, 'eigen');
+        } else {
+            $aus[$n] = array('', 'ungueltig');
+        }
+    }
+    return $aus;
+}
+
+/**
+ * Die geltenden Schluessel der Renault-App: array(gigya, kamereon) - die EINE Stelle, an der alle
+ * Aufrufer sie holen (Abruf, Befehle und Befehlsbruecke ueber rn_anmelden()/rn_befehl_senden(),
+ * Ladehistorie, Selbsttest).
+ *
+ * Bis 2.1.34 kamen sie allein aus api-keys.php. Seit 2.1.35 gilt dort, wo in config.php ein eigener
+ * Schluessel steht (Reiter Einstellungen, "Fortgeschritten"), dieser - als Notbehelf, wenn Renault die
+ * Schluessel der App wechselt, bevor eine neue Fassung erscheint. Ab Werk ist beides leer und es gilt
+ * der eingebaute. $cfg: die Konfiguration; ohne sie wird sie gelesen (ohne anzulegen).
+ */
+function rn_api_schluessel($cfg = null)
+{
+    if (!is_array($cfg)) { $cfg = rn_config_read(false); }
+    $lage = rn_api_schluessel_lage($cfg, rn_api_schluessel_eingebaut());
+    foreach (array('gigya' => 'Gigya', 'kamereon' => 'Kamereon') as $n => $titel) {
+        if ($lage[$n][1] === 'ungueltig') {
+            rn_melden_stuendlich('ERROR', 'Der eigene ' . $titel . '-Schluessel in config.php hat keine brauchbare '
+                . 'Form (erlaubt: A-Z, a-z, 0-9, _ und -, 16 bis 128 Zeichen) - es gilt kein Schluessel, die '
+                . 'Anmeldung scheitert. Im Reiter Einstellungen berichtigen oder loeschen.');
+        }
+    }
+    return array($lage['gigya'][0], $lage['kamereon'][0]);
+}
+
+/** 2.1.35: Haben sich die eigenen Schluessel der Renault-App geaendert? Rein. Dann wird die Anmeldung verworfen. */
+function rn_api_schluessel_geaendert(array $alt, array $neu)
+{
+    foreach (array('gigya_api_eigen', 'kamereon_api_eigen') as $k) {
+        $a = isset($alt[$k]) ? (string) $alt[$k] : '';
+        $b = isset($neu[$k]) ? (string) $neu[$k] : '';
+        if ($a !== $b) { return true; }
+    }
+    return false;
 }
 
 /** Eine Schnittstellenantwort ins Protokoll (Form von renault_log_api(), ohne curl-Griff). */
@@ -4048,7 +4155,7 @@ function rn_session_verwerfen(array $alt, array $neu)
  */
 function rn_anmelden(array $cfg, $zeit = null)
 {
-    list($gigya_api, $kamereon_api) = rn_api_schluessel();
+    list($gigya_api, $kamereon_api) = rn_api_schluessel($cfg);     // 2.1.35: eingebaut oder eigener
     $zeit = ($zeit === null) ? rn_http_zeitschranke() : $zeit;
     $anm = rn_anmeldung_lesen();          // 0 Datum, 1 JWT, 2 Konto, 3 personId, 4 Kontoleerung
     $heute = date('md');
@@ -4158,7 +4265,7 @@ function rn_anmelden(array $cfg, $zeit = null)
  */
 function rn_befehl_senden($aktion, array $ziel, array $cfg, $konto, $jwt, $zeit = null)
 {
-    list(, $kamereon_api) = rn_api_schluessel();
+    list(, $kamereon_api) = rn_api_schluessel($cfg);     // 2.1.35: eingebaut oder eigener
     $vin  = (string) $ziel['vin'];
     $land = (string) $cfg['country'];
     $temp = (int) $cfg['ac_temp'];
@@ -4722,6 +4829,15 @@ function rn_neue_schluessel_2120()
         $s[] = 'akku_kwh' . $nr;
     }
     return $s;
+}
+
+/**
+ * Die Schluessel, die mit 2.1.35 dazukamen (eigene Schluessel der Renault-App). Eine aeltere Sicherung kennt
+ * sie nicht: beim Zurueckspielen behalten sie den Wert dieser Anlage (Spaetschluessel, 'fehlt' => 'behalten').
+ */
+function rn_neue_schluessel_2135()
+{
+    return array('gigya_api_eigen', 'kamereon_api_eigen');
 }
 
 /** Die Vorgaben der neuen Schluessel (alles, was etwas ausloest, ab Werk aus). */

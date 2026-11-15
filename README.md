@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.34 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.35 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,29 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Neu in 2.1.35
+
+- **Großbritannien in der Länderwahl:** Im Reiter *Einstellungen* steht unter „Land“ jetzt „Großbritannien“ (Kürzel `GB`, englische Oberfläche „United Kingdom“). Für ein britisches My-Renault-Konto gelten derselbe Gigya-Schlüssel, dasselbe Gigya-Rechenzentrum (`accounts.eu1.gigya.com`) und derselbe Kamereon-Rechner (`api-wired-prod-1-euw1.wrd-aws.com`) wie für Deutschland. Anders ist nur der Ländercode, den das Plugin in jeder Kamereon-Anfrage mitschickt (`country=GB`); die Anmeldung bei Gigya trägt keinen Ländercode. Nachgelesen am 15.11.2026 im Quelltext von drei freien Projekten: renault-api (`src/renault_api/const.py`, Stand 12.10.2026; das Land ist dort der hintere Teil von `en_GB`), ZoePHP (Stand 20.05.2026, Vorgabe `$country = 'GB'`) und die Renault-Anbindung von openHAB (Stand 25.05.2026). An einem britischen Konto gemessen ist es nicht. Bis 2.1.34 blieb einem britischen Konto nur „andere / Englisch“; dann geht `country=EN` hinaus. Ob Renault das gleich behandelt, ist nicht gemessen. Die übrigen Länder schicken unverändert dasselbe wie bisher.
+- **Neu, ab Werk aus – eigene Schlüssel der Renault-App als Notbehelf:** Das Plugin meldet sich mit zwei festen Schlüsseln der My-Renault-App an (Gigya für die Anmeldung, Kamereon für die Fahrzeugdaten). Sie sind eingebaut (`api-keys.php`) und für alle Anwender gleich; daran ändert sich nichts. Wechselt Renault diese Schlüssel, bevor eine neue Fassung erscheint, lässt sich im Reiter *Einstellungen* unter „Fortgeschritten: Schlüssel der Renault-App“ je ein eigener Gigya- und Kamereon-Schlüssel eintragen.
+  - Ein leeres Feld heißt: der eingebaute Schlüssel gilt. So steht es ab Werk und nach jedem Update einer bestehenden Anlage.
+  - Ein eingetragener Schlüssel gilt statt des eingebauten für Abruf, Befehle, Befehlsbrücke und Ladehistorie. Gelesen werden die Schlüssel an einer Stelle (`rn_api_schluessel()`).
+  - Erlaubt sind nur A–Z, a–z, 0–9, Unterstrich und Bindestrich, 16 bis 128 Zeichen. Eine andere Eingabe wird abgewiesen und gemeldet, das Feld markiert, und es wird nichts gespeichert; gekürzt oder umgeschrieben wird nichts.
+  - Die Felder zeigen nie den Wert, nur „eigener gespeichert“ oder „der eingebaute gilt“. Ein leeres Feld lässt einen eigenen Schlüssel stehen; gelöscht wird er über den Haken daneben, dann gilt wieder der eingebaute.
+  - Abgelegt wird ein eigener Schlüssel in `config.php` (Rechte 0600), wie das Renault-Kennwort. Nach einer Änderung wird die gespeicherte Anmeldung verworfen; der nächste Abruf meldet sich mit dem neuen Schlüssel an. Die Zwischenspeicher der Fahrzeuge bleiben.
+  - Der Reiter *Test* zeigt in der Zeile „Welche Schlüssel der Renault-App gelten?“ je Schlüssel, ob der eingebaute oder ein eigener gilt, nie den Wert. Steht in `config.php` ein eigener Schlüssel ohne brauchbare Form (etwa von Hand eingetragen), gilt keiner: die Zeile zeigt ein Kreuz, die Anmeldung scheitert, und das Protokoll sagt es höchstens einmal je Stunde. Auf den eingebauten wird dann nicht still zurückgefallen.
+  - „Einstellungen sichern“ nimmt die eigenen Schlüssel mit, wie das Kennwort. Eine Sicherung einer früheren Fassung kennt sie nicht; dann bleibt der geltende Wert, und die Meldung nennt die Namen. Ein leerer Wert in der Sicherung überschreibt nach der Regel des gemeinsamen Sicherungsmoduls keinen eigenen Schlüssel der Anlage; wer zum eingebauten zurück will, löscht ihn über den Haken.
+  - Ist eine neue Fassung mit den neuen Schlüsseln installiert, den eigenen Schlüssel wieder löschen.
+- **Gemeinsames Sicherungsmodul 1.2.4** (bisher 1.2.2):
+  - 1.2.3: Eine Sicherungsdatei mit UTF-8-BOM am Anfang (etwa nach dem Speichern in einem Windows-Editor) wird gelesen wie ohne. Bisher wurde sie als „keine lesbare Sicherung“ abgewiesen.
+  - 1.2.4: Steht in `config.php` eine Einstellung, die diese Fassung nicht kennt (etwa von Hand eingetragen), fällt sie beim Zurückspielen weiter weg. Die Meldung und das Protokoll nennen jetzt ihren Namen, nie den Wert; bis 2.1.34 fiel sie still weg. Das Plugin reicht dem Modul dafür die geltende Konfiguration samt solcher Einstellungen (`rn_sicherung_jetzt()`).
+- **Update: der ganze Datenordner kommt mit** (gemeinsamer Baustein `upgrade_daten.sh` 1.1.0, an der Wurzel des Archivs): `preupgrade.sh` sichert `data/plugins/<ordner>/` vollständig neben den Ordner und zählt die Kopie gegen; `postinstall.sh` spielt sie als Erstes zurück, ohne eine Datei der neuen Installation zu überschreiben; `uninstall` räumt eine liegengebliebene Sicherung ab.
+  - Bisher kamen nur Ladehistorie, Zwischenspeicher, Ladekosten und die Sicherung der Aufräumung mit (diese eigene Rettung bleibt). Jetzt auch die übrigen Dateien, etwa die Merker der Ansagen, der Kabel-Warnung, der Ankunft, der Vorklimatisierung und der Befehlsbrücke.
+  - Die Anmeldung (`anmeldung`) kommt bewusst nicht mit; sie wird wie bisher neu geholt. Sperrdateien (`*.lock`) ebenso nicht.
+  - Lässt sich der Datenordner nicht vollständig sichern, bricht das Update ab, und die bisherige Fassung bleibt installiert.
+  - `postupgrade.sh` erkennt eine Ladehistorie, die der Baustein schon zurückgespielt hat, und hängt sie nicht noch einmal an. Ohne diese Erkennung wäre jede Zeile der Ladehistorie verdoppelt worden.
+  - Warnungen von `preupgrade.sh` (Rückgabe 1) kommen weiter beim Installer an; ein Abbruch bleibt Rückgabe 2.
+- Gemessen auf dem Arbeitsrechner: Selbsttest (190 Fälle) und Prüfstand der Knöpfe „Einstellungen sichern/zurückspielen“ unter PHP 7.4 und 8.4, das Formular „Einstellungen“ über die echte Oberfläche in 26 Fällen, das Update nachgestellt unter Ubuntu (WSL) in sechs Fällen, davon zwei Gegenproben. Am Gerät und an einem Renault-Konto nicht gemessen.
 
 ## Neu in 2.1.34
 

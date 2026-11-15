@@ -80,6 +80,31 @@
  *      die Regel (Alexa-NG Gruppe 6a, Chromecast4lox Gruppe 6b fuehrten deshalb
  *      'vorgabe', und die Meldung sagte faelschlich "Werkseinstellung").
  *      Setzt 'vorbehandeln' nichts, bleibt alles wie bisher.
+ *  12. Seit 1.2.3 (Entscheidung des Hausherrn 15.11.2026: "Ja, Modul 1.2.3
+ *      bauen"): eine UTF-8-BOM am Anfang der Datei wird vor json_decode()
+ *      entfernt, in allen Linien gleich. Bis 1.2.2 wies das Modul eine solche
+ *      Datei als "keine lesbare Sicherung" ab; Abfahrtsassistent hatte die BOM
+ *      bis 1.6.40 selbst entfernt (Wunsch der Gruppe 4a, 14.11.2026). Eine Datei
+ *      ohne BOM bleibt byte-gleich behandelt.
+ *  13. Seit 1.2.4 (Entscheidung des Hausherrn 15.11.2026: "Ja, so umsetzen"):
+ *      Schluessel der GELTENDEN Konfiguration, die die Beschreibung nicht kennt
+ *      (oben: nicht in 'vorgaben' und kein Teil; in einem Block: ein
+ *      Unterschluessel, den der Knoten nicht nennt), fallen beim Zurueckspielen
+ *      weiter weg, werden aber mit Namen genannt, nie mit Wert
+ *      ($r['jetzt_entfernt'], Text K_JETZT_ENTFERNT, Protokollzeile) - in allen
+ *      Linien gleich, ohne Wahl je Linie. Bis 1.2.3 begann der neue Stand bei
+ *      den Vorgaben, und ein solcher Schluessel (etwa aus einer Bearbeitung von
+ *      Hand) fiel oben still weg; im Block nur dann nicht still, wenn die Datei
+ *      ihn selbst trug (dann als verworfen genannt). Genannt wird, was nach
+ *      'vorbereiten' nicht mehr im neuen Stand steht; ein Vermerk
+ *      ('nie_aus_datei') bleibt seit 1.2.1 und wird deshalb nicht genannt.
+ *      Was die Lesefunktion der Linie ('jetzt') nicht liefert, kann das Modul
+ *      nicht nennen; was ihre Speicherfunktion ueber den neuen Stand hinaus
+ *      behaelt, faellt nicht weg - beides misst der Pruefstand (geltend.fremd).
+ *      Nicht nachgemessen ueber 'jetzt': das ist in Linien ein Schnappschuss
+ *      vor dem Zurueckspielen (gemessen 15.11.2026, MGiSmart 1.1.45).
+ *      Ohne Speichern (halb gueltig, Vorbedingung, Schreibfehler) ist die Liste
+ *      leer, denn dann wurde nichts entfernt.
  *
  * Die Funktionen tragen das neutrale Kuerzel 'sicherung_' (wie 'ansage_' in
  * sprachausgabe.php). Laufen zwei Abschriften in einem PHP-Prozess, laedt sich
@@ -203,6 +228,11 @@
  *                   gesetzt hat ('fehlt' => 'behalten'; Uebergangsregel der Linie)
  *   'teile'         Ergebnisse der Teile
  *   'teile_hinweise' (1.2.0) Hinweise der Teile (fertige Saetze)
+ *   'jetzt_entfernt' (1.2.4) Namen der Schluessel der geltenden Konfiguration, die
+ *                   die Beschreibung nicht kennt und die der neue Stand nicht mehr
+ *                   traegt (oben: Name; im Block: block.feld); in
+ *                   sicherung_zurueckspielen() nach 'vorbereiten' gebildet; leer, wenn nicht
+ *                   zurueckgespielt oder nicht gespeichert wurde
  * Ein Ergebnis von sicherung_zurueckspielen() traegt seit 1.2.0 dazu
  *   'vorbedingung'  Saetze der Vorbedingung (leer = erfuellt oder nicht gefragt)
  * Ein Ergebnis von sicherung_eingang(), das vor dem Lesen endete, traegt dazu
@@ -229,7 +259,7 @@ if (PHP_SAPI !== 'cli') {
 
 if (!defined('SICHERUNG_FASSUNG')) {
 
-define('SICHERUNG_FASSUNG', '1.2.2');
+define('SICHERUNG_FASSUNG', '1.2.4');
 /** Groesste Sicherungsdatei, die gelesen wird (Byte). */
 define('SICHERUNG_MAX_BYTE', 262144);
 /** Feldname des Hakens "Zurueckspielen bestaetigen" (seit 1.1.0; Wert 1). */
@@ -480,7 +510,7 @@ function sicherung_ergebnis()
                  'kennzeichen_datei' => '', 'fassung_datei' => '', 'beanstandet' => array(),
                  'verworfen' => array(), 'leer_behalten' => array(), 'fehlt_behalten' => array(),
                  'fehlt_vorgabe' => array(), 'teile' => array(), 'teile_hinweise' => array(),
-                 'fehlt_uebergang' => array());
+                 'fehlt_uebergang' => array(), 'jetzt_entfernt' => array());
 }
 
 /** Eine Beanstandung aufnehmen ($text: '' | Text | Liste). */
@@ -551,6 +581,56 @@ function sicherung_knoten_reinigen(array $knoten, $w, $j, $pfad, array &$r, $tre
 }
 
 /**
+ * 1.2.4: die Namen der Schluessel der geltenden Konfiguration $jetzt, die die Beschreibung nicht kennt und die der
+ * neue Stand $neu nicht mehr traegt - nur Namen, nie Werte (Regel 13 im Kopf). Oben: nicht in 'vorgaben', kein Teil
+ * ('teile') und kein Feld eines flachen Teils ('teile_flach'). In einem Block (Knoten 'block'): ein Unterschluessel,
+ * den der Knoten nicht nennt; Bloecke in Bloecken ebenso. Listen und 'offen' werden nicht untersucht (ihre Eintraege
+ * lassen sich keinem Gegenstueck sicher zuordnen bzw. tragen dynamische Namen).
+ */
+function sicherung_jetzt_entfernt(array $b, array $jetzt, $neu)
+{
+    $aus = array();
+    if (!is_array($neu)) { return $aus; }
+    $vorgaben = isset($b['vorgaben']) && is_array($b['vorgaben']) ? $b['vorgaben'] : array();
+    $teile = isset($b['teile']) && is_array($b['teile']) ? $b['teile'] : array();
+    $flach = isset($b['teile_flach']) && is_array($b['teile_flach']) ? $b['teile_flach'] : array();
+    foreach ($jetzt as $k => $w) {
+        $k = (string) $k;
+        if (isset($teile[$k])) { continue; }
+        if (!array_key_exists($k, $vorgaben)) {
+            $teil_feld = false;
+            foreach ($flach as $px) {
+                $px = (string) $px;
+                if ($px !== '' && strpos($k, $px) === 0 && strlen($k) > strlen($px)) { $teil_feld = true; break; }
+            }
+            if (!$teil_feld && !array_key_exists($k, $neu)) { $aus[] = sicherung_name($k); }
+            continue;
+        }
+        if (is_array($w) && isset($neu[$k]) && is_array($neu[$k])) {
+            sicherung_jetzt_entfernt_block(sicherung_knoten($b, $k), $w, $neu[$k], sicherung_name($k), $aus);
+        }
+    }
+    return $aus;
+}
+
+/** 1.2.4: wie sicherung_jetzt_entfernt() fuer die Unterschluessel eines Blocks ($pfad: Name des Blocks). */
+function sicherung_jetzt_entfernt_block(array $knoten, array $j, array $n, $pfad, array &$aus)
+{
+    if (!isset($knoten['art']) || $knoten['art'] !== 'block') { return; }
+    $schl = isset($knoten['schluessel']) && is_array($knoten['schluessel']) ? $knoten['schluessel'] : array();
+    foreach ($j as $sk => $sw) {
+        $name = $pfad . '.' . sicherung_name($sk);
+        if (!array_key_exists((string) $sk, $schl)) {
+            if (!array_key_exists($sk, $n)) { $aus[] = $name; }
+            continue;
+        }
+        if (is_array($sw) && is_array($schl[(string) $sk]) && isset($n[$sk]) && is_array($n[$sk])) {
+            sicherung_jetzt_entfernt_block($schl[(string) $sk], $sw, $n[$sk], $name, $aus);
+        }
+    }
+}
+
+/**
  * Eine Sicherungsdatei lesen und pruefen, ohne etwas zu schreiben.
  * $jetzt: die geltende Konfiguration (fuer Regel 3 und 'behalten'); ohne
  * Angabe $b['jetzt'](). Rueckgabe: das Ergebnis $r (siehe Kopf).
@@ -572,6 +652,8 @@ function sicherung_lesen(array $b, $roh, $jetzt = null)
         sicherung_beanstanden($r, '-', sprintf(sicherung_t('K_ZU_GROSS', $b), (int) ($max / 1024)));
         return $r;
     }
+    // 1.2.3: eine UTF-8-BOM vor dem Lesen entfernen (Editoren unter Windows schreiben sie gern), fuer alle Linien gleich.
+    if (substr($roh, 0, 3) === "\xEF\xBB\xBF") { $roh = substr($roh, 3); }
     $daten = json_decode($roh, true);
     if (!is_array($daten) || ($daten !== array() && array_keys($daten) === range(0, count($daten) - 1))) {
         $r['fremd'] = 'form';
@@ -762,6 +844,8 @@ function sicherung_lesen(array $b, $roh, $jetzt = null)
     $r['ok'] = !$r['beanstandet'];
     $r['neu'] = $r['ok'] ? $neu : null;
     if (!$r['ok']) { $r['teile'] = array(); $r['teile_hinweise'] = array(); }
+    // 1.2.4: was aus der geltenden Konfiguration wegfaellt, weil die Beschreibung es nicht kennt (nur Namen)
+    $r['jetzt_entfernt'] = $r['ok'] ? sicherung_jetzt_entfernt($b, $jetzt, $neu) : array();
     return $r;
 }
 
@@ -793,6 +877,8 @@ function sicherung_zurueckspielen(array $b, $roh)
             if (is_array($vb)) { $neu = $vb; }
         }
         $r['neu'] = $neu;
+        // 1.2.4: gegen den Stand nach 'vorbereiten' - was die Linie dort aus der geltenden Konfiguration behaelt, faellt nicht weg
+        $r['jetzt_entfernt'] = sicherung_jetzt_entfernt($b, $jetzt, $neu);
         if (isset($b['vorbedingung']) && is_callable($b['vorbedingung'])) {
             // 1.2.0: was vor dem Speichern erfuellt sein muss; nicht erfuellt heisst nicht gespeichert, mit diesen Saetzen
             foreach ((array) call_user_func($b['vorbedingung'], $neu, $jetzt, $r) as $s) {
@@ -801,6 +887,7 @@ function sicherung_zurueckspielen(array $b, $roh)
         }
         $r['gespeichert'] = (!$r['vorbedingung'] && isset($b['speichern']) && is_callable($b['speichern']))
             ? (bool) call_user_func($b['speichern'], $neu, $jetzt, $r) : false;
+        if (!$r['gespeichert']) { $r['jetzt_entfernt'] = array(); }     // 1.2.4: nicht gespeichert, nichts entfernt
         if ($r['gespeichert'] && isset($b['zweitschrift']) && is_callable($b['zweitschrift'])) {
             $r['zweitschrift'] = sicherung_zweitschrift_lage(call_user_func($b['zweitschrift']));
         }
@@ -839,7 +926,9 @@ function sicherung_protokollzeile(array $r)
     $z = 'Sicherung zurueckgespielt: ' . (int) $r['anzahl'] . ' Werte'
        . ($r['eigen'] === 'uebersetzt' ? ', aeltere Sicherung ohne Kennzeichen' : '')
        . ($r['fassung_datei'] !== '' ? ', aus Fassung ' . $r['fassung_datei'] : '');
-    foreach (array('verworfen' => 'verworfen', 'leer_behalten' => 'leer, bisheriger Wert bleibt',
+    foreach (array('verworfen' => 'verworfen',
+                   'jetzt_entfernt' => 'unbekannt, aus der geltenden Konfiguration entfernt',
+                   'leer_behalten' => 'leer, bisheriger Wert bleibt',
                    'fehlt_behalten' => 'fehlt, bisheriger Wert bleibt',
                    'fehlt_uebergang' => 'fehlt, Wert aus einer Uebergangsregel der Linie') as $f => $t) {
         if (!empty($r[$f])) { $z .= '; ' . $t . ': ' . implode(', ', array_slice($r[$f], 0, 20)); }
@@ -884,7 +973,8 @@ function sicherung_meldungen(array $b, array $r)
     if (!empty($r['teile_hinweise']) && is_array($r['teile_hinweise'])) {
         foreach ($r['teile_hinweise'] as $s) { $h[] = (string) $s; }     // 1.2.0: Hinweise der Teile, fertige Saetze
     }
-    $listen = array('verworfen' => 'K_VERWORFEN', 'leer_behalten' => 'K_LEER_BEHALTEN', 'fehlt_behalten' => 'K_FEHLT_BEHALTEN',
+    $listen = array('verworfen' => 'K_VERWORFEN', 'jetzt_entfernt' => 'K_JETZT_ENTFERNT',
+                    'leer_behalten' => 'K_LEER_BEHALTEN', 'fehlt_behalten' => 'K_FEHLT_BEHALTEN',
                     'fehlt_uebergang' => 'K_FEHLT_UEBERGANG', 'fehlt_vorgabe' => 'K_FEHLT_VORGABE');
     foreach ($listen as $feld => $id) {
         if (!empty($r[$feld])) { $h[] = sprintf(sicherung_t($id, $b), sicherung_e(implode(', ', $r[$feld]), $b)); }
@@ -987,7 +1077,7 @@ function sicherung_sprachschluessel()
                  'K_FREMD_OHNE_NAME', 'K_OHNE_KENNZEICHEN', 'K_FEHLEND', 'K_LEER', 'K_WERT', 'K_ABGELEHNT',
                  'K_SCHREIBFEHLER', 'K_UEBERNOMMEN', 'K_ALT_ERKANNT', 'K_VERWORFEN', 'K_LEER_BEHALTEN',
                  'K_FEHLT_BEHALTEN', 'K_ZWEITSCHRIFT', 'K_HAKEN', 'K_HAKEN_FEHLT', 'K_KEINE_DATEI', 'K_FEHLT_VORGABE',
-                 'K_FEHLT_UEBERGANG');
+                 'K_FEHLT_UEBERGANG', 'K_JETZT_ENTFERNT');
 }
 
 /* ==================================================================
@@ -1226,8 +1316,8 @@ function sicherung_selbsttest()
     $pruef('beschreibung ohne kennzeichen', sicherung_beschreibung_mangel(array('vorgaben' => array('a' => 1))), array('kennzeichen'));
     $pruef('fassung ohne quelle', sicherung_fassung_lesen(array()), '');
     $pruef('namensform', array(sicherung_namensform('a.b-c_1'), sicherung_namensform("a\n"), sicherung_namensform('')), array(true, false, false));
-    $pruef('schluessel zahl', count(sicherung_sprachschluessel()), 24);
-    $pruef('schluessel eindeutig', count(array_unique(sicherung_sprachschluessel())), 24);
+    $pruef('schluessel zahl', count(sicherung_sprachschluessel()), 25);
+    $pruef('schluessel eindeutig', count(array_unique(sicherung_sprachschluessel())), 25);
 
     // --- 1.2.0 (a) Rohwert an 'pruefen' und 'quer' ---
     $gesehen = array();
@@ -1434,6 +1524,91 @@ function sicherung_selbsttest()
     $pruef('uebergang: gespeichert mit dem Wert der Linie',
            array($r['gespeichert'], count($gespeichert) - $n, isset($gespeichert[$n]['spaet']) ? $gespeichert[$n]['spaet'] : 'fehlt'),
            array(true, 1, 9));
+
+    // --- 1.2.3: eine UTF-8-BOM am Anfang der Datei stoert nicht ---
+    $r = sicherung_lesen($b, "\xEF\xBB\xBF" . json_encode($daten), $jetzt);
+    $pruef('bom: Datei mit UTF-8-BOM wird gelesen wie ohne', array($r['ok'], $r['fremd']), array(true, ''));
+    $r = sicherung_lesen($b, "\xEF\xBB" . json_encode($daten), $jetzt);
+    $pruef('bom: eine halbe BOM bleibt kein JSON', array($r['ok'], $r['fremd']), array(false, 'form'));
+
+    // --- 1.2.4: Schluessel der geltenden Konfiguration, die die Beschreibung nicht kennt, fallen weg und werden genannt ---
+    $WO = 'GeltendOben-Wert-91';
+    $WT = 'GeltendTief-Wert-92';
+    $jf = $jetzt;
+    $jf['tts']['zz_geltend_tief'] = $WT;
+    $jf['zz_geltend_oben'] = $WO;
+    $r = sicherung_lesen($b, $js, $jf);
+    $pruef('geltend: oben und im Block genannt, Reihenfolge der Konfiguration', array($r['ok'], $r['jetzt_entfernt']),
+           array(true, array('tts.zz_geltend_tief', 'zz_geltend_oben')));
+    $pruef('geltend: beide fehlen im neuen Stand', array(array_key_exists('zz_geltend_oben', $r['neu']),
+           array_key_exists('zz_geltend_tief', $r['neu']['tts'])), array(false, false));
+    $pruef('geltend: Vermerk bleibt und wird nicht genannt', array($r['neu']['vermerk'], in_array('vermerk', $r['jetzt_entfernt'], true)),
+           array('v', false));
+    $pruef('geltend: ohne Zusatzschluessel nichts genannt', sicherung_lesen($b, $js, $jetzt)['jetzt_entfernt'], array());
+    $r = sicherung_lesen($b, $js, $jf + array('zugang' => array('kennwort' => $GEHEIM)));
+    $pruef('geltend: ein Teil der geltenden Konfiguration wird nicht genannt', $r['jetzt_entfernt'],
+           array('tts.zz_geltend_tief', 'zz_geltend_oben'));
+    $r = sicherung_lesen($b, $js, $jetzt + array('_notiz' => 'x', 'altschluessel' => 1, "zz\nX;Y" => 1));
+    $pruef('geltend: _-Schluessel, frueherer Schluessel und bereinigter Name genannt', $r['jetzt_entfernt'],
+           array('_notiz', 'altschluessel', 'zz?X?Y'));
+    $jo = $jetzt;
+    $jo['frei']['z_neu'] = 3;
+    $jo['liste'][0]['zz_zeile'] = 1;
+    $r = sicherung_lesen($b, $js, $jo);
+    $pruef('geltend: offen und Listen werden nicht untersucht', array($r['ok'], $r['jetzt_entfernt']), array(true, array()));
+    $r = sicherung_lesen($bf, json_encode($df), array('x' => 1, 'z_a' => 'Alt-A', 'zz_f' => 1));
+    $pruef('geltend: Feld eines flachen Teils nicht genannt, anderes schon', $r['jetzt_entfernt'], array('zz_f'));
+    $bt = array('kennzeichen' => 'tief', 'vorgaben' => array('a' => array('b' => array('c' => 1))),
+                'schluessel' => array('a' => sicherung_block(array(), array('b' => sicherung_block(array('c'))))),
+                't' => function ($s) { return $s . ' [%s]'; });
+    $r = sicherung_lesen($bt, json_encode(array('_plugin' => 'tief', 'a' => array('b' => array('c' => 2)))),
+                         array('a' => array('b' => array('c' => 1, 'zz' => 2), 'zz2' => 3)));
+    $pruef('geltend: Block im Block', array($r['ok'], $r['jetzt_entfernt']), array(true, array('a.b.zz', 'a.zz2')));
+    $r = sicherung_lesen($b, sicherung_json(sicherung_bauen($b, $jf)), $jf);
+    $pruef('geltend: Datei aus diesem Stand - im Block verworfen und entfernt, oben entfernt',
+           array($r['ok'], $r['verworfen'], $r['jetzt_entfernt']),
+           array(true, array('tts.zz_geltend_tief'), array('tts.zz_geltend_tief', 'zz_geltend_oben')));
+    $r = sicherung_lesen($b, json_encode($d4), $jf);
+    $pruef('geltend: halb gueltig - nichts genannt', array($r['ok'], $r['jetzt_entfernt']), array(false, array()));
+    $prot = array();
+    $stand = $jf;       // die geltende Konfiguration der erfundenen Linie: vor dem Speichern $jf, danach das Gespeicherte
+    $bj = $b;
+    $bj['jetzt'] = function () use (&$stand) { return $stand; };
+    $bj['speichern'] = function ($neu) use (&$gespeichert, &$stand) { $gespeichert[] = $neu; $stand = $neu; return true; };
+    $bj['log'] = function ($z) use (&$prot) { $prot[] = $z; };
+    $n = count($gespeichert);
+    $r = sicherung_zurueckspielen($bj, $js);
+    $m = sicherung_meldungen($bj, $r);
+    $alles = implode("\n", array_merge($m['fehler'], $m['hinweise'], $prot));
+    $pruef('geltend zurueck: gespeichert ohne beide', array($r['gespeichert'], count($gespeichert) - $n,
+           isset($gespeichert[$n]) && !array_key_exists('zz_geltend_oben', $gespeichert[$n])
+           && !array_key_exists('zz_geltend_tief', $gespeichert[$n]['tts'])), array(true, 1, true));
+    $pruef('geltend zurueck: Meldung nennt beide mit K_JETZT_ENTFERNT',
+           in_array('SICHERUNG.K_JETZT_ENTFERNT [tts.zz_geltend_tief, zz_geltend_oben]', $m['hinweise'], true), true);
+    $pruef('geltend zurueck: Protokoll nennt beide',
+           strpos(implode("\n", $prot), 'unbekannt, aus der geltenden Konfiguration entfernt: tts.zz_geltend_tief, zz_geltend_oben') !== false, true);
+    $pruef('geltend zurueck: kein Wert in Meldung und Protokoll', array(strpos($alles, $WO), strpos($alles, $WT)), array(false, false));
+    $bj2 = $bj;
+    $bj2['vorbereiten'] = function ($neu, $jetzt) { $neu['zz_geltend_oben'] = $jetzt['zz_geltend_oben']; return $neu; };
+    $stand = $jf;
+    $r = sicherung_zurueckspielen($bj2, $js);
+    $pruef('geltend zurueck: was vorbereiten behaelt, wird nicht genannt', $r['jetzt_entfernt'], array('tts.zz_geltend_tief'));
+    $stand = $jf;
+    $bj3 = $bj;
+    $bj3['speichern'] = function () { return false; };
+    $r = sicherung_zurueckspielen($bj3, $js);
+    $m = sicherung_meldungen($bj3, $r);
+    $pruef('geltend zurueck: Schreibfehler - nichts entfernt, nichts genannt',
+           array($r['jetzt_entfernt'], strpos(implode("\n", $m['fehler']), 'K_JETZT_ENTFERNT')), array(array(), false));
+    $bj4 = $bj;
+    $bj4['vorbedingung'] = function () { return array('Vorher geht etwas nicht.'); };
+    $r = sicherung_zurueckspielen($bj4, $js);
+    $pruef('geltend zurueck: Vorbedingung - nichts entfernt', $r['jetzt_entfernt'], array());
+    $prot = array();
+    $n = count($gespeichert);
+    $r = sicherung_zurueckspielen($bj, json_encode($d4));
+    $pruef('geltend zurueck: halb gueltig - nichts gespeichert, Protokoll ohne die Namen',
+           array(count($gespeichert) - $n, $r['jetzt_entfernt'], strpos(implode("\n", $prot), 'zz_geltend')), array(0, array(), false));
 
     // --- 1.1.0: der Haken und der Eingang des Knopfes (ohne hochgeladene Datei: __FILE__ steht fuer eine Datei) ---
     // Die Texte kommen ueber $b['t'] (hier: Kennung mit Anhang); keine Kennung steht woertlich im Code, damit die

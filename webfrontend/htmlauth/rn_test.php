@@ -112,6 +112,11 @@ function rn_test_selbstpruefung($cfg, $broker, $voll = true)
     $z[] = array(rn_t('PRUEF.RECHTE'), $rechte === '' ? null : ($rechte === '0600'),
         $rechte === '' ? rn_t('PRUEF.KEINE_CONFIG') : $rechte);
 
+    /* 2.1.35: Welche Schluessel der Renault-App gelten - dieselbe Entscheidung wie beim Abruf
+     * (rn_api_schluessel_lage()), nie der Wert. Eingebaut ist die Regel (Haken), ein eigener der
+     * Notbehelf (Auskunft), ein unbrauchbarer eigener oder ein fehlender eingebauter ein Kreuz. */
+    $z[] = rn_test_app_schluessel_zeile($cfg);
+
     $z[] = array(rn_t('PRUEF.GATEWAY'), (bool) $broker,
         $broker ? $broker['host'] . ':' . $broker['port'] : rn_t('PRUEF.KEIN_BROKER'));
     /* Ohne Broker ist der Autostart NICHT FESTSTELLBAR - bis 2.1.5 stand
@@ -431,6 +436,29 @@ function rn_test_selbstpruefung($cfg, $broker, $voll = true)
     return $z;
 }
 
+/**
+ * 2.1.35: die Pruefzeile "Welche Schluessel der Renault-App gelten?" - Rueckgabe array(Titel, Urteil, Text).
+ * Urteil true: beide eingebaut; 'info': mindestens ein eigener gilt (Notbehelf); false: ein eigener ohne
+ * brauchbare Form oder kein eingebauter (api-keys.php fehlt oder ist leer). Der Text nennt je Schluessel
+ * nur die Herkunft.
+ */
+function rn_test_app_schluessel_zeile($cfg)
+{
+    $l = rn_api_schluessel_lage($cfg, rn_api_schluessel_eingebaut());
+    $herk = array($l['gigya'][1], $l['kamereon'][1]);
+    if (in_array('ungueltig', $herk, true) || in_array('fehlt', $herk, true)) {
+        $urteil = false;
+    } elseif (in_array('eigen', $herk, true)) {
+        $urteil = 'info';
+    } else {
+        $urteil = true;
+    }
+    return array(rn_t('PRUEF.APP_SCHLUESSEL'), $urteil,
+        sprintf(rn_t('PRUEF.APP_SCHLUESSEL_LAGE'),
+            rn_t('PRUEF.HERKUNFT_' . strtoupper($l['gigya'][1])),
+            rn_t('PRUEF.HERKUNFT_' . strtoupper($l['kamereon'][1]))));
+}
+
 /** Nr. 36 b: die Zeile der Sprachausgabe - Ausgabeart, letzte Ansage und die eingeschalteten Anlaesse.
  *  Die Tabelle maskiert jede Antwort (rn_e) - der Befund des Moduls kommt deshalb als Klartext. */
 function rn_ansage_zeile($cfg, $offen)
@@ -594,6 +622,10 @@ function rn_test_ausfuehren($was, $cfg)
                 $cfg['username'] !== '' ? $cfg['username'] : rn_pt('LEER'));
             $z[] = sprintf('%-24s: %s', rn_pt('PASSWORT'), rn_maske($cfg['password'], 2));
             $z[] = sprintf('%-24s: %s', rn_pt('LAND'), $cfg['country']);
+            /* 2.1.35: nur die Herkunft der App-Schluessel, nie ein Teil des Werts. */
+            $rn_al = rn_api_schluessel_lage($cfg, rn_api_schluessel_eingebaut());
+            $z[] = sprintf('%-24s: %s', rn_pt('GIGYA_SCHLUESSEL'), rn_pt('HERKUNFT_' . strtoupper($rn_al['gigya'][1])));
+            $z[] = sprintf('%-24s: %s', rn_pt('KAMEREON_SCHLUESSEL'), rn_pt('HERKUNFT_' . strtoupper($rn_al['kamereon'][1])));
             $z[] = sprintf('%-24s: %s', rn_pt('AKTIONSTOKEN'), rn_maske($cfg['aktionstoken'], 4));
             $z[] = sprintf('%-24s: %s', rn_pt('STEUERUNG'),
                 $cfg['steuerung_ein'] === 'Y' ? rn_pt('EIN') : rn_pt('AUS_VORGABE'));

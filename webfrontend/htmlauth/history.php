@@ -54,13 +54,14 @@ if ($rn_ohne !== '') {
 }
 
 require_once __DIR__ . '/logger.php';
-list($gigya_api, $kamereon_api) = rn_api_schluessel();   // api-keys.php (seit 2.1.20 ueber die Bibliothek)
+/* Die Schluessel der Renault-App: seit 2.1.35 unten nach dem Lesen der Konfiguration (rn_api_schluessel($rn_cfg)). */
 
 rn_umzug();
 session_cache_limiter('nocache');
 header('Content-Type: text/plain; charset=utf-8');
 
 $rn_cfg = rn_config_read();
+list($gigya_api, $kamereon_api) = rn_api_schluessel($rn_cfg);   // 2.1.35: eingebaut oder eigener
 if ($rn_cfg['username'] === '' || $rn_cfg['password'] === '') {
     echo "NO CREDENTIALS\n";
     return;

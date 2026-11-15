@@ -253,8 +253,10 @@ pruefe('Vorgabe: Sprachausgabe ab Werk an (2.1.24)', $v['tts_mode'], 'musicserve
 // (2.1.20): + tts_ziele (die Liste der weiteren Ausgabeziele als JSON, leer = keine).
 // 2.1.26: + ansage_tafel_ein, ansage_tafel_namen; 2.1.28: + ansage_homepod_ein, ansage_homepod_geraet.
 // Seit 2.1.26 nicht nachgezogen - der Fall war rot, ohne dass es auffiel (Freigabetor, 08.11.2026).
-pruefe('Vorgabe: 32 + 4 + tts + tts_ziele + 2.1.20 Schluessel', count($v),
-    38 + 5 + 2 + 2 + count(ansage_vorgaben('aus')) + count(rn_neue_schluessel_2120()));     // 2.1.24: + 5 Schluessel der Regeln
+// 2.1.35: + gigya_api_eigen, kamereon_api_eigen (rn_neue_schluessel_2135()).
+pruefe('Vorgabe: 32 + 4 + tts + tts_ziele + 2.1.20 + 2.1.35 Schluessel', count($v),
+    38 + 5 + 2 + 2 + count(ansage_vorgaben('aus')) + count(rn_neue_schluessel_2120())
+    + count(rn_neue_schluessel_2135()));     // 2.1.24: + 5 Schluessel der Regeln
 pruefe('Vorgabe: tts_ziele leer', $v['tts_ziele'], '');
 
 /* 7. Jeder Vorgabewert muss die eigene Wertpruefung bestehen.
@@ -377,6 +379,57 @@ pruefe('2.3: endpunkt_ein ab Werk aus',          $vg['endpunkt_ein'], 'N');
 pruefe('2.2: Befehle ueber MQTT ab Werk aus',    $vg['befehle_mqtt_ein'], 'N');
 pruefe('2.5: Ansage-Modi mit sonos4lox, ohne audioserver',
     in_array('sonos4lox', rn_ansage_modi(), true) && !in_array('audioserver', rn_ansage_modi(), true), true);
+
+/* 2.1.35: Grossbritannien und die eigenen Schluessel der Renault-App (Notbehelf). Die Schluessel hier sind
+ * erfunden; die echten stehen nur in api-keys.php. Zu jedem abgewiesenen Wert ein zugelassener daneben. */
+pruefe('2.1.35: Land GB zulaessig',               rn_wert_pruefen('country', 'GB'), true);
+pruefe('2.1.35: Vorgabe Gigya eigen leer',        $vg['gigya_api_eigen'], '');
+pruefe('2.1.35: Vorgabe Kamereon eigen leer',     $vg['kamereon_api_eigen'], '');
+$rn_k16 = 'Ab3_Cd4-Ef5_Gh6-';
+pruefe('2.1.35: Form 16 Zeichen',                 rn_api_schluessel_form($rn_k16), true);
+pruefe('2.1.35: Form 15 Zeichen abgewiesen',      rn_api_schluessel_form(substr($rn_k16, 0, 15)), false);
+pruefe('2.1.35: Form 128 Zeichen',                rn_api_schluessel_form(str_repeat('a', 128)), true);
+pruefe('2.1.35: Form 129 Zeichen abgewiesen',     rn_api_schluessel_form(str_repeat('a', 129)), false);
+pruefe('2.1.35: Form mit Punkt abgewiesen',       rn_api_schluessel_form($rn_k16 . '.x'), false);
+pruefe('2.1.35: Form mit Leerzeichen abgewiesen', rn_api_schluessel_form($rn_k16 . ' x'), false);
+pruefe('2.1.35: Form mit Zeilenende abgewiesen',  rn_api_schluessel_form($rn_k16 . "\n"), false);
+pruefe('2.1.35: Form mit Umlaut abgewiesen',      rn_api_schluessel_form($rn_k16 . "\xc3\xa4"), false);
+pruefe('2.1.35: Form kein Text abgewiesen',       rn_api_schluessel_form(array($rn_k16)), false);
+pruefe('2.1.35: Wert Gigya leer zulaessig',       rn_wert_pruefen('gigya_api_eigen', ''), true);
+pruefe('2.1.35: Wert Gigya gueltig',              rn_wert_pruefen('gigya_api_eigen', $rn_k16), true);
+pruefe('2.1.35: Wert Gigya mit Anfuehrung',       rn_wert_pruefen('gigya_api_eigen', $rn_k16 . "'"), false);
+pruefe('2.1.35: Wert Kamereon leer zulaessig',    rn_wert_pruefen('kamereon_api_eigen', ''), true);
+pruefe('2.1.35: Wert Kamereon gueltig',           rn_wert_pruefen('kamereon_api_eigen', str_repeat('K', 32)), true);
+pruefe('2.1.35: Wert Kamereon zu kurz',           rn_wert_pruefen('kamereon_api_eigen', 'kurz'), false);
+$rn_ein = array('EINGEBAUT_G_erfunden_0001', 'EINGEBAUT_K_erfunden_0002');
+$rn_l = rn_api_schluessel_lage(array('gigya_api_eigen' => '', 'kamereon_api_eigen' => ''), $rn_ein);
+pruefe('2.1.35: leer -> eingebaut (Gigya)',       $rn_l['gigya'], array($rn_ein[0], 'eingebaut'));
+pruefe('2.1.35: leer -> eingebaut (Kamereon)',    $rn_l['kamereon'], array($rn_ein[1], 'eingebaut'));
+$rn_l = rn_api_schluessel_lage(array(), $rn_ein);
+pruefe('2.1.35: Schluessel fehlt (Aktualisierung) -> eingebaut', array($rn_l['gigya'][1], $rn_l['kamereon'][1]),
+    array('eingebaut', 'eingebaut'));
+$rn_l = rn_api_schluessel_lage(array('gigya_api_eigen' => $rn_k16, 'kamereon_api_eigen' => ''), $rn_ein);
+pruefe('2.1.35: eigener Gigya gilt',              $rn_l['gigya'], array($rn_k16, 'eigen'));
+pruefe('2.1.35: Kamereon bleibt eingebaut',       $rn_l['kamereon'], array($rn_ein[1], 'eingebaut'));
+$rn_l = rn_api_schluessel_lage(array('gigya_api_eigen' => '', 'kamereon_api_eigen' => 'a.b'), $rn_ein);
+pruefe('2.1.35: unbrauchbarer eigener -> keiner', $rn_l['kamereon'], array('', 'ungueltig'));
+$rn_l = rn_api_schluessel_lage(array(), array('', ''));
+pruefe('2.1.35: ohne eingebaute -> fehlt',        array($rn_l['gigya'][1], $rn_l['kamereon'][1]), array('fehlt', 'fehlt'));
+pruefe('2.1.35: Schluessel geaendert',            rn_api_schluessel_geaendert(array('gigya_api_eigen' => ''),
+    array('gigya_api_eigen' => $rn_k16)), true);
+pruefe('2.1.35: Schluessel gleich (fehlt = leer)', rn_api_schluessel_geaendert(array(),
+    array('gigya_api_eigen' => '', 'kamereon_api_eigen' => '')), false);
+pruefe('2.1.35: Konto gleich bei neuem Schluessel', rn_konto_geaendert(array('username' => 'a', 'password' => 'b',
+    'country' => 'GB'), array('username' => 'a', 'password' => 'b', 'country' => 'GB', 'gigya_api_eigen' => $rn_k16)), false);
+$rn_sb = rn_sicherung_beschreibung();
+pruefe('2.1.35: Sicherung - Gigya eigen behalten, wenn er fehlt',
+    isset($rn_sb['schluessel']['gigya_api_eigen']['fehlt']) ? $rn_sb['schluessel']['gigya_api_eigen']['fehlt'] : null, 'behalten');
+pruefe('2.1.35: Sicherung - Kamereon eigen behalten, wenn er fehlt',
+    isset($rn_sb['schluessel']['kamereon_api_eigen']['fehlt']) ? $rn_sb['schluessel']['kamereon_api_eigen']['fehlt'] : null, 'behalten');
+pruefe('2.1.35: Sicherung - eigene Schluessel gehen in die Datei',
+    in_array('gigya_api_eigen', $rn_sb['nie_aus_datei'], true) || in_array('kamereon_api_eigen', $rn_sb['nie_aus_datei'], true), false);
+pruefe('2.1.35: eigene Schluessel sind Geheimnisse (Angebot aus .kaputt)',
+    count(array_intersect(array('gigya_api_eigen', 'kamereon_api_eigen'), rn_kaputt_geheim())), 2);
 
 /* ---- Schlusszeile --------------------------------------------------
  *

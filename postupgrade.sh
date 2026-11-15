@@ -198,6 +198,7 @@ if [ -d "$RETTUNG" ]; then
         mkdir -p "$DATEN" 2>/dev/null
         zurueck=0
         zusammen=0
+        schon=0
         belegt=0
         for f in "$RETTUNG"/database*.csv; do
             [ -f "$f" ] || continue
@@ -209,6 +210,11 @@ if [ -d "$RETTUNG" ]; then
                     echo "<ERROR> $(basename "$f") liess sich nicht zurueckholen."
                     rc=1
                 fi
+            elif head -c "$(wc -c < "$f")" "$ziel" | cmp -s - "$f"; then
+                # 2.1.35: Die Datei beginnt schon mit der geretteten - der gemeinsame Baustein upgrade_daten.sh
+                # (am Anfang von postinstall.sh) hat sie zurueckgespielt. Nicht noch einmal anhaengen: das
+                # Zusammenfuehren unten haette sonst jede Zeile der Ladehistorie verdoppelt.
+                schon=$((schon + 1))
             else
                 tmp="$ziel.tmp.$$"
                 neu_zeilen=$(grep -vc '^Date;' "$ziel")
@@ -266,6 +272,9 @@ if [ -d "$RETTUNG" ]; then
         done
         if [ "$zurueck" -gt 0 ] || [ "$zusammen" -gt 0 ]; then
             echo "<OK> Ladehistorie: $zurueck Datei(en) zurueckgeholt, $zusammen mit den Zeilen aus der Zeit des Updates zusammengefuehrt."
+            [ "$schon" -gt 0 ] && echo "<INFO> Ladehistorie: $schon Datei(en) hatte der gemeinsame Baustein schon zurueckgespielt."
+        elif [ "$schon" -gt 0 ]; then
+            echo "<OK> Ladehistorie: $schon Datei(en) hatte der gemeinsame Baustein schon zurueckgespielt."
         else
             echo "<INFO> Im Rettungsordner lag keine Ladehistorie."
         fi

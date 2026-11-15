@@ -19,11 +19,19 @@
  * DESHALB: diese Datei nicht "aufraeumen". Ein Freigabewerkzeug, das nach
  * "API key" sucht, meldet sie - zu Recht, denn es kann den Unterschied nicht
  * kennen. Ohne die Schluessel gibt es aber keine Anmeldung, und das Plugin
- * ist unbrauchbar. Sie in eine Konfiguration zu verschieben verlagert das
- * Problem nur: dann muesste jeder Anwender zwei Zeichenketten von Hand
- * eintragen, die fuer alle gleich sind.
+ * ist unbrauchbar. Die Regel bleibt: die Schluessel sind EINGEBAUT und stehen
+ * hier, nicht in der Konfiguration - sonst muesste jeder Anwender zwei
+ * Zeichenketten von Hand eintragen, die fuer alle gleich sind.
  *
- * Wenn Renault sie wechselt, wird HIER geaendert - und nur hier.
+ * Wenn Renault sie wechselt, wird HIER geaendert, mit einer neuen Fassung.
+ *
+ * Seit 2.1.35 gibt es dazu einen NOTBEHELF fuer die Zeit, bis diese Fassung
+ * erscheint: im Reiter Einstellungen ("Fortgeschritten") laesst sich je ein
+ * eigener Gigya- und Kamereon-Schluessel eintragen. Er steht dann in
+ * config.php (Rechte 0600) und gilt statt des Schluessels von hier; ab Werk
+ * sind beide Felder leer, und es gilt dieser. Gelesen werden die Schluessel
+ * an einer Stelle, rn_api_schluessel() in rn_lib.php; der Reiter Test sagt,
+ * welcher gerade gilt (nie den Wert).
  */
 
 // Gigya API key (Europe-wide)
