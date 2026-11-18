@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.35 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.36 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,14 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Neu in 2.1.36
+
+- **Verhalten geändert – Einstellungen sichern und zurückspielen mit dem gemeinsamen Sicherungsmodul 1.2.9 statt 1.2.4:**
+  - Jede unbekannte Einstellung wird in der Meldung genau einmal genannt.
+  - Die übrigen Neuerungen der Modulfassungen bis 1.2.9 betreffen Fähigkeiten, die dieses Plugin nicht nutzt; an ihm ändert sich dadurch nichts.
+- **Knopf „Dokumentation“:** `plugin.cfg` nennt jetzt `WEBSITE=` mit diesem Repository; LoxBerry übernimmt die Adresse bei der Installation und zeigt sie in der Plugin-Verwaltung als Knopf.
+- Sicherungen der früheren Fassungen werden weiter angenommen wie bisher; gemessen mit dem Prüfstand auf dem Arbeitsrechner unter PHP 7.4 und 8.4, der über einen Webserver die echten Knöpfe drückt und 3 Vorfassungen zurückspielt. Am Gerät nicht gemessen.
 
 ## Neu in 2.1.35
 
