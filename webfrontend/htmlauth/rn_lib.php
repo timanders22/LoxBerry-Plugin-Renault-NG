@@ -4430,6 +4430,28 @@ function rn_abruf_sperre_nehmen()
 }
 
 /**
+ * Laeuft gerade eine Aktualisierung dieses Plugins? (2.1.37, Frage 48b, Entscheidung des Hausherrn 18.11.2026)
+ *
+ * preupgrade.sh legt data/plugins/<ordner>.upgrade_laeuft (Unixzeit) als Erstes an, postupgrade.sh entfernt sie am
+ * Ende (trap). Dieselbe Regel wie in cron.01min/03min/10min und bb_marke_liegt() der Befehlsbruecke: die Marke gilt,
+ * wenn sie hoechstens 3600 s alt ist; aelter, aus der Zukunft oder unlesbar gilt sie nicht - eine abgebrochene
+ * Aktualisierung legt den Endpunkt nicht fuer immer still. Ist die Uhr ungueltig ($jetzt nur fuer die Selbstpruefung),
+ * gilt eine vorhandene Marke (geschlossen ausfallen). Legt nichts an (rn_paths(false)). Rein lesend.
+ */
+function rn_upgrade_laeuft($jetzt = null)
+{
+    $marke = rn_paths(false)['datadir'] . '.upgrade_laeuft';
+    clearstatcache(true, $marke);
+    if (!is_file($marke)) { return false; }
+    if ($jetzt === null) { $jetzt = time(); }
+    if (!is_int($jetzt) || $jetzt <= 0) { return true; }
+    $t = trim((string) @file_get_contents($marke));
+    if (!preg_match('/^[0-9]{1,12}\z/', $t)) { return false; }
+    $t = (int) $t;
+    return $t <= $jetzt && $jetzt - $t < 3600;
+}
+
+/**
  * Einen abgekoppelten Abruf nur dieses Fahrzeugs anstossen (Bruecke
  * "auffrischen", Vorklimatisierung Versuch 2, Ankunft). Nur bei freier
  * Abrufsperre; die Schale schliesst jede Deskriptor-Nummer > 2, flock -o gibt

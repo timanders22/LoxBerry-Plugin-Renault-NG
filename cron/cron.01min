@@ -30,6 +30,20 @@
 # die Umlenkung 2>>"$ERR" den Befehl ab, BEVOR php startete - kein Takt, keine Spur. Dann geht die Fehlerausgabe
 # nach /dev/null, und der Takt laeuft. Dieser Lauf meldet das und die nicht zu oeffnende Sperre (die bis 2.1.22 still
 # endete) im Protokoll, aber nur in Minute 00: je Minute eine Zeile waeren 1440 am Tag auf der Ramdisk.
+# 2.1.37 (Frage 45, Entscheidung des Hausherrn 18.11.2026): waehrend einer Aktualisierung ruht der Takt.
+# preupgrade.sh legt data/plugins/<ordner>.upgrade_laeuft (Unixzeit) als Erstes an, postupgrade.sh raeumt sie ab.
+# Bis 2.1.36 lief der Takt in der Luecke zwischen purge_installation und postinstall.sh (am Geraet 18.11.2026,
+# 04:36, Auto-Update auf 2.1.36): er legte session, zaehler, haus_fahrzeug.json und keine_daten1.json neu an, und
+# das Zurueckspielen des Datenordners (upgrade_daten.sh) liess deshalb den Stand von vor dem Update liegen. Eine
+# Marke, die 3600 s oder aelter ist oder in der Zukunft liegt, gilt nicht (wie bin/befehlsbruecke.sh): eine
+# abgebrochene Aktualisierung legt den Takt nicht fuer immer still. Der Takt endet hier still, vor jedem Schreiben.
+RN_MARKE="REPLACELBPDATADIR.upgrade_laeuft"
+if [ -f "$RN_MARKE" ]; then
+    rn_jetzt=$(date +%s 2>/dev/null); rn_seit=$(cat "$RN_MARKE" 2>/dev/null)
+    case "$rn_seit" in ''|*[!0-9]*) rn_seit=0 ;; esac
+    case "$rn_jetzt" in ''|*[!0-9]*|0) exit 0 ;; esac
+    if [ "$rn_seit" -le "$rn_jetzt" ] && [ $((rn_jetzt - rn_seit)) -lt 3600 ]; then exit 0; fi
+fi
 LOGV="REPLACELBPLOGDIR"
 ERR="$LOGV/cron.err"
 PROT="$LOGV/renault.log"

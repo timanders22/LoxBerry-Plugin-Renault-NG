@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.36 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.37 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,17 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Neu in 2.1.37
+
+- **Behoben – Laufdateien beim Update verworfen:** Während einer Aktualisierung ruhen jetzt alle drei Takte des Plugins (Minutentakt, Datenabruf alle drei Minuten, Ladehistorie alle zehn Minuten). Bis 2.1.36 lief der Takt in der knappen Minute zwischen dem Löschen der alten Fassung und dem Zurückspielen des Datenordners. Er legte `session`, `zaehler`, `haus_fahrzeug.json` und `keine_daten1.json` neu an, und das Installationsprotokoll meldete, der Stand von vor dem Update sei für diese Dateien verworfen. Gemessen am LoxBerry bei der Auto-Update-Installation von 2.1.36 am 18.11.2026.
+- Seit dieser Fassung kommen diese Dateien mit ihrem Stand von vor dem Update zurück. Die Takte erkennen die laufende Aktualisierung an der Marke, die `preupgrade.sh` anlegt und `postupgrade.sh` wieder entfernt. Ist die Marke eine Stunde oder älter, gilt sie nicht mehr, damit eine abgebrochene Aktualisierung den Abruf nicht dauerhaft stilllegt.
+- Es wirkt schon beim Update auf diese Fassung, denn der Installer legt die Takte der neuen Fassung vor der Lücke an, und das `preupgrade.sh` der neuen Fassung legt die Marke. Gemessen in einer Nachstellung des Update-Ablaufs auf dem Arbeitsrechner (WSL, Takt mit einer Attrappe statt des Abrufs bei Renault); am Gerät nicht gemessen.
+- **Vor dem Sichern auf einen laufenden Abruf warten:** Läuft beim Start einer Aktualisierung gerade ein Datenabruf (Abrufsperre `abruf.lock` im Protokollordner belegt), wartet `preupgrade.sh` jetzt bis zu 60 Sekunden auf sein Ende und sichert erst danach. Das Installationsprotokoll nennt die Wartezeit. Ist der Abruf nach 60 Sekunden nicht beendet, geht die Aktualisierung mit einer Warnung weiter. Bis zum Ende von `preupgrade.sh` bleibt die Sperre gehalten; ein neuer Abruf beginnt in dieser Zeit nicht. Bis 2.1.36 konnte ein laufender Abruf während des Sicherns weiter in den Datenordner schreiben.
+- **Endpunkt während einer Aktualisierung:** Solange die Marke liegt, weist der HTTP-Endpunkt jeden Befehl und jeden Abruf (`aktion=…`) mit HTTP 503 und der Zeile `RENAULT;OK=0;ERR=UPDATE_LAEUFT` samt dem Hinweis „Update läuft“ ab und führt nichts aus. Der Selbsttest (`?selftest=1`) bleibt erreichbar. Bis 2.1.36 lief ein Abruf über den Endpunkt auch während der Aktualisierung, und in der Lücke ohne Konfiguration lautete die Antwort „Kein Aktionstoken eingerichtet“. Für die Marke gilt dieselbe Stundengrenze wie bei den Takten. Beim Update auf diese Fassung greift die Abweisung erst, sobald die neuen Dateien installiert sind; während `preupgrade.sh` antwortet noch der Endpunkt der bisherigen Fassung.
+- Beides gemessen in einer Nachstellung des Update-Ablaufs auf dem Arbeitsrechner (WSL, PHP 8.3, laufender Abruf durch eine gehaltene Sperre von 8 und 90 Sekunden nachgebildet, Endpunkt über den eingebauten PHP-Webserver); am Gerät nicht gemessen.
+- **Einstellungen sichern und zurückspielen mit dem gemeinsamen Sicherungsmodul 1.2.11 statt 1.2.9:** Neu in 1.2.10 ist, dass ein leerer Wert auch in einem Teil der Sicherung, der nur aus einem einzelnen Wert besteht (etwa einem Zugangsschlüssel in einer eigenen Datei), einen gesetzten Wert nicht mehr überschreibt; er bleibt stehen und wird in der Meldung genannt. Dieses Plugin führt keinen solchen Teil; an seinem Verhalten ändert sich dadurch nichts. Gemessen mit dem Prüfstand auf dem Arbeitsrechner unter PHP 7.4 und 8.4 (3 Vorfassungen zurückgespielt). Am Gerät nicht gemessen.
+- **Sicherungsmodul 1.2.11:** Wandelt ein Plugin beim Zurückspielen eine Sicherung aus einer Textdatei um, sagt die Meldung das jetzt mit einem gemeinsamen Satz, und Mängel darin werden in allen Plugins mit denselben Bezeichnungen genannt. Dieses Plugin wandelt keine Textdateien um; an seinem Verhalten ändert sich dadurch nichts. Gemessen mit dem Prüfstand auf dem Arbeitsrechner unter PHP 7.4 und 8.4. Am Gerät nicht gemessen.
 
 ## Neu in 2.1.36
 

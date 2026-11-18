@@ -218,6 +218,25 @@ if (!empty($_GET['selftest'])) {
        . ';ENDPUNKT=' . ((string) $rn_lauf_cfg['endpunkt_ein'] === 'Y' ? 'EIN' : 'AUS'), 'INFO', 'Selbsttest beantwortet');
 }
 
+/* ------------------- Aktualisierung laeuft (2.1.37, Frage 48b) -------------------
+ *
+ * Entscheidung des Hausherrn 18.11.2026: solange die Upgrade-Marke liegt (rn_upgrade_laeuft(), Regel wie im Takt:
+ * hoechstens 3600 s alt), weist der Endpunkt jeden ausloesenden Aufruf mit HTTP 503 ab, bevor er etwas liest oder
+ * schreibt. Ausloesend ist hier jeder Aufruf ausser ?selftest - auch aktion=abruf: er meldet sich bei Renault an und
+ * schreibt session und Abrufdateien in den Datenordner, genau das, was der Takt in der Luecke am Geraet tat
+ * (18.11.2026). Der Selbsttest oben bleibt offen (abfragend, schreibt nichts). Die Pruefung steht VOR der
+ * Tokenpruefung: in der Luecke fehlt die Konfiguration (purge_installation), und der Aufrufer bekaeme sonst die
+ * irrefuehrende Antwort "Kein Aktionstoken eingerichtet". Ausgefuehrt wird ohne Token weiterhin nichts. */
+if (rn_upgrade_laeuft()) {
+    $rn_upd_text = rn_t('MELDUNG.UPDATE_LAEUFT');
+    if ($rn_upd_text === 'MELDUNG.UPDATE_LAEUFT' || $rn_upd_text === '') {
+        $rn_upd_text = 'Update laeuft / update in progress';   // Sprachdatei in der Luecke nicht lesbar
+    }
+    header('Retry-After: 120');
+    rn_ende(503, 'RENAULT;OK=0;ERR=UPDATE_LAEUFT' . "\n" . $rn_upd_text, 'INFO',
+            'abgewiesen - eine Aktualisierung des Plugins laeuft (Upgrade-Marke)');
+}
+
 /* ---------------------------- Token ---------------------------- */
 if ($soll === '') {
     rn_ende(403, 'Kein Aktionstoken eingerichtet. Die Bedienoberflaeche des '

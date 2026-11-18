@@ -97,6 +97,44 @@ else
     exit 2
 fi
 
+# ===================================================================
+# 0a. AUF EINEN LAUFENDEN ABRUF WARTEN (2.1.37, Frage 48a, Entscheidung des Hausherrn 18.11.2026)
+# ===================================================================
+# Die Abrufsperre log/plugins/<ordner>/abruf.lock teilen cron.03min, cron.10min, der Endpunkt
+# (aktion=abruf) und der vom Minutentakt angestossene Abruf (flock -n -o). Gemessen in WSL
+# (util-linux 2.39.3): die Datei entsteht beim ersten Lauf (exec 9>, 0 Byte) und bleibt danach
+# liegen - "ein Abruf laeuft" heisst "die Sperre ist gehalten", nicht "die Datei ist da". Ein
+# Abruf, der beim Start dieses Skripts schon laeuft, schriebe sonst waehrend des Sicherens weiter
+# in den Datenordner. Deshalb: bis zu RN_SPERRE_WARTEN Sekunden auf die Sperre warten, dann
+# weiter und melden. Geoeffnet wird lesend (<): eine fehlende Sperrdatei wird nicht angelegt.
+# Die Sperre bleibt bis zum Ende dieses Skripts gehalten (Deskriptor 7): ein Takt der BISHERIGEN
+# Fassung (der die Marke noch nicht kennt) und ein Endpunkt-Abruf enden in dieser Zeit an ihrer
+# Sperre (flock -n), statt waehrend des Sicherens zu schreiben. Kinder, die laenger leben
+# koennten, bekommen den Deskriptor nicht (7<&- unten bei der Befehlsbruecke).
+RN_SPERRE="${PROT}/abruf.lock"
+RN_SPERRE_WARTEN=60
+if [ ! -f "$RN_SPERRE" ]; then
+    echo "<INFO> Abrufsperre $RN_SPERRE nicht vorhanden - es lief noch kein Abruf, es wird nicht gewartet."
+elif ! command -v flock >/dev/null 2>&1; then
+    echo "<WARNING> Das Programm flock fehlt - ob gerade ein Abruf laeuft, liess sich nicht pruefen; es wird nicht gewartet."
+    rc=1
+elif ! { exec 7<"$RN_SPERRE"; } 2>/dev/null; then
+    echo "<WARNING> Die Abrufsperre $RN_SPERRE liess sich nicht oeffnen - ob gerade ein Abruf laeuft, liess sich nicht pruefen; es wird nicht gewartet."
+    rc=1
+elif flock -n 7; then
+    echo "<INFO> Kein Abruf laeuft (Abrufsperre frei) - es wird sofort gesichert."
+else
+    rn_warte_ab=$(date +%s 2>/dev/null)
+    echo "<INFO> Ein Abruf laeuft gerade (Abrufsperre $RN_SPERRE belegt) - es wird bis zu $RN_SPERRE_WARTEN s auf sein Ende gewartet."
+    if flock -w "$RN_SPERRE_WARTEN" 7; then
+        echo "<OK> Der laufende Abruf ist beendet (nach $(( $(date +%s 2>/dev/null) - rn_warte_ab )) s gewartet) - es wird gesichert."
+    else
+        echo "<WARNING> Der laufende Abruf war nach $RN_SPERRE_WARTEN s nicht beendet. Die Aktualisierung geht trotzdem weiter;"
+        echo "<WARNING> was er nach dem Sichern noch in den Datenordner schreibt, ist im Stand nach dem Update nicht enthalten."
+        rc=1
+    fi
+fi
+
 # Hat eine Konfigurationsdatei INHALT? Rueckgabe 0 ja, 1 nein, 2 nicht pruefbar.
 # $1 ist die Datei, $2 (wahlweise) die Zweitschrift, gegen die "ohne Token"
 # gemessen wird.
@@ -172,7 +210,7 @@ rn_sicherung_gescheitert() {
 BBSH="REPLACELBPBINDIR/befehlsbruecke.sh"
 case "$BBSH" in
     /?*) if [ -f "$BBSH" ]; then
-             echo "<INFO> Befehlsbruecke: $(timeout 40 bash "$BBSH" stop 2>&1 | head -n 1)"
+             echo "<INFO> Befehlsbruecke: $(timeout 40 bash "$BBSH" stop 7<&- 2>&1 | head -n 1)"
          else
              echo "<INFO> Befehlsbruecke: noch nicht installiert - nichts anzuhalten."
          fi ;;
