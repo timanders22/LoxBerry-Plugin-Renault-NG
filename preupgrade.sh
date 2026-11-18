@@ -135,6 +135,43 @@ else
     fi
 fi
 
+# ===================================================================
+# 0a2. AUF EINEN LAUFENDEN MINUTENTAKT WARTEN (2.1.38, Frage 63, Entscheidung des Hausherrn 18.11.2026)
+# ===================================================================
+# Die Taktsperre log/plugins/<ordner>/takt.lock haelt cron.01min fuer die Dauer eines Laufs (exec 8>,
+# flock -n 8). Am Geraet gemessen (18.11.2026): der Minutentakt schreibt bei jedem Lauf zaehler und
+# beruehrt befehle/; zaehler war eine der vier Dateien, die beim Update auf 2.1.36 verloren gingen. Die
+# Marke (Abschnitt 0) haelt nur Takte an, die nach ihr beginnen; ein Takt, der beim Start dieses
+# Skripts schon laeuft, schriebe sonst nach dem Sichern weiter. Bauart wie Abschnitt 0a: bis zu
+# RN_TAKT_WARTEN Sekunden auf die Sperre warten, dann weiter und melden. Geoeffnet wird lesend (<):
+# eine fehlende Sperrdatei wird nicht angelegt. Die Sperre bleibt bis zum Ende dieses Skripts gehalten
+# (Deskriptor 6): ein Takt der BISHERIGEN Fassung endet in dieser Zeit an seiner Sperre (flock -n 8),
+# statt waehrend des Sicherens zu schreiben. Kinder, die laenger leben koennten, bekommen den
+# Deskriptor nicht (6<&- unten bei der Befehlsbruecke).
+RN_TAKT="${PROT}/takt.lock"
+RN_TAKT_WARTEN=60
+if [ ! -f "$RN_TAKT" ]; then
+    echo "<INFO> Taktsperre $RN_TAKT nicht vorhanden - es lief noch kein Minutentakt, es wird nicht gewartet."
+elif ! command -v flock >/dev/null 2>&1; then
+    echo "<WARNING> Das Programm flock fehlt - ob gerade ein Minutentakt laeuft, liess sich nicht pruefen; es wird nicht gewartet."
+    rc=1
+elif ! { exec 6<"$RN_TAKT"; } 2>/dev/null; then
+    echo "<WARNING> Die Taktsperre $RN_TAKT liess sich nicht oeffnen - ob gerade ein Minutentakt laeuft, liess sich nicht pruefen; es wird nicht gewartet."
+    rc=1
+elif flock -n 6; then
+    echo "<INFO> Kein Minutentakt laeuft (Taktsperre frei) - es wird sofort gesichert."
+else
+    rn_warte_ab=$(date +%s 2>/dev/null)
+    echo "<INFO> Ein Minutentakt laeuft gerade (Taktsperre $RN_TAKT belegt) - es wird bis zu $RN_TAKT_WARTEN s auf sein Ende gewartet."
+    if flock -w "$RN_TAKT_WARTEN" 6; then
+        echo "<OK> Der laufende Minutentakt ist beendet (nach $(( $(date +%s 2>/dev/null) - rn_warte_ab )) s gewartet) - es wird gesichert."
+    else
+        echo "<WARNING> Der laufende Minutentakt war nach $RN_TAKT_WARTEN s nicht beendet. Die Aktualisierung geht trotzdem weiter;"
+        echo "<WARNING> was er nach dem Sichern noch in den Datenordner schreibt, ist im Stand nach dem Update nicht enthalten."
+        rc=1
+    fi
+fi
+
 # Hat eine Konfigurationsdatei INHALT? Rueckgabe 0 ja, 1 nein, 2 nicht pruefbar.
 # $1 ist die Datei, $2 (wahlweise) die Zweitschrift, gegen die "ohne Token"
 # gemessen wird.
@@ -210,7 +247,7 @@ rn_sicherung_gescheitert() {
 BBSH="REPLACELBPBINDIR/befehlsbruecke.sh"
 case "$BBSH" in
     /?*) if [ -f "$BBSH" ]; then
-             echo "<INFO> Befehlsbruecke: $(timeout 40 bash "$BBSH" stop 7<&- 2>&1 | head -n 1)"
+             echo "<INFO> Befehlsbruecke: $(timeout 40 bash "$BBSH" stop 6<&- 7<&- 2>&1 | head -n 1)"
          else
              echo "<INFO> Befehlsbruecke: noch nicht installiert - nichts anzuhalten."
          fi ;;
