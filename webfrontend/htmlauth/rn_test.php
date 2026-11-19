@@ -433,6 +433,10 @@ function rn_test_selbstpruefung($cfg, $broker, $voll = true)
      * Reiter Test der offene ist (selftest=1, spricht nicht); der Music Server nie. */
     $z[] = rn_ansage_zeile($cfg, $voll);
 
+    /* Gemeinsames Uhrmodul (Frage 95): Systemuhr gegen die Kopfzeile Date der Cloud - nur melden (null = Punkt). */
+    list($uhr_s, $uhr_t) = uhr_pruefzeile(array('ordner' => $p['datadir'], 'dienst' => 'Renault', 't' => 'rn_t'));
+    $z[] = array(uhr_frage(array('t' => 'rn_t')), $uhr_s === 1 ? true : null, $uhr_t, $uhr_s);
+
     return $z;
 }
 

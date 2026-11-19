@@ -2111,7 +2111,8 @@ require_once __DIR__ . '/rn_test.php';
  *   'info' Auskunft - hier wird nichts geprueft (seit 2.1.13, Befund U11) */
 $rn_striche = 0;
 foreach (rn_test_selbstpruefung($rn_cfg, $rn_broker, $rn_tab === 'tab-test') as $rn_z) {
-    if ($rn_z[1] === 'info') { $rn_zeichen = '&#8505; '; }
+    if (isset($rn_z[3])) { $rn_zeichen = uhr_zeichen($rn_z[3]) . ' '; if ($rn_z[1] === null) { $rn_striche++; } }   // Uhrmodul (Frage 95)
+    elseif ($rn_z[1] === 'info') { $rn_zeichen = '&#8505; '; }
     elseif ($rn_z[1] === null) { $rn_zeichen = '&#9679; '; $rn_striche++; }
     elseif ($rn_z[1])      { $rn_zeichen = '&#10004; '; }
     else                   { $rn_zeichen = '&#10008; '; }

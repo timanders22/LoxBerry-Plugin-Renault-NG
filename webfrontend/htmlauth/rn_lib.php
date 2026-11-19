@@ -58,6 +58,7 @@ require_once __DIR__ . '/sprachausgabe.php';
  * anderen Linien. Liegt neben dieser Datei; die Beschreibung dieser Linie steht in
  * rn_sicherung_beschreibung(). */
 require_once __DIR__ . '/sicherung.php';
+require_once __DIR__ . '/uhrabgleich.php';   // gemeinsames Uhrmodul (Frage 95), Abschrift von Werkzeuge/gemeinsam/uhrabgleich.php
 
 function rn_lbhome()
 {
@@ -3915,7 +3916,10 @@ if (!function_exists('rn_http_senden')) {
             curl_setopt($ch, CURLOPT_POST, true);
             curl_setopt($ch, CURLOPT_POSTFIELDS, $rumpf === null ? '' : $rumpf);
         }
+        $uhr_datum = 0;   // Uhrmodul (Frage 95)
+        curl_setopt($ch, CURLOPT_HEADERFUNCTION, uhr_kopf_rueckruf($uhr_datum));
         $antwort = curl_exec($ch);
+        uhr_merken(rn_paths()['datadir'], $uhr_datum, (int) round(1000 * (float) curl_getinfo($ch, CURLINFO_TOTAL_TIME)), (string) parse_url($url, PHP_URL_HOST));
         $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $fehler = ($antwort === false) ? (string) curl_error($ch) : '';
         $dauer = (float) curl_getinfo($ch, CURLINFO_TOTAL_TIME);

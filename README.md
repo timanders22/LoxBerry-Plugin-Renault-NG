@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.38 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.39 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,10 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Neu in 2.1.39
+
+- **Neu – Prüfzeile „Ist die Systemuhr synchron?“ (gemeinsames Uhrmodul):** Der Reiter „Test“ vergleicht die Systemuhr des LoxBerry mit der Kopfzeile Date der Antworten von den Renault-Diensten (Gigya, Kamereon) und meldet nur: Haken bis 30 s Abweichung, gelber Punkt darüber, ohne Messung „nicht feststellbar“. `timedatectl` steht nur als Hinweis dabei. Die letzte Abweichung liegt in `data/plugins/renault_ng/uhr.json`; dafür liest das Plugin bei den Abrufe über curl die Kopfzeile Date mit, am Abruf selbst ändert sich nichts. Ob eine falsche Uhr die Anmeldung bricht, ist nicht gemessen. Gemessen auf dem Arbeitsrechner: Selbsttest des Moduls unter PHP 7.4, 8.4 und 8.5 und mit Python, Kreuzprobe PHP/Python, Syntax aller geänderten Dateien; die Messung gegen die echte Cloud und am Gerät ist nicht gemessen.
 
 ## Neu in 2.1.38
 
