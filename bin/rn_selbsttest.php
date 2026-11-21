@@ -146,6 +146,18 @@ $kdf = array('eingerichtet' => true, 'rechte' => '0600', 'zaehler_alter_s' => 10
 pruefe('KD: Healthcheck nur Hinweis', rn_gesund_urteil($kdf + array('erfolg_alter_s' => array('A' => -1), 'keine_daten' => array('A' => true)))[0], 6);
 pruefe('KD: Healthcheck ohne Zustand', rn_gesund_urteil($kdf + array('erfolg_alter_s' => array('A' => 7200)))[0], 3);
 pruefe('KD: Hinweis verdraengt keine Warnung', rn_gesund_urteil(array('rechte' => '0644') + $kdf + array('erfolg_alter_s' => array('A' => -1), 'keine_daten' => array('A' => true)))[0], 4);
+/* 2.1.40: Zustand "Datenschutzmodus im Fahrzeug" (am Geraet 21.11.2026: battery-status 403 FUNCTIONAL err.func.privacy.on) */
+$ds403 = '{"type":"FUNCTIONAL","messages":[{"code":"err.func.privacy.on","message":"Privacy mode currently ON"}],"errors":[]}';
+pruefe('DS: 403 privacy erkannt',             rn_ist_datenschutz(403, $ds403), true);
+pruefe('DS: 401 mit privacy nicht',           rn_ist_datenschutz(401, $ds403), false);
+pruefe('DS: 403 ohne FUNCTIONAL nicht',       rn_ist_datenschutz(403, '{"type":"TECHNICAL","messages":[{"code":"err.func.privacy.on"}]}'), false);
+pruefe('DS: 403 anderer err.func-Code nicht', rn_ist_datenschutz(403, '{"type":"FUNCTIONAL","messages":[{"code":"err.func.wired.forbidden"}]}'), false);
+pruefe('DS: keine Antwort nicht',             rn_ist_datenschutz(0, false), false);
+list($z, $e) = rn_ds_schritt(array(), 'privat', $t0);      pruefe('DS: erste Antwort: Wechsel', array($z['aktiv'], $e), array(1, 'wechsel'));
+list($z, $e) = rn_ds_schritt($z, 'privat', $t0 + 300);     pruefe('DS: danach still', array($z['aktiv'], $e), array(1, ''));
+list($z2, $e) = rn_ds_schritt($z, 'anders', $t0 + 400);    pruefe('DS: 401/500 aendert nichts', array($z2['aktiv'], $e), array(1, ''));
+list($z, $e) = rn_ds_schritt($z, 'daten', $t0 + 600);      pruefe('DS: Daten: zurueck', array($z['aktiv'], $e), array(0, 'zurueck'));
+pruefe('DS: Healthcheck nur Hinweis', rn_gesund_urteil($kdf + array('erfolg_alter_s' => array('A' => 7200), 'datenschutz' => array('A' => true)))[0], 6);
 pruefe('Wert: Geraet mit Apostroph',   rn_wert_pruefen('tts_google_geraet', "Max's Zimmer"), true);
 pruefe('Wert: Raum mit Apostroph',     rn_wert_pruefen('tts_sonox_raum', "Max's Zimmer"), true);
 pruefe('Wert: Name mit Apostroph',     rn_wert_pruefen('zoename', "Max's"), false);

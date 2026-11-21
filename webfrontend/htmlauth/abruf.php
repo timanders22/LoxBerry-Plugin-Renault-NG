@@ -444,23 +444,29 @@ foreach ($rn_mit_vin as $rn_f) {
     /* 2.1.23: Zustand "keine Fahrzeugdaten" (rn_kd_schritt() in rn_lib.php). Nur das 404 notFound wird still. */
     $rn_kd = rn_kd_lesen($rn_f);
     rn_antwort_leise(!empty($rn_kd['aktiv']));
+    rn_antwort_leise_ds(true);     // 2.1.40: die Datenschutz-Antwort schreibt keine eigene Zeile (rn_ist_datenschutz())
     list($rn_code, $rn_d, $rn_rohantwort) = rn_get(
         rn_kca($rn_konto, $rn_vin, 'battery-status', $rn_land, 'v2'),
         $kamereon_api, $rn_jwt, 'Batterie-Status ' . $rn_name . ' (battery-status)');
+    rn_antwort_leise_ds(false);
     rn_antwort_leise(false);
+    /* 2.1.40: 'privat' = HTTP 403 FUNCTIONAL err.func.privacy.on, Datenschutzmodus im Fahrzeug (rn_ist_datenschutz()). */
     $rn_kd_art = isset($rn_d['data']['attributes']) ? 'daten'
-        : (rn_ist_keine_daten($rn_code, $rn_rohantwort) ? 'notfound' : 'anders');
+        : (rn_ist_keine_daten($rn_code, $rn_rohantwort) ? 'notfound'
+        : (rn_ist_datenschutz($rn_code, $rn_rohantwort) ? 'privat' : 'anders'));
     $rn_kd_leise = !empty($rn_kd['aktiv']) && $rn_kd_art === 'notfound';
 
     if (!isset($rn_d['data']['attributes'])) {
-        if (!$rn_kd_leise) {
+        if (!$rn_kd_leise && $rn_kd_art !== 'privat') {
             renault_log('ERROR', 'Batterie-Status ' . $rn_name . ': keine Daten (HTTP ' . $rn_code
                 . '). Antwort: ' . substr(preg_replace('/\s+/', ' ', $rn_rohantwort), 0, 400));
         }
         /* 401/403: das Token ist ungueltig geworden (etwa nach einem
          * Passwortwechsel bei Renault). Bis 2.0.6 wurde erst um Mitternacht
          * neu angemeldet - das Plugin stand also bis zum Tageswechsel. */
-        if ($rn_code === 401 || $rn_code === 403) {
+        /* 2.1.40: nicht im Datenschutzmodus des Fahrzeugs - die Anmeldung ist dann gueltig. Am Geraet (21.11.2026)
+         * wurde sie bis 2.1.39 in jedem Lauf verworfen und neu geholt, und die Ladehistorie fiel aus. */
+        if (($rn_code === 401 || $rn_code === 403) && $rn_kd_art !== 'privat') {
             /* V1 (Gruppe 40, T2-2/F1): das Konto wird neu ermittelt - aber
              * hoechstens einmal je Stunde (RN_KONTO_NEU_S), kein persons-Abruf
              * je 3-min-Lauf. Bis 2.1.19 blieb die Konto-Kennung fuer immer. */
@@ -650,6 +656,17 @@ foreach ($rn_mit_vin as $rn_f) {
             . date('d.m. H:i', (int) $rn_kd_alt['seit']) . '). Abruf und Ladehistorie wieder im normalen Takt.');
     }
 
+    /* ---- 2.1.40: Zustand "Datenschutzmodus im Fahrzeug" fortschreiben (rn_ds_schritt() in rn_lib.php) ----
+     * Eine Zeile beim Eintritt, eine beim Ende; dazwischen still. */
+    $rn_ds_alt = rn_ds_lesen($rn_f);
+    list($rn_ds, $rn_ds_ereignis) = rn_ds_schritt($rn_ds_alt, $rn_kd_art, time());
+    if ($rn_ds_ereignis !== '' || $rn_kd_art === 'privat') { rn_ds_schreiben($rn_f, $rn_ds); }
+    if ($rn_ds_ereignis === 'wechsel') {
+        renault_log('WARN', rn_ds_satz_an($rn_name, 'battery-status'));
+    } elseif ($rn_ds_ereignis === 'zurueck') {
+        renault_log('INFO', rn_ds_satz_aus($rn_name, $rn_ds_alt));
+    }
+
     /* ---- Vorklimatisierung: Zustand und Temperaturen ----
      *
      * hvac-status liefert neben hvacStatus auch externalTemperature und bei
@@ -789,8 +806,9 @@ foreach ($rn_mit_vin as $rn_f) {
      * des Ergebnisses - nie der Text, nie ein Token. Ein Fehler hier haelt den Abruf
      * nicht auf. */
     try {
-        /* 2.1.23: das 404 notFound zaehlt nicht als Ausfall - keine Ansage dafuer (rn_kd_schritt()). */
-        foreach (($rn_kd_art === 'notfound' ? array() : rn_ansage_lauf($rn_cfg, $rn_f, $rn_erfolg, $rn_s)) as $rn_an) {
+        /* 2.1.23: das 404 notFound zaehlt nicht als Ausfall - keine Ansage dafuer (rn_kd_schritt()). 2.1.40: der
+         * Datenschutzmodus im Fahrzeug ebenso (rn_ds_schritt()). */
+        foreach (($rn_kd_art === 'notfound' || $rn_kd_art === 'privat' ? array() : rn_ansage_lauf($rn_cfg, $rn_f, $rn_erfolg, $rn_s)) as $rn_an) {
             renault_log($rn_an['stufe'], 'Ansage ' . $rn_an['anlass'] . ' (Fahrzeug ' . (int) $rn_f['nr']
                 . '): ' . $rn_an['kurz']);
         }

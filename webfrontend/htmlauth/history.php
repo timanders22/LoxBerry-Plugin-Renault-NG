@@ -137,12 +137,25 @@ foreach (rn_fahrzeuge($rn_cfg) as $rn_f) {
             . '&start=' . $rn_von . '&end=' . $rn_bis;
 
     /* Ueber die Nahtstelle rn_http_senden() (seit 2.1.20, Bauvorschrift 1.0). */
+    rn_antwort_leise_ds(true);     // 2.1.40: die Datenschutz-Antwort schreibt keine eigene Zeile (rn_ist_datenschutz())
     list($rn_code, , $rn_r) = rn_get($rn_url, $kamereon_api, $rn_jwt, 'Ladehistorie ' . $rn_name . ' (charges)');
+    rn_antwort_leise_ds(false);
     if ((int) $rn_code === 0 && (string) $rn_r === '') { $rn_r = false; }
 
     if ($rn_r === FALSE) {
         renault_log('ERROR', 'Ladehistorie ' . $rn_name . ': keine Antwort (Zeitueberschreitung oder Netzfehler).');
         echo $rn_name . ";OK=0\n";
+        continue;
+    }
+    /* 2.1.40: Datenschutzmodus im Fahrzeug (HTTP 403 FUNCTIONAL err.func.privacy.on, rn_ist_datenschutz()) - ein
+     * Zustand, keine Stoerung: eine Zeile beim Eintritt (gemeinsam mit abruf.php, rn_ds_schritt()), sonst still; die
+     * Anmeldung bleibt. Das Ende stellt nur battery-status fest (abruf.php). */
+    if (rn_ist_datenschutz($rn_code, $rn_r)) {
+        $rn_ds_alt = rn_ds_lesen($rn_f);
+        list($rn_ds, $rn_ds_ereignis) = rn_ds_schritt($rn_ds_alt, 'privat', time());
+        rn_ds_schreiben($rn_f, $rn_ds);
+        if ($rn_ds_ereignis === 'wechsel') { renault_log('WARN', rn_ds_satz_an($rn_name, 'charges (Ladehistorie)')); }
+        echo $rn_name . ";PRIVACY\n";
         continue;
     }
     $rn_d = json_decode($rn_r, TRUE);

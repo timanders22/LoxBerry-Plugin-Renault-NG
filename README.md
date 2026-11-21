@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.39 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.40 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,11 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Neu in 2.1.40
+
+- **Behoben – Datenschutzmodus im Fahrzeug statt Neuanmeldung:** Ist im Fahrzeug der Datenschutzmodus eingeschaltet, antwortet Renault auf die Abfrage des Batteriestands mit HTTP 403 und dem Code `err.func.privacy.on` („Privacy mode currently ON“; am Gerät gemessen am 21.11.2026). Bis 2.1.39 hielt das Plugin jede 403 für eine abgewiesene Anmeldung: Es verwarf die Anmeldung, meldete sich beim nächsten Lauf neu bei Renault an, und die Ladehistorie fiel bis dahin mit „noch keine gültige Anmeldung“ aus – in jedem Lauf aufs Neue, mit ERROR- und WARN-Zeilen im Protokoll. Jetzt bleibt die Anmeldung gültig, und das Plugin führt je Fahrzeug den Zustand „Datenschutzmodus im Fahrzeug eingeschaltet“: eine WARN-Zeile beim Eintritt mit der Abhilfe (den Datenschutzmodus im Fahrzeug bzw. in der My-Renault-App ausschalten), eine INFO-Zeile, sobald wieder Batteriedaten kommen, dazwischen keine Zeile. Kopf und Reiter „Test“ zeigen den Zustand mit derselben Abhilfe, der Healthcheck als Hinweis. Abruf und Ladehistorie laufen im gewohnten Takt weiter; antwortet auch die Ladehistorie mit dieser 403, gilt das ebenso als Zustand. `ok` bleibt 0, unter `haus/fahrzeug/<name>/…` steht der Strich; Mail, SignalBot und Ansage gibt es dafür nicht. Ein eigenes MQTT-Thema für den Zustand gibt es nicht, weil das Plugin auch sonst keine Fehlergründe über MQTT veröffentlicht. Erkannt wird nur genau diese Form (403, `type` FUNCTIONAL, Code `err.func.privacy.on`); jede andere 401 oder 403 – auch eine mit anderem `err.func.…`-Code wie `err.func.wired.forbidden` – verwirft die Anmeldung wie bisher. Gemessen mit nachgebildeten Renault-Antworten unter PHP 7.4 und 8.4 (abruf.php und history.php laufen wirklich); an der echten Cloud und am Gerät nicht gemessen.
+- Die Kopfzeile zeigt jetzt die installierte Fassung, einheitlich in allen Plugins.
 
 ## Neu in 2.1.39
 

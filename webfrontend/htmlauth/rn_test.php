@@ -153,6 +153,12 @@ function rn_test_selbstpruefung($cfg, $broker, $voll = true)
             $z[] = array(sprintf(rn_t('TEXT.KOPF_KEINE_DATEN'), $f['name']), 'info', sprintf(rn_t('TEXT.KEINE_DATEN_HINWEIS'), RN_KD_TAKT_MIN));
         }
     }
+    /* 2.1.40: Zustand "Datenschutzmodus im Fahrzeug" - ein Hinweis mit der Abhilfe. */
+    foreach ($autos as $f) {
+        if ((string) $f['vin'] !== '' && rn_datenschutz_aktiv($f)) {
+            $z[] = array(sprintf(rn_t('TEXT.KOPF_DATENSCHUTZ'), $f['name']), 'info', rn_t('TEXT.DATENSCHUTZ_HINWEIS'));
+        }
+    }
     /* Befehlsbruecke: Lebenszeichen, letzte Quittung (2.2). */
     list($bl, $bt) = rn_bruecke_lage();
     $z[] = array(rn_t('PRUEF.BRUECKE'), $bl === null ? 'info' : $bl, $bt);

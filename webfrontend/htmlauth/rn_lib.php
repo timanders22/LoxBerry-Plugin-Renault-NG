@@ -4031,6 +4031,7 @@ function rn_antwort_protokoll($name, array $erg)
 {
     if ($name === '') { return; }
     if (rn_antwort_leise() && rn_ist_keine_daten($erg[0], $erg[1])) { return; }     // 2.1.23: Zustand keine Fahrzeugdaten
+    if (rn_antwort_leise_ds() && rn_ist_datenschutz($erg[0], $erg[1])) { return; }  // 2.1.40: Datenschutzmodus im Fahrzeug
     if (function_exists('renault_log_api')) {
         renault_log_api($name, $erg);
         return;
@@ -6241,7 +6242,7 @@ function rn_hf_takt(array $cfg, $jetzt = null)
         list($name, $f) = $e;
         $stamm = 'haus/fahrzeug/' . $name;
         $v = isset($alt[(string) $nr]) && is_array($alt[(string) $nr]) ? $alt[(string) $nr] : array();
-        $werte = rn_hf_werte($cfg, $f, rn_hf_session($f), rn_keine_daten_aktiv($f), $jetzt);
+        $werte = rn_hf_werte($cfg, $f, rn_hf_session($f), rn_keine_daten_aktiv($f) || rn_datenschutz_aktiv($f), $jetzt);
         $voll = !isset($v['stamm'], $v['zeit'], $v['werte']) || $v['stamm'] !== $stamm || !is_array($v['werte']) || $jetzt - (int) $v['zeit'] > RN_HF_VOLL_S;
         foreach ($werte as $n => $w) {
             if ($voll || !isset($v['werte'][$n]) || (string) $v['werte'][$n] !== $w) { $nachrichten[] = array($stamm . '/' . $n, $w, 1); }
@@ -6331,7 +6332,7 @@ function rn_kabel_takt(array $cfg, $jetzt = null)
         $f = $e[1];
         $s = rn_hf_session($f);
         $m = isset($alt[(string) $nr]) && is_array($alt[(string) $nr]) ? $alt[(string) $nr] : array();
-        $w = rn_hf_werte($cfg, $f, $s, rn_keine_daten_aktiv($f), $jetzt);
+        $w = rn_hf_werte($cfg, $f, $s, rn_keine_daten_aktiv($f) || rn_datenschutz_aktiv($f), $jetzt);
         list($faellig, $mn) = rn_kabel_entscheiden($w, $m, $cfg, $in, rn_hf_alter($s, $jetzt), $nacht, $bis, $jetzt);
         $neu[(string) $nr] = $mn;
         if (!$faellig) { continue; }
@@ -6702,6 +6703,108 @@ function rn_kd_satz($name, array $z, $im_konto, $cockpit)
         . 'Abruf laeuft alle ' . RN_KD_TAKT_MIN . ' min weiter, Ladehistorie ruht; hoechstens eine Zeile je Tag.';
 }
 
+/* ---------------- 2.1.40: Zustand "Datenschutzmodus im Fahrzeug" ----------------
+ *
+ * Am Geraet (Twingo, 21.11.2026, renault.log): battery-status antwortet mit HTTP 403 und
+ * {"type":"FUNCTIONAL","messages":[{"code":"err.func.privacy.on","message":"Privacy mode currently ON"}],...}. Bis 2.1.39
+ * galt jede 403 als Abweisung der Anmeldung: verworfen, beim naechsten Lauf neu geholt (Gigya, Kamereon), und die
+ * Ladehistorie meldete bis dahin "noch keine gueltige Anmeldung" - in jedem Lauf aufs Neue. Die Anmeldung ist aber
+ * gueltig; das Fahrzeug gibt nur keine Daten heraus.
+ *
+ * Erkannt wird NUR die belegte Form: HTTP 403, type FUNCTIONAL und ein Eintrag messages[].code err.func.privacy.on.
+ * Jede andere 401/403 bleibt eine Abweisung wie bisher - auch eine 403 FUNCTIONAL mit anderem err.func.*-Code:
+ * renault-api (src/renault_api/kamereon/models.py, COMMON_ERRRORS, nachgelesen 21.11.2026) fuehrt darunter
+ * err.func.403 (AccessDenied), err.func.wired.forbidden und err.func.wired.unauthorized; das koennen echte Anmelde-
+ * oder Rechtefehler sein, und an diesem Fahrzeug gemessen ist keiner davon.
+ *
+ * Die Regel, je Fahrzeug (Bauart rn_kd_schritt()):
+ *   - Datenschutz-Antwort (battery-status oder Ladehistorie): Zustand an, sofort - die Antwort sagt es selbst -, EINE
+ *     WARN-Zeile mit der Abhilfe. Die Anmeldung bleibt; die Antwort selbst schreibt keine ERROR-Zeile.
+ *   - Im Zustand: still. Abruf und Ladehistorie laufen im gewohnten Takt weiter.
+ *   - Daten von battery-status: Zustand aus, EINE INFO-Zeile.
+ *   - Alles andere (401, andere 403, 404, 5xx, Netz) aendert den Zustand nicht und verhaelt sich wie bisher.
+ *   - ok bleibt 0, haus/fahrzeug zeigt den Strich, keine Mail, kein SignalBot, keine Ansage. Ein eigenes MQTT-Thema
+ *     gibt es nicht: das Plugin veroeffentlicht auch sonst keine Fehlergruende (nur ok und das Lebenszeichen). */
+
+/** Ist diese Antwort "Datenschutzmodus im Fahrzeug eingeschaltet"? Rein. */
+function rn_ist_datenschutz($code, $roh)
+{
+    if ((int) $code !== 403 || !is_string($roh) || $roh === '') { return false; }
+    $d = json_decode($roh, true);
+    if (!is_array($d) || !isset($d['messages']) || !is_array($d['messages'])) { return false; }
+    if (!isset($d['type']) || $d['type'] !== 'FUNCTIONAL') { return false; }
+    foreach ($d['messages'] as $m) {
+        if (is_array($m) && isset($m['code']) && $m['code'] === 'err.func.privacy.on') { return true; }
+    }
+    return false;
+}
+
+/**
+ * Ein Schritt der Regel. Rein. $art: 'daten' | 'privat'; alles andere aendert nichts.
+ * Rueckgabe array(neuer Stand, Ereignis): '' | 'wechsel' | 'zurueck'.
+ */
+function rn_ds_schritt(array $z, $art, $jetzt)
+{
+    $z += array('aktiv' => 0, 'seit' => 0, 'zaehler' => 0);
+    if ($art === 'daten') {
+        return array(array('aktiv' => 0, 'seit' => 0, 'zaehler' => 0), $z['aktiv'] ? 'zurueck' : '');
+    }
+    if ($art !== 'privat') { return array($z, ''); }
+    $z['zaehler'] = (int) $z['zaehler'] + 1;
+    if ($z['aktiv']) { return array($z, ''); }
+    $z['aktiv'] = 1;
+    $z['seit'] = (int) $jetzt;
+    return array($z, 'wechsel');
+}
+
+/** Der Stand eines Fahrzeugs; gehoert er zu einer anderen Fahrgestellnummer, gilt er nicht. Liest nur. */
+function rn_ds_lesen(array $f)
+{
+    $datei = dirname($f['session']) . '/datenschutz' . (int) $f['nr'] . '.json';
+    $d = is_file($datei) ? rn_json_lesen($datei) : array();
+    if (!isset($d['vin']) || $d['vin'] !== substr(md5((string) $f['vin']), 0, 12)) { return array(); }
+    unset($d['vin']);
+    return $d;
+}
+
+function rn_ds_schreiben(array $f, array $z)
+{
+    $z['vin'] = substr(md5((string) $f['vin']), 0, 12);
+    return rn_json_schreiben(dirname($f['session']) . '/datenschutz' . (int) $f['nr'] . '.json', $z);
+}
+
+/** Steht das Fahrzeug im Zustand "Datenschutzmodus im Fahrzeug"? */
+function rn_datenschutz_aktiv(array $f)
+{
+    $z = rn_ds_lesen($f);
+    return !empty($z['aktiv']);
+}
+
+/** Schalter fuer rn_antwort_protokoll(): die Datenschutz-Antwort schreibt keine eigene Zeile (die Regel schreibt sie). */
+function rn_antwort_leise_ds($setzen = null)
+{
+    static $an = false;
+    if ($setzen !== null) { $an = (bool) $setzen; }
+    return $an;
+}
+
+/** Die Zeile beim Eintritt. Keine Fahrgestellnummer, keine Konto-Kennung. Rein. */
+function rn_ds_satz_an($name, $quelle)
+{
+    return 'Datenschutzmodus im Fahrzeug ' . $name . ' eingeschaltet: Renault antwortet auf ' . $quelle . ' mit HTTP 403 '
+        . '(err.func.privacy.on, "Privacy mode currently ON") und gibt keine Fahrzeugdaten heraus. Abhilfe: den '
+        . 'Datenschutzmodus im Fahrzeug bzw. in der My-Renault-App ausschalten. Die Anmeldung ist gueltig und bleibt; '
+        . 'Abruf und Ladehistorie laufen weiter, bis zum Ende des Zustands ohne weitere Zeile.';
+}
+
+/** Die Zeile beim Ende. Rein. $z = Stand vor dem Ende. */
+function rn_ds_satz_aus($name, array $z)
+{
+    return 'Datenschutzmodus im Fahrzeug ' . $name . ' aus: Renault liefert wieder Batteriedaten (eingeschaltet seit '
+        . date('d.m. H:i', (int) (isset($z['seit']) ? $z['seit'] : 0)) . ', ' . (int) (isset($z['zaehler']) ? $z['zaehler'] : 0)
+        . ' Antwort(en) mit err.func.privacy.on).';
+}
+
 /* ---------------- 2.6: Healthcheck ---------------- */
 
 /**
@@ -6716,7 +6819,7 @@ function rn_gesund_urteil(array $f)
 {
     $f += array('eingerichtet' => false, 'rechte' => '', 'zaehler_alter_s' => -1, 'erfolg_alter_s' => array(),
                 'takt_min' => 5, 'v2' => array(null, ''), 'bruecke_soll' => false, 'bruecke_laeuft' => null,
-                'keine_daten' => array());
+                'keine_daten' => array(), 'datenschutz' => array());
     if (!$f['eingerichtet']) {
         return array(6, 'nicht eingerichtet - Zugangsdaten im Reiter Einstellungen eintragen');
     }
@@ -6740,6 +6843,10 @@ function rn_gesund_urteil(array $f)
     }
     $grenze = max(15, 3 * max(1, (int) $f['takt_min'])) * 60;
     foreach ($f['erfolg_alter_s'] as $name => $a) {
+        if (isset($f['datenschutz'][$name])) {
+            $setze(6, $name . ': Datenschutzmodus im Fahrzeug eingeschaltet - im Fahrzeug bzw. in der My-Renault-App ausschalten');
+            continue;
+        }
         if (isset($f['keine_daten'][$name])) {
             $setze(6, $name . ': Renault liefert keine Batteriedaten (HTTP 404) - haeufig: Online-Abo ausgelaufen, in der My-Renault-App pruefen');
             continue;
@@ -6772,9 +6879,11 @@ function rn_gesund_fakten(array $cfg)
     $f['zaehler_alter_s'] = is_file($z) ? max(0, time() - (int) filemtime($z)) : -1;
     $f['erfolg_alter_s'] = array();
     $f['keine_daten'] = array();
+    $f['datenschutz'] = array();
     foreach (rn_fahrzeuge($cfg) as $fz) {
         if ($fz['vin'] === '') { continue; }
         if (rn_keine_daten_aktiv($fz)) { $f['keine_daten'][$fz['name']] = true; }
+        if (rn_datenschutz_aktiv($fz)) { $f['datenschutz'][$fz['name']] = true; }
         $s = is_readable($fz['session']) ? explode('|', (string) @file_get_contents($fz['session'])) : array();
         $st = isset($s[25]) ? trim($s[25]) : '';
         $d = preg_match('/^[0-9]{12}$/', $st) ? date_create_from_format('YmdHi', $st) : false;

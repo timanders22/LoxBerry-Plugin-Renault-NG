@@ -1056,7 +1056,8 @@ $rn_ftoken = rn_formtoken($rn_cfg);
  * abweichenden Feldern? */
 $rn_angebot = rn_kaputt_angebot($rn_cfg);
 
-LBWeb::lbheader($template_title, $helplink, $helptemplate);
+require_once __DIR__ . '/fassung.php';   // Fassung im Titel: gemeinsames Stueck fassung.php (21.11.2026)
+LBWeb::lbheader(plugin_kopftitel($template_title, __DIR__), $helplink, $helptemplate);
 
 ?>
 
@@ -1219,6 +1220,10 @@ LBWeb::lbheader($template_title, $helplink, $helptemplate);
 <?php if ((string) $rn_kf['vin'] !== '' && rn_keine_daten_aktiv($rn_kf)) { ?>
 <tr><td><?php echo rn_e(sprintf(rn_t('TEXT.KOPF_KEINE_DATEN'), $rn_kf['name'])); ?></td>
     <td><?php echo rn_e(sprintf(rn_t('TEXT.KEINE_DATEN_HINWEIS'), RN_KD_TAKT_MIN)); ?></td></tr>
+<?php } ?>
+<?php if ((string) $rn_kf['vin'] !== '' && rn_datenschutz_aktiv($rn_kf)) { ?>
+<tr><td><?php echo rn_e(sprintf(rn_t('TEXT.KOPF_DATENSCHUTZ'), $rn_kf['name'])); ?></td>
+    <td><?php echo rn_e(rn_t('TEXT.DATENSCHUTZ_HINWEIS')); ?></td></tr>
 <?php } ?>
 <?php } ?>
 <tr><td><?php echo rn_e(rn_t('TEXT.KOPF_BROKER')); ?></td>
