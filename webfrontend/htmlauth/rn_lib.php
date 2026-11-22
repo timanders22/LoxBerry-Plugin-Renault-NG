@@ -5916,13 +5916,48 @@ if (!defined('RN_HF_VOLL_S'))  { define('RN_HF_VOLL_S', 1800); }
 if (!defined('RN_HF_ALT_S'))   { define('RN_HF_ALT_S', 21600); }
 if (!defined('RN_KABEL_FRISCH_S')) { define('RN_KABEL_FRISCH_S', 43200); }
 
-/** <name> nach der Namensregel von Regeln/07; reserviert: zaehler, anbieter. Ohne brauchbaren Namen rn<n>. Rein. */
+/** <name> nach der gemeinsamen Namensregel (Regeln/07 Nr. 15, Entscheidung des Hausherrn 22.11.2026), wie
+ * ew_haus_name() (Ecowitt-Weiche), hausName() (Zigbee2MqttNG) und klima_name() (BLE-Scanner NG): klein, ae/oe/ue/ss,
+ * jede Folge anderer Zeichen ausser a-z, 0-9, _ und - wird ein _, _ am Rand faellt weg, hoechstens 40 Zeichen
+ * (danach rechts kein _);
+ *  reserviert: zaehler, anbieter. Ohne brauchbaren Namen rn<n>. Rein. Bis 2.1.40: rn_hf_name_alt(). */
 function rn_hf_name($name, $nr)
+{
+    $s = str_replace(array("\u{00E4}", "\u{00F6}", "\u{00FC}", "\u{00DF}", "\u{00C4}", "\u{00D6}", "\u{00DC}"),
+                     array('ae', 'oe', 'ue', 'ss', 'ae', 'oe', 'ue'), (string) $name);
+    $s = preg_replace('/[^a-z0-9_-]+/', '_', strtolower($s));
+    $s = rtrim(substr(trim((string) $s, '_'), 0, 40), '_');
+    if ($s === '' || $s === 'zaehler' || $s === 'anbieter') { return 'rn' . (int) $nr; }
+    return $s;
+}
+
+/** Der <name> nach der Regel bis 2.1.40 (jedes Zeichen einzeln zu _, am Rand nichts entfernt) - nur fuer rn_hf_altstaemme(). Rein. */
+function rn_hf_name_alt($name, $nr)
 {
     $s = strtr((string) $name, array('Ä' => 'ae', 'Ö' => 'oe', 'Ü' => 'ue', 'ä' => 'ae', 'ö' => 'oe', 'ü' => 'ue', 'ß' => 'ss'));
     $s = substr((string) preg_replace('/[^a-z0-9_\-]/', '_', strtolower($s)), 0, 40);
     if (trim($s, '_') === '' || $s === 'zaehler' || $s === 'anbieter') { return 'rn' . (int) $nr; }
     return $s;
+}
+
+/** 22.11.2026 (gemeinsame Namensregel): die Staemme, unter denen dieses Plugin bis 2.1.40 ein Fahrzeug gemeldet haben
+ *  kann, das noch keinen Merkereintrag hat (der Merker liegt im Datenordner und faellt beim Update weg) - nur, wenn der
+ *  alte Name anders lautet, kein aktueller Stamm und nicht fremd ist. Rein bis auf die Konfiguration als Argument. */
+function rn_hf_altstaemme(array $cfg, array $alt, array $aktuell, array $fremd)
+{
+    $aus = array();
+    $da = array();
+    foreach (rn_fahrzeuge($cfg) as $f) {
+        if ((string) $f['vin'] === '') { continue; }
+        $n = rn_hf_name_alt($f['name'], $f['nr']);
+        if (in_array($n, $da, true)) { $n = substr($n, 0, 36) . '_' . (int) $f['nr']; }
+        $da[] = $n;
+        $s = 'haus/fahrzeug/' . $n;
+        if (!isset($alt[(string) (int) $f['nr']]) && !in_array($s, $aktuell, true) && !isset($fremd[$s]) && !in_array($s, $aus, true)) {
+            $aus[] = $s;
+        }
+    }
+    return $aus;
 }
 
 /** Die Fahrzeuge mit Fahrgestellnummer: Nr => array(Name, Fahrzeug), je eindeutig (ein doppelter Name bekommt _<n>). */
@@ -5933,7 +5968,7 @@ function rn_hf_namen(array $cfg)
     foreach (rn_fahrzeuge($cfg) as $f) {
         if ((string) $f['vin'] === '') { continue; }
         $n = rn_hf_name($f['name'], $f['nr']);
-        if (in_array($n, $da, true)) { $n = substr($n, 0, 36) . '_' . (int) $f['nr']; }
+        if (in_array($n, $da, true)) { $n = rtrim(substr($n, 0, 36), '_') . '_' . (int) $f['nr']; }
         $da[] = $n;
         $aus[(int) $f['nr']] = array($n, $f);
     }
@@ -6234,6 +6269,10 @@ function rn_hf_takt(array $cfg, $jetzt = null)
     $rn_hf_fr = rn_hf_fremd_lesen();
     foreach (rn_hf_staemme($m) as $st) {
         if (in_array($st, $aktuell, true) || isset($rn_hf_fr[$st])) { continue; }
+        foreach (array('soc', 'reichweite_km', 'kabel', 'laedt', 'zuhause') as $n) { $nachrichten[] = array($st . '/' . $n, '', 1); }
+    }
+    /* 22.11.2026 (gemeinsame Namensregel): ohne Merkereintrag einmal die Themen unter dem Namen bis 2.1.40 leeren. */
+    foreach (rn_hf_altstaemme($cfg, $alt, $aktuell, $rn_hf_fr) as $st) {
         foreach (array('soc', 'reichweite_km', 'kabel', 'laedt', 'zuhause') as $n) { $nachrichten[] = array($st . '/' . $n, '', 1); }
     }
     $zaehler = (string) ((int) floor($jetzt / 60) % 1000);

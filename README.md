@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.40 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.41 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,11 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Neu in 2.1.41
+
+- **Geändert – Fahrzeugname unter `haus/fahrzeug/` nach der gemeinsamen Namensregel (Entscheidung des Hausherrn 22.11.2026):** Der Name entsteht jetzt wie in allen Plugins: klein, Umlaute ausgeschrieben, jede Folge anderer Zeichen außer a–z, 0–9, `_` und `-` wird ein einziges `_`, ein `_` am Anfang und am Ende fällt weg, höchstens 40 Zeichen. Bisher wurde jedes Zeichen einzeln ersetzt. **Ein Fahrzeugname mit mehreren Leer- oder Sonderzeichen hintereinander oder mit solchen Zeichen am Anfang oder Ende ändert sich deshalb** (Beispiel: „Mein Auto (2)“ war `mein_auto__2_`, ist jetzt `mein_auto_2`); ein `-` bleibt wie bisher stehen. Nach dem Update leert das Plugin einmal die zurückbehaltenen Themen unter dem alten Namen (nicht, wenn dort der Zähler einer anderen Linie läuft). Wer den Namen in einem anderen Plugin (Abfahrts-Assistent, Marstek Venus, Dashboard) oder in Loxone eingetragen hat, trägt den neuen ein. Gemessen auf dem Arbeitsrechner; am Gerät nicht gemessen.
+- Steht unter „Ankunftsquelle“ eine Person oder ein Tag des BLE-Scanner NG, dessen Name sich mit dem BLE-Scanner NG 1.3.46 ändert (siehe dort), tragen Sie den neuen Namen ein.
 
 ## Neu in 2.1.40
 
