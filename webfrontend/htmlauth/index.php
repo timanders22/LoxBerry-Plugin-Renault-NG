@@ -603,6 +603,7 @@ if (isset($_POST['speichern'])) {
     $neu['ansage_homepod_geraet'] = (string) $rn_rneu['homepod_geraet'];
     $neu['ansage_ruhe_von'] = (string) $rn_rneu['von'];
     $neu['ansage_ruhe_bis'] = (string) $rn_rneu['bis'];
+    $neu['ansage_ruhe_bis_frei'] = isset($rn_rneu['bis_frei']) ? (string) $rn_rneu['bis_frei'] : '';     // 2.1.42 (Stamm 1.5.0)
     $neu['ansage_sperre_min'] = (string) (int) $rn_rneu['sperre_min'];
     // 2.1.28: ein eingetipptes oder geloeschtes Sprechtoken ist nicht mehr vom Nachbarn; bis 2.1.27 ueberschrieb es der naechste Abgleich.
     $neu['ansage_token_herkunft'] = (string) json_encode(ansage_token_herkunft_formular($_POST, rn_ansage_her($rn_cfg)));

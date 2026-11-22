@@ -537,6 +537,7 @@ function rn_vorgaben()
     $v['ansage_homepod_geraet'] = '';
     $v['ansage_ruhe_von'] = '22:00';
     $v['ansage_ruhe_bis'] = '07:00';
+    $v['ansage_ruhe_bis_frei'] = '';     // 2.1.42 (Stamm 1.5.0): Nachtruhe an Nicht-Schultagen bis, leer = Vorgabe aus Ferien und Feiertage
     $v['ansage_sperre_min'] = '30';
     $v['ansage_token_herkunft'] = '';
     /* Fahrzeug 2 bis 4. Bewusst durchnummerierte Einzelschluessel und kein
@@ -3176,7 +3177,7 @@ function rn_ansage_neue_schluessel()
     foreach (array_keys(ansage_vorgaben('aus')) as $k) {
         $s[] = 'tts_' . $k;
     }
-    foreach (array('ansage_tafel_ein', 'ansage_tafel_namen', 'ansage_homepod_ein', 'ansage_homepod_geraet', 'ansage_ruhe_ein', 'ansage_ruhe_von', 'ansage_ruhe_bis', 'ansage_sperre_min', 'ansage_token_herkunft') as $k) { $s[] = $k; }     // 2.1.24
+    foreach (array('ansage_tafel_ein', 'ansage_tafel_namen', 'ansage_homepod_ein', 'ansage_homepod_geraet', 'ansage_ruhe_ein', 'ansage_ruhe_von', 'ansage_ruhe_bis', 'ansage_ruhe_bis_frei', 'ansage_sperre_min', 'ansage_token_herkunft') as $k) { $s[] = $k; }     // 2.1.24
     return $s;
 }
 
@@ -3266,6 +3267,9 @@ function rn_ansage_regeln($cfg = null)
         if (isset($cfg['ansage_tafel_namen'])) { $r['tafel_namen'] = (string) $cfg['ansage_tafel_namen']; }
         if (isset($cfg['ansage_homepod_ein']) && (string) $cfg['ansage_homepod_ein'] === '0') { $r['homepod'] = 0; }     // 2.1.28
         if (isset($cfg['ansage_homepod_geraet'])) { $r['homepod_geraet'] = (string) $cfg['ansage_homepod_geraet']; }
+        /* 2.1.42 (Stamm 1.5.0): das Ende an Nicht-Schultagen. Eine zuerst geladene aeltere Abschrift kennt den Schluessel nicht
+         * und wiese die Regeln sonst ganz ab. */
+        if (isset($cfg['ansage_ruhe_bis_frei']) && function_exists('ansage_regeln_heute')) { $r['bis_frei'] = (string) $cfg['ansage_ruhe_bis_frei']; }
     }
     $p = ansage_regeln_wert($r, $g);
     return $p === null ? ansage_regeln_vorgaben() : $p;
@@ -3782,6 +3786,7 @@ function rn_wert_pruefen($k, $w)
     if ($k === 'ansage_homepod_geraet') { return ansage_geraet_ok($w); }
     if ($k === 'ansage_ruhe_ein') { return $w === '0' || $w === '1'; }
     if ($k === 'ansage_ruhe_von' || $k === 'ansage_ruhe_bis') { return is_string($w) && (bool) preg_match('/^([01][0-9]|2[0-3]):[0-5][0-9]\z/', $w); }
+    if ($k === 'ansage_ruhe_bis_frei') { return is_string($w) && ($w === '' || (bool) preg_match('/^([01][0-9]|2[0-3]):[0-5][0-9]\z/', $w)); }     // 2.1.42
     if ($k === 'ansage_sperre_min') { return is_string($w) && (bool) preg_match('/^[0-9]{1,3}\z/', $w) && (int) $w >= 5 && (int) $w <= 240; }
     if ($k === 'tts_ziele') {
         if ($w === '') { return true; }
@@ -6345,6 +6350,26 @@ function rn_kabel_entscheiden(array $w, array $m, array $cfg, $abfahrt_in, $alte
     return array(true, $m);
 }
 
+/**
+ * 2.1.42 (Entscheidung des Hausherrn 22.11.2026, Sprachmodul 1.5.0): Nachtruhe und ihr Ende fuer die Kabelwarnung, an Nicht-Schultagen mit dem
+ * spaeteren Ende. Die Regeln fuer heute (ansage_regeln_heute_lesen(), hoechstens eine kurze Sitzung am Broker) werden nur am
+ * Vormittag gefragt und nur, wenn die Warnung nach den Regeln fuer Schultage kaeme oder mit einem spaeteren Ende bis 12 Uhr
+ * kaeme ($warnt(nacht, bis) -> bool); sonst bleiben die Regeln, wie sie sind. $merk haelt die Antwort fuer weitere Fahrzeuge
+ * desselben Laufs. Rueckgabe array(nacht, bis); bis '' ohne Nachtruhe.
+ */
+function rn_kabel_ruhe_heute(array $r, $jetzt, array $k, $warnt, &$merk = null)
+{
+    $jetzt = (int) $jetzt;
+    $nacht = ansage_nachtruhe($r, $jetzt);
+    $bis = empty($r['nachtruhe']) ? '' : (string) $r['bis'];
+    if ($bis === '' || $nacht || !function_exists('ansage_regeln_heute_lesen') || date('H:i', $jetzt) >= '12:00') { return array($nacht, $bis); }
+    if (!is_array($merk)) {
+        if (!call_user_func($warnt, false, $bis) && !call_user_func($warnt, false, '12:00')) { return array($nacht, $bis); }
+        list($merk) = ansage_regeln_heute_lesen($r, $k + array('jetzt' => function () use ($jetzt) { return $jetzt; }));
+    }
+    return array(ansage_nachtruhe($merk, $jetzt), (string) $merk['bis']);
+}
+
 /** Der Teil des Minutentakts. Ohne Haken geschieht nichts; der Merker wird nur bei einer Aenderung geschrieben. Rueckgabe: die gewarnten Nummern. */
 function rn_kabel_takt(array $cfg, $jetzt = null)
 {
@@ -6364,14 +6389,18 @@ function rn_kabel_takt(array $cfg, $jetzt = null)
         }
     }
     $r = rn_ansage_regeln($cfg);
-    $nacht = ansage_nachtruhe($r, $jetzt);
-    $bis = empty($r['nachtruhe']) ? '' : $r['bis'];
+    $rh_merk = null;     // 2.1.42: die Regeln fuer heute, hoechstens einmal je Takt (rn_kabel_ruhe_heute())
     $gewarnt = array();
     foreach (rn_hf_namen($cfg) as $nr => $e) {
         $f = $e[1];
         $s = rn_hf_session($f);
         $m = isset($alt[(string) $nr]) && is_array($alt[(string) $nr]) ? $alt[(string) $nr] : array();
         $w = rn_hf_werte($cfg, $f, $s, rn_keine_daten_aktiv($f) || rn_datenschutz_aktiv($f), $jetzt);
+        $warnt = function ($n, $b) use ($w, $m, $cfg, $in, $s, $jetzt) {
+            list($f) = rn_kabel_entscheiden($w, $m, $cfg, $in, rn_hf_alter($s, $jetzt), $n, $b, $jetzt);
+            return $f;
+        };
+        list($nacht, $bis) = rn_kabel_ruhe_heute($r, $jetzt, rn_ansage_k(), $warnt, $rh_merk);
         list($faellig, $mn) = rn_kabel_entscheiden($w, $m, $cfg, $in, rn_hf_alter($s, $jetzt), $nacht, $bis, $jetzt);
         $neu[(string) $nr] = $mn;
         if (!$faellig) { continue; }

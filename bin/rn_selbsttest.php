@@ -267,7 +267,7 @@ pruefe('Vorgabe: Sprachausgabe ab Werk an (2.1.24)', $v['tts_mode'], 'musicserve
 // Seit 2.1.26 nicht nachgezogen - der Fall war rot, ohne dass es auffiel (Freigabetor, 08.11.2026).
 // 2.1.35: + gigya_api_eigen, kamereon_api_eigen (rn_neue_schluessel_2135()).
 pruefe('Vorgabe: 32 + 4 + tts + tts_ziele + 2.1.20 + 2.1.35 Schluessel', count($v),
-    38 + 5 + 2 + 2 + count(ansage_vorgaben('aus')) + count(rn_neue_schluessel_2120())
+    38 + 5 + 2 + 2 + 1 /* 2.1.42: ansage_ruhe_bis_frei */ + count(ansage_vorgaben('aus')) + count(rn_neue_schluessel_2120())
     + count(rn_neue_schluessel_2135()));     // 2.1.24: + 5 Schluessel der Regeln
 pruefe('Vorgabe: tts_ziele leer', $v['tts_ziele'], '');
 
