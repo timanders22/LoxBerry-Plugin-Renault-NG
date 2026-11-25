@@ -69,7 +69,7 @@ function rn_eingabe_felder($formular)
      * oder Protokoll. */
     foreach (array('heim_breite', 'heim_laenge', 'endpunkt_ein', 'heim_ein', 'heim_radius', 'haus_abfahrt_ein', 'vorklima_anwesend_ein',
                    'vorklima_ein', 'vorklima_vorlauf', 'vorklima_fahrzeuge', 'vorklima_wetter_ein',
-                   'vorklima_kalt_unter', 'vorklima_heiss_ueber', 'signal_bl', 'signal_csf', 'signal_praefix',
+                   'vorklima_kalt_unter', 'vorklima_heiss_ueber', 'signal_bl', 'signal_csf',     // 2.1.43: ohne signal_praefix
                    'ankunft_ein', 'haus_strompreis_ein',
                    'kabel_soc', 'kabel_uhr', 'kabel_abfahrt_min', 'signal_kabel', 'vorklima_min_soc', 'vorklima_nur_kabel') as $g) { $f[] = $g; }
     for ($i = 1; $i <= RN_MAX_FAHRZEUGE; $i++) {
@@ -437,7 +437,7 @@ if (isset($_POST['speichern'])) {
         $rn_g40 = array('heim_breite' => 'HEIM.L_BREITE', 'heim_laenge' => 'HEIM.L_LAENGE',
                         'heim_radius' => 'HEIM.L_RADIUS', 'vorklima_vorlauf' => 'VORKLIMA.L_VORLAUF',
                         'vorklima_fahrzeuge' => 'VORKLIMA.L_FAHRZEUGE', 'vorklima_kalt_unter' => 'VORKLIMA.L_KALT',
-                        'vorklima_heiss_ueber' => 'VORKLIMA.L_HEISS', 'signal_praefix' => 'SIGNAL.L_PRAEFIX',
+                        'vorklima_heiss_ueber' => 'VORKLIMA.L_HEISS',     // 2.1.43: ohne signal_praefix
                         'kabel_soc' => 'TEXT.L_KABEL_SOC', 'kabel_uhr' => 'TEXT.L_KABEL_UHR', 'kabel_abfahrt_min' => 'TEXT.L_KABEL_ABFAHRT_MIN',
                         'vorklima_min_soc' => 'TEXT.L_VORKLIMA_MIN_SOC');
         for ($i = 1; $i <= RN_MAX_FAHRZEUGE; $i++) {
@@ -1598,11 +1598,7 @@ $rn_kauto = $rn_broker ? rn_t($rn_broker['autostart'] ? 'ALLG.EIN' : 'ALLG.AUS')
   </label>
 </div>
 <?php } ?>
-<div class="sm-feld">
-  <label for="signal_praefix"><?php echo rn_e(rn_t('SIGNAL.L_PRAEFIX')); ?></label>
-  <input data-role="none" type="text" id="signal_praefix" name="signal_praefix" value="<?php echo rn_e(rn_ein_w('signal_praefix', $rn_cfg['signal_praefix'])); ?>"<?php echo rn_ein_m('signal_praefix'); ?>>
-  <p class="sm-hilfe"><?php echo rn_e(rn_t('SIGNAL.H_PRAEFIX')); ?></p>
-</div>
+<?php /* 2.1.43: das Feld Praefix entfaellt - Meldungen gehen unter haus/meldung/<ordner> (gemeinsames Modul) */ ?>
 
 <h2><?php echo rn_e(rn_t('TEXT.H_ANSAGE')); ?></h2>
 <div class="sm-hinweis"><?php echo rn_t('TEXT.ANSAGE_ERKLAERUNG'); ?></div>

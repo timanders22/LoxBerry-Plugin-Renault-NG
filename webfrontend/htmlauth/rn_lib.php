@@ -53,6 +53,7 @@ if (!function_exists('lb_wurzel_ermitteln')) {
  * 2.1.16; seit 2.1.20 Stamm 1.2.1 mit weiteren Ausgabezielen, rn_mit_zielen(), Welle Mehrfach-Ziele).
  * Liegt neben dieser Datei; sie schuetzt sich selbst gegen doppeltes Laden. */
 require_once __DIR__ . '/sprachausgabe.php';
+require_once __DIR__ . '/meldung.php';     // Statusmeldungen an SignalBot (seit 2.1.43)
 /* 2.1.34: Das gemeinsame Sicherungsmodul (Abschrift von Werkzeuge/gemeinsam/sicherung.php, Auftrag des
  * Hausherrn 12.11.2026): Einstellungen sichern und zurueckspielen nach denselben Regeln wie in den
  * anderen Linien. Liegt neben dieser Datei; die Beschreibung dieser Linie steht in
@@ -6415,7 +6416,7 @@ function rn_kabel_takt(array $cfg, $jetzt = null)
         if (rn_ja($cfg, 'signal_kabel')) {
             $mq = rn_hf_verbindung();
             if ($mq !== null) {
-                rn_signal_senden($mq, $cfg, $satz);
+                rn_signal_senden($mq, $cfg, $satz, 'kabel');     // 2.1.43: Anlass fuer das gemeinsame Modul
                 $mq->close();
             }
         }
@@ -6443,6 +6444,18 @@ function rn_signal_thema($praefix, $ordner)
     return $praefix . '/befehl/plugin/' . $ordner;
 }
 
+/** 2.1.43: der Block 'meldung' des gemeinsamen Moduls aus den Haken signal_bl, signal_csf, signal_kabel ('Y'/'N';
+ *  Entscheidung des Hausherrn 24.11.2026, F1: Einstellungen uebernehmen). Die Vorklimatisierung meldet wie bisher, wenn
+ *  signal_bl oder signal_csf gesetzt ist; ein Hauptschalter fehlt in dieser Linie - an, sobald ein Haken gesetzt ist. */
+function rn_meld_aus_cfg($cfg)
+{
+    if (!is_array($cfg)) { return null; }
+    $j = function ($k) use ($cfg) { return (isset($cfg[$k]) && (string) $cfg[$k] === 'Y') ? 1 : 0; };
+    $h = array('bl' => $j('signal_bl'), 'csf' => $j('signal_csf'), 'kabel' => $j('signal_kabel'),
+               'vorklima' => ($j('signal_bl') || $j('signal_csf')) ? 1 : 0);
+    return array('ein' => max($h) ? 1 : 0, 'haken' => $h, 'sperre_min' => defined('MELD_SPERRE_VORGABE') ? MELD_SPERRE_VORGABE : 60);
+}
+
 /** Die Nutzlast {"text", "dringend"} (sg_plugin_nachricht() in SignalBot 0.9.30), hoechstens RN_SIGNAL_MAX Byte. Rein. */
 function rn_signal_nutzlast($text, $dringend)
 {
@@ -6461,21 +6474,19 @@ function rn_signal_nutzlast($text, $dringend)
     return $js === false ? '' : $js;
 }
 
-/** Eine Meldung an SignalBot ueber die phpMQTT-Verbindung des Laufs, retain 0. Rueckgabe gesendet|kein_broker|ungueltig. */
-function rn_signal_senden($mqtt, array $cfg, $text)
+/**
+ * Eine Meldung an SignalBot. Seit 2.1.43 (Entscheidung des Hausherrn 24.11.2026, F1 "Abloesen") ueber das gemeinsame Modul
+ * meldung.php: Thema haus/meldung/<ordner>, Sperre 60 min je Anlass und Text, Bremse 10 je Stunde, Quittung - die
+ * Verbindung $mqtt des Laufs wird nicht mehr gebraucht (der Parameter bleibt fuer die Aufrufer). $anlass: bl, csf, kabel,
+ * vorklima. Rueckgabe die Lage (angenommen, abgelehnt, keine, ...) oder die Regel des Moduls (AUS, SPERRE, BREMSE, ...).
+ */
+function rn_signal_senden($mqtt, array $cfg, $text, $anlass = 'bl')
 {
-    $thema = rn_signal_thema((string) $cfg['signal_praefix'], rn_paths(false)['plugin']);
-    if ($thema === '') {
-        rn_melden('WARN', 'SignalBot-Meldung nicht gesendet - der Ordnername des Plugins oder das Praefix passt '
-            . 'nicht auf [a-z0-9_]{1,40}.');
-        return 'ungueltig';
-    }
-    if ($mqtt === null) {
-        rn_melden('WARN', 'SignalBot-Meldung nicht gesendet - kein Broker.');
-        return 'kein_broker';
-    }
-    $mqtt->publish($thema, rn_signal_nutzlast($text, 0), 0, 0);
-    return 'gesendet';
+    $a = rn_meld_senden(array(array('schluessel' => $anlass . '|' . substr(md5((string) $text), 0, 10), 'anlass' => $anlass,
+                                    'text' => (string) $text)), $cfg);
+    if (!is_array($a)) { return 'aus'; }
+    if ($a['regel'] !== '') { return $a['regel']; }
+    return (is_array($a['q']) && isset($a['q']['lage'])) ? (string) $a['q']['lage'] : 'gesendet';
 }
 
 /**
@@ -6485,42 +6496,9 @@ function rn_signal_senden($mqtt, array $cfg, $text)
  */
 function rn_signal_testmeldung(array $cfg)
 {
-    $thema = rn_signal_thema((string) $cfg['signal_praefix'], rn_paths(false)['plugin']);
-    $sub = rn_programm('mosquitto_sub');
-    $pub = rn_programm('mosquitto_pub');
-    $z = rn_mqtt_zugang();
-    if ($thema === '' || $sub === '' || $pub === '' || !is_array($z) || !function_exists('proc_open')) {
-        return array('nicht_moeglich', rn_t('SIGNAL.T_NICHT_MOEGLICH'));
-    }
-    $host = ((string) $z['host'] === 'localhost') ? '127.0.0.1' : (string) $z['host'];
-    $port = (string) ((int) $z['port'] > 0 ? (int) $z['port'] : 1883);
-    $env = rn_proc_umgebung();
-    $rohr = array();
-    $h = @proc_open(array($sub, '-h', $host, '-p', $port, '-C', '1', '-W', '5', '-t', $thema . '/quittung'),
-        array(0 => array('file', '/dev/null', 'r'), 1 => array('pipe', 'w'), 2 => array('file', '/dev/null', 'w')),
-        $rohr, null, $env);
-    if (!is_resource($h)) {
-        return array('nicht_moeglich', rn_t('SIGNAL.T_NICHT_MOEGLICH'));
-    }
-    usleep(300000);
-    $r2 = array();
-    $p = @proc_open(array($pub, '-h', $host, '-p', $port, '-t', $thema, '-m',
-        rn_signal_nutzlast(rn_t('SIGNAL.TESTSATZ'), 0)),
-        array(0 => array('file', '/dev/null', 'r'), 1 => array('file', '/dev/null', 'w'), 2 => array('file', '/dev/null', 'w')),
-        $r2, null, $env);
-    if (is_resource($p)) { rn_proc_abwarten($p, 5); }     // 2.1.24: mit Frist
-    $rn_ti = rn_rohre_lesen(array($rohr[1]), 7);
-    $text = (string) $rn_ti[0];
-    fclose($rohr[1]);
-    rn_proc_abwarten($h, 1);
-    $text = trim($text);
-    if ($text === '') {
-        return array('keine_antwort', rn_t('SIGNAL.T_KEINE_ANTWORT'));
-    }
-    if (stripos($text, 'abgelehnt') === 0 || stripos($text, 'ABSENDER_NICHT_FREIGEGEBEN') !== false) {
-        return array('abgelehnt', sprintf(rn_t('SIGNAL.T_ABGELEHNT'), substr($text, 0, 120)));
-    }
-    return array('angenommen', rn_t('SIGNAL.T_ANGENOMMEN'));
+    /* 2.1.43 (Entscheidung des Hausherrn 24.11.2026, F1): ueber das gemeinsame Modul (haus/meldung/<ordner>, Quittung). */
+    list($ok, $satz) = rn_meld_test();
+    return array($ok ? 'angenommen' : 'keine_antwort', $satz);
 }
 
 /**
@@ -7200,7 +7178,7 @@ function rn_takt_lauf($skript)
                 foreach (rn_fahrzeuge($cfg) as $f) {
                     $nr = (string) (int) $f['nr'];
                     if (!empty($merk['vorklima'][$nr]['signal_offen'])) {
-                        rn_signal_senden($mq, $cfg, sprintf(rn_t('VORKLIMA.GESCHEITERT'), $f['name']));
+                        rn_signal_senden($mq, $cfg, sprintf(rn_t('VORKLIMA.GESCHEITERT'), $f['name']), 'vorklima');     // 2.1.43
                         $merk['vorklima'][$nr]['signal_offen'] = 0;
                         rn_json_schreiben(rn_vorklima_datei(), $merk);
                     }
@@ -7210,4 +7188,119 @@ function rn_takt_lauf($skript)
         }
     }
     return $aus;
+}
+
+if (!function_exists('rn_meld_block')) {
+
+/* ---------------- Statusmeldungen an SignalBot (2.1.43, gemeinsames Modul meldung.php) ----------------
+ *
+ * Auftrag des Hausherrn 23.11.2026, Entscheidungen 23./24.11.2026: dieselben Anlaesse wie die Ansage, eigener Haken je
+ * Anlass, ab Werk aus; Sperre, Bremse und Versand im Modul. Die Erkennung laeuft auch ohne Ausgabeart, wenn eine Meldung
+ * eingeschaltet ist (rn_meld_aktiv()), und legt einen Anlass hin, wenn Ansage ODER Meldung ihn will
+ * (rn_meld_will()); der Sender trennt die Wege wieder (rn_meld_nur_ansage()).
+ */
+
+/** Die meldbaren Anlaesse: Name => Beschriftung (dieselben wie die Ansage). */
+function rn_meld_anlaesse()
+{
+    return array('bl' => rn_t('SIGNAL.L_BL'), 'csf' => rn_t('SIGNAL.L_CSF'), 'kabel' => rn_t('TEXT.L_SIGNAL_KABEL'), 'vorklima' => sprintf(rn_t('VORKLIMA.GESCHEITERT'), '…'));
+}
+
+/** Die ab-Werk-Haken der Ansage dieser Linie: so stehen auch die Haken der Meldung, solange der Block nie gespeichert ist. */
+function rn_meld_haken_vorgabe()
+{
+    return array('bl' => 0, 'csf' => 0, 'kabel' => 0, 'vorklima' => 0);
+}
+
+/** Ist der Haken dieses Anlasses fuer die ANSAGE gesetzt? */
+function rn_ansage_anlass_sprache($a, $cfg = null)
+{
+    if ($cfg === null) { $cfg = rn_config_read(false); }
+    return false;     // die Ansage hat eigene Anlaesse; dieser Block meldet nur
+}
+
+/** Der wirksame Block 'meldung' fuer den Betrieb (ungueltig gespeichert gilt als aus und wird im Formular genannt). */
+function rn_meld_block($cfg = null)
+{
+    if ($cfg === null) { $cfg = rn_config_read(false); }
+    list($b) = meld_block(rn_meld_aus_cfg($cfg), rn_meld_anlaesse(), rn_meld_haken_vorgabe());
+    return $b;
+}
+
+/** Die Beanstandungen eines gespeicherten Blocks (leer = gueltig). */
+function rn_meld_bean($cfg = null)
+{
+    if ($cfg === null) { $cfg = rn_config_read(false); }
+    list(, $f) = meld_block(rn_meld_aus_cfg($cfg), rn_meld_anlaesse(), rn_meld_haken_vorgabe());
+    return $f;
+}
+
+/** Ist irgendein Anlass zur Meldung eingeschaltet? Dann laeuft die Erkennung auch ohne Ausgabeart. */
+function rn_meld_aktiv($cfg = null)
+{
+    return meld_irgendein_an(rn_meld_block($cfg));
+}
+
+/** Will die Ansage ODER die Meldung diesen Anlass? */
+function rn_meld_will($a, $cfg = null)
+{
+    if ($cfg === null) { $cfg = rn_config_read(false); }
+    return rn_ansage_anlass_sprache($a, $cfg) || meld_anlass_an(rn_meld_block($cfg), (string) $a);
+}
+
+/** Der Kontext des Moduls: Datenordner (data/plugins/<ordner>, daraus der Absender) und Texte - wie bei der Ansage. */
+function rn_meld_k()
+{
+    return rn_ansage_k();
+}
+
+/** Fuer die Ansage nur Eintraege, deren Ansage-Haken gesetzt ist; ein Eintrag ohne bekannten Anlass bleibt wie bisher. */
+function rn_meld_nur_ansage(array $l, $cfg = null)
+{
+    if ($cfg === null) { $cfg = rn_config_read(false); }
+    $anl = rn_meld_anlaesse();
+    $aus = array();
+    foreach ($l as $e) {
+        if (is_array($e) && array_key_exists(meld_anlass_von($e), $anl) && !rn_ansage_anlass_sprache(meld_anlass_von($e), $cfg)) { continue; }
+        $aus[] = $e;
+    }
+    return $aus;
+}
+
+/** Die Eintraege an SignalBot melden. Protokoll: eine Zeile, wenn gesendet oder gescheitert (nie der Text). */
+function rn_meld_senden(array $l, $cfg = null)
+{
+    if ($cfg === null) { $cfg = rn_config_read(false); }
+    $b = rn_meld_block($cfg);
+    if (empty($b['ein']) || !$l) { return null; }
+    $a = meld_regel_senden($l, $b, rn_meld_k());
+    if ($a['regel'] === '' || in_array($a['regel'], array('BREMSE', 'STAND', 'ORDNER'), true)) {
+        rn_ansage_log(meld_regel_kurz($a));
+    }
+    return $a;
+}
+
+/** Der Knopf "Testmeldung senden": array(angenommen, Satz). Geht an Haken, Sperre und Bremse vorbei. */
+function rn_meld_test()
+{
+    $r = meld_testmeldung(rn_meld_k());
+    rn_ansage_log('Testmeldung an SignalBot: ' . ($r[0] ? 'angenommen' : 'nicht angenommen'));
+    return $r;
+}
+
+/** Der Block im Einstellungsformular (unter den Ansage-Regeln, im selben Formular), mit Lage und Knopf. */
+function rn_meld_form_html($cfg = null)
+{
+    if ($cfg === null) { $cfg = rn_config_read(false); }
+    $e = function ($s) { return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8'); };
+    $k = rn_meld_k();
+    $o = array();
+    $o[] = '<h3>' . $e(meld_t('TITEL', $k)) . '</h3>';
+    $o[] = meld_formular_html(rn_meld_block($cfg), rn_meld_anlaesse(), array(), $k);
+    list(, $lage) = meld_pruefzeile(rn_meld_block($cfg), rn_meld_bean($cfg), $k);
+    $o[] = '<div class="sm-hilfe">' . $e(meld_t('F_TEST', $k) . ' ' . $lage) . '</div>';
+    $o[] = '<div class="sm-knopfreihe"><button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="meld_test" value="1">'
+         . $e(meld_t('K_TEST', $k)) . '</button></div>';
+    return implode("\n", $o) . "\n";
+}
 }

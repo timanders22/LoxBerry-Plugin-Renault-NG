@@ -1,6 +1,6 @@
 # LoxBerry-Plugin: Renault NG
 
-Version 2.1.42 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
+Version 2.1.43 · LoxBerry ab 3.0 · PHP 7.4 und 8.x · an keiner Anlage gemessen
 
 Verbindet Renault-Elektrofahrzeuge (Zoe PH1/PH2, Twingo Electric u. a.) mit dem
 Loxone Miniserver – über den LoxBerry. Batteriestand, Reichweite, Ladestatus,
@@ -13,6 +13,11 @@ das seinerseits auf [ZoePHP](https://github.com/db-EV/ZoePHP) von db-EV
 aufbaut. Apache-Lizenz 2.0; die Liste der Änderungen steht in `NOTICE`.
 
 ---
+
+## Neu in 2.1.43
+
+- **Meldungen an SignalBot über das gemeinsame Modul (Entscheidung des Hausherrn 24.11.2026):** Die Haken *Akkustand erreicht*, *Ladung beendet* und *Kabel vergessen* an SignalBot bleiben, wie sie gespeichert sind (die Vorklimatisierung meldet wie bisher mit einem der beiden ersten). Die Nachricht geht jetzt unter `haus/meldung/renault_ng` an SignalBot (`meldung.php`) und nicht mehr über `<präfix>/befehl/plugin/renault_ng`. Nötig ist SignalBot ab 0.9.44 mit „Meldungen unter haus/meldung annehmen“; nach einem Update schaltet SignalBot das selbst ein, wenn dort schon ein Plugin freigegeben ist. Das Feld *Präfix des SignalBot* entfällt. Dieselbe Meldung höchstens einmal in 60 Minuten, insgesamt höchstens 10 je Stunde, darüber eine Sammelzeile. Die Testmeldung läuft über das Modul.
+- Gemeinsames Sicherungsmodul auf 1.3.0 nachgezogen (Einheitlichkeit, wie in der Welle Lade-Beanstandungen); am Verhalten von „Einstellungen sichern“ und „Einstellungen zurückspielen“ ändert sich nichts.
 
 ## Neu in 2.1.42
 

@@ -754,7 +754,7 @@ foreach ($rn_mit_vin as $rn_f) {
                  * "Meldung ausgeloest", auch wenn sendmail fehlte. */
                 $rn_wege = array('mail' => null, 'signal' => null, 'befehl' => null);
                 if ($rn_cfg['mail_bl'] === 'Y') { $rn_wege['mail'] = (bool) @mail($rn_cfg['username'], $rn_name, $rn_text); }
-                if ($rn_cfg['signal_bl'] === 'Y') { $rn_wege['signal'] = rn_signal_senden($rn_mqtt, $rn_cfg, $rn_text); }
+                if ($rn_cfg['signal_bl'] === 'Y') { $rn_wege['signal'] = rn_signal_senden($rn_mqtt, $rn_cfg, $rn_text, 'bl'); }     // 2.1.43
                 if ($rn_cfg['cmon_bl'] === 'Y') {
                     list($rn_c) = rn_post(rn_kca($rn_konto, $rn_vin, 'actions/charge-mode', $rn_land),
                         $kamereon_api, $rn_jwt,
@@ -788,7 +788,7 @@ foreach ($rn_mit_vin as $rn_f) {
             } else {
                 $rn_wege = array('mail' => null, 'signal' => null, 'befehl' => null);
                 if ($rn_cfg['mail_csf'] === 'Y') { $rn_wege['mail'] = (bool) @mail($rn_cfg['username'], $rn_name, $rn_text); }
-                if ($rn_cfg['signal_csf'] === 'Y') { $rn_wege['signal'] = rn_signal_senden($rn_mqtt, $rn_cfg, $rn_text); }
+                if ($rn_cfg['signal_csf'] === 'Y') { $rn_wege['signal'] = rn_signal_senden($rn_mqtt, $rn_cfg, $rn_text, 'csf'); }     // 2.1.43
                 // Bis 1.4 stand hier $exec_bl, obwohl die Bedingung $exec_csf prueft.
                 if (trim((string) $rn_cfg['exec_csf']) !== '') {
                     $rn_wege['befehl'] = rn_hook_ausfuehren($rn_cfg['exec_csf'], $rn_text, 'exec_csf');
