@@ -44,7 +44,9 @@ UPGD_ORDNER="$3"; UPGD_WURZEL="$5"
 
 # 2.1.35: die Anmeldung (Gigya-Token, Kamereon-Konto) traegt diese Linie bewusst nicht ueber das Update - sie wird
 # neu geholt (wie bisher, Abschnitt 2 unten). Angabe fuer den Baustein 1.1.0 (UPGD_OHNE).
-UPGD_OHNE="anmeldung"
+# Dazu befehle/: die Befehlsbruecke legt den Ordner samt Optionsdatei beim Start neu an (Regeln/06,
+# Entscheidung des Hausherrn 15.11.2026).
+UPGD_OHNE="anmeldung befehle"
 
 KONF="REPLACELBPCONFIGDIR"
 DATEN="REPLACELBPDATADIR"
