@@ -2358,7 +2358,7 @@ if ($rn_cfg['haus_strompreis_ein'] === 'Y' || $rn_lad) {
 <!-- ============================== Logdateien ============================== -->
 <div class="sm-seite<?php echo $rn_tab === 'tab-log' ? ' sm-active' : ''; ?>" id="tab-log">
 <h2><?php echo rn_e(rn_t('TEXT.H_LOG')); ?></h2>
-<p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.H_LOG_TEXT')); ?>
+<p class="sm-hilfe"><?php echo rn_e(rn_t('TEXT.H_LOG_TEXT')); ?>&#32;
 <span class="sm-mono"><?php echo rn_e($rn_p['log']); ?></span></p>
 <div class="sm-hinweis"><?php echo rn_t('TEXT.H_LOG_RAMDISK'); ?></div>
 <?php if (!$rn_zeilen) { ?>
